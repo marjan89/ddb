@@ -37,7 +37,19 @@ ddb devices status                 # connection status (wifi/usb/ping/daemon)
 ddb devices connect <name>         # wireless ADB (switches from USB if needed)
 ddb devices disconnect <name>
 ddb devices add <name> --serial ...
+ddb devices add <name> --serial ... --force   # re-enroll: overwrites all fields, keeps original `enrolled` date
 ddb devices remove <name>
+```
+
+Re-enrolling is useful after a factory reset, IP change, or when correcting a typo. Example:
+
+```bash
+ddb devices add a54 \
+  --serial RZCW60WF36N \
+  --model "Samsung Galaxy A54 (SM-A546B)" \
+  --android 15 --sdk 35 \
+  --wifi-ip 192.168.1.79 \
+  --force
 ```
 
 ### Touch & input
@@ -94,6 +106,19 @@ ddb screenshot output.png          # custom path
 ```bash
 ddb mirror                         # launches scrcpy with --legacy-paste
 ddb mirror -- --max-fps 30         # extra scrcpy args
+ddb -d a54 mirror                  # by enrolled name
+ddb -d RZCW60WF36N mirror          # by raw adb serial (works for unenrolled devices too)
+```
+
+Target resolution:
+
+- **No `-d`**: picks the only device currently visible to adb. If more than one is attached, lists candidates and exits.
+- **`-d <name>`**: tries the enrolled registry first, then falls back to any matching adb serial. So a freshly plugged-in device can be mirrored without enrolling it first.
+
+Listing format includes both the enrolled name (when available) and the transport id, e.g.:
+
+```
+multiple devices available, specify one with -d: a54 (192.168.1.79:5555), mi-a2 (192.168.1.78:5556)
 ```
 
 ### Heartbeat daemon

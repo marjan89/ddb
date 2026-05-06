@@ -23,7 +23,7 @@ enum DevicesCommand {
         /// Device name (all if omitted)
         name: Option<String>,
     },
-    /// Enroll a new device
+    /// Enroll a new device (or re-enroll with --force)
     Add {
         /// Short name for the device
         name: String,
@@ -45,6 +45,9 @@ enum DevicesCommand {
         /// ADB wireless port
         #[arg(long, default_value = "5555")]
         adb_port: Option<u16>,
+        /// Overwrite an existing enrollment with the same name
+        #[arg(long)]
+        force: bool,
     },
     /// Remove an enrolled device
     Remove {
@@ -75,7 +78,8 @@ pub fn run(args: DevicesArgs) -> Result<(), String> {
             sdk,
             wifi_ip,
             adb_port,
-        } => add(&name, serial, model, android, sdk, wifi_ip, adb_port),
+            force,
+        } => add(&name, serial, model, android, sdk, wifi_ip, adb_port, force),
         DevicesCommand::Remove { name } => remove(&name),
         DevicesCommand::Connect { name } => connect(&name),
         DevicesCommand::Disconnect { name } => disconnect(&name),
@@ -179,13 +183,20 @@ fn add(
     sdk: u32,
     wifi_ip: Option<String>,
     adb_port: Option<u16>,
+    force: bool,
 ) -> Result<(), String> {
     let mut devices = Registry::load()?;
-    if devices.contains_key(name) {
-        return Err(format!("device '{name}' already enrolled"));
+    let existing = devices.get(name).cloned();
+    if existing.is_some() && !force {
+        return Err(format!(
+            "device '{name}' already enrolled (use --force to re-enroll)"
+        ));
     }
 
-    let enrolled = Local::now().format("%Y-%m-%d").to_string();
+    let enrolled = existing
+        .as_ref()
+        .map(|d| d.enrolled.clone())
+        .unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
     let dev = Device {
         serial,
         model,
@@ -198,7 +209,14 @@ fn add(
 
     devices.insert(name.to_string(), dev);
     Registry::save(&devices)?;
-    println!("enrolled '{name}'.");
+    println!(
+        "{} '{name}'.",
+        if existing.is_some() {
+            "re-enrolled"
+        } else {
+            "enrolled"
+        }
+    );
     Ok(())
 }
 
