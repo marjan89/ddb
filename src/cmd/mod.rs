@@ -9,7 +9,7 @@ mod screenshot;
 mod touch;
 mod ui;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 
 /// Device Debug Bridge — unified Android device CLI
 #[derive(Parser)]
@@ -72,6 +72,13 @@ pub enum Command {
 
     /// Pass through to adb (auto-injects -s from registry)
     Adb(adb_passthrough::AdbArgs),
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 pub fn run(cli: Cli) -> Result<(), String> {
@@ -93,5 +100,14 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Command::Doctor => doctor::run(),
         Command::Config(args) => config_cmd::run(args),
         Command::Adb(args) => adb_passthrough::run(dev, args),
+        Command::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "ddb",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
     }
 }
