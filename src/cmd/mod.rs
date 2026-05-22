@@ -5,7 +5,9 @@ mod daemon;
 mod devices;
 mod doctor;
 mod mirror;
+mod mount;
 mod screenshot;
+mod test;
 mod touch;
 mod ui;
 
@@ -70,6 +72,14 @@ pub enum Command {
     /// Configuration
     Config(config_cmd::ConfigArgs),
 
+    /// Run interactive test specs on device
+    Test(test::TestArgs),
+
+    /// Inject debug instrumentation into a project
+    Mount(mount::MountArgs),
+    /// Remove debug instrumentation from a project
+    Unmount(mount::MountArgs),
+
     /// Pass through to adb (auto-injects -s from registry)
     Adb(adb_passthrough::AdbArgs),
 
@@ -99,6 +109,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Command::Daemon(args) => daemon::run(args),
         Command::Doctor => doctor::run(),
         Command::Config(args) => config_cmd::run(args),
+        Command::Test(args) => test::run(dev, args),
+        Command::Mount(args) => mount::run(args),
+        Command::Unmount(args) => mount::unmount(args),
         Command::Adb(args) => adb_passthrough::run(dev, args),
         Command::Completions { shell } => {
             clap_complete::generate(

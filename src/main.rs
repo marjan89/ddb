@@ -2,6 +2,7 @@ mod adb;
 mod cmd;
 mod config;
 mod registry;
+mod semantic;
 mod ui_parser;
 
 use clap::Parser;
