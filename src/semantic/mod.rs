@@ -168,7 +168,7 @@ fn build_element(
         bounds,
         clickable: node.clickable,
         enabled: node.enabled,
-        accessible: None,
+        accessible: Some(node.focusable || node.clickable || !node.content_desc.is_empty()),
         a11y_label: if !node.content_desc.is_empty() {
             Some(decode_entities(&node.content_desc))
         } else {
