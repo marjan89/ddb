@@ -7,6 +7,7 @@ mod doctor;
 mod mirror;
 mod mount;
 mod screenshot;
+mod scroll_capture;
 mod test;
 mod touch;
 mod ui;
@@ -57,6 +58,9 @@ pub enum Command {
     /// Capture screenshot
     Screenshot(screenshot::ScreenshotArgs),
 
+    /// Capture scrolling composite screenshot
+    ScrollCapture(scroll_capture::ScrollCaptureArgs),
+
     /// App management
     App(app::AppArgs),
 
@@ -104,6 +108,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Command::Scroll(args) => touch::scroll(dev, args),
         Command::Ui(args) => ui::run(dev, args),
         Command::Screenshot(args) => screenshot::run(dev, args),
+        Command::ScrollCapture(args) => scroll_capture::run(dev, args),
         Command::App(args) => app::run(dev, args),
         Command::Mirror(args) => mirror::run(dev, args),
         Command::Daemon(args) => daemon::run(args),
