@@ -35,6 +35,7 @@ pub fn extract(
         device: device_name,
         platform: "android".to_string(),
         timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        viewport: None,
         elements,
     })
 }
@@ -179,6 +180,8 @@ fn build_element(
         corner_radius,
         padding,
         icon,
+        margin: None,
+        elevation: None,
         z_index: None,
         render: None,
         children: None,
