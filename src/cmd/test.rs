@@ -4,6 +4,39 @@ use std::path::Path;
 use crate::adb;
 use crate::registry::{Device, Registry};
 
+#[derive(serde::Serialize)]
+struct RunLog {
+    tc_id: String,
+    tc_name: String,
+    platform: String,
+    device: String,
+    started: String,
+    finished: String,
+    result: String,
+    steps: Vec<StepLogEntry>,
+}
+
+#[derive(serde::Serialize)]
+struct StepLogEntry {
+    step: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assert: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+    result: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    element_found: Option<String>,
+    timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_yaml: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ui_dump: Option<String>,
+}
+
 #[derive(Args)]
 pub struct TestArgs {
     /// YAML test spec file(s)
@@ -66,6 +99,8 @@ struct StepRaw {
     hint: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
+    #[serde(default)]
+    times: Option<u64>,
 }
 
 enum Step {
@@ -81,6 +116,7 @@ struct ActionStep {
     output: Option<String>,
     catalogue: Option<String>,
     seconds: Option<u64>,
+    times: Option<u64>,
 }
 
 struct AssertStep {
@@ -103,6 +139,7 @@ impl StepRaw {
                 output: self.output,
                 catalogue: self.catalogue,
                 seconds: self.seconds,
+                times: self.times,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -189,7 +226,34 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             steps,
         };
 
-        let result = run_spec(&spec, dev.as_ref(), args.step_timeout);
+        let started = now_iso();
+        let (result, step_logs) = run_spec(&spec, dev.as_ref(), args.step_timeout);
+        let finished = now_iso();
+
+        // Write structured run log
+        let dev_name_str = dev.as_ref().map(|d| d.model.as_str()).unwrap_or("unknown");
+        let run_log = RunLog {
+            tc_id: spec.id.clone(),
+            tc_name: spec.name.clone(),
+            platform: "android".to_string(),
+            device: dev_name_str.to_string(),
+            started,
+            finished: finished.clone(),
+            result: result.status.clone(),
+            steps: step_logs,
+        };
+
+        // Detect catalogue path from spec file path
+        let results_dir = detect_results_dir(spec_path);
+        if let Some(ref dir) = results_dir {
+            let _ = std::fs::create_dir_all(dir);
+            let ts_slug = now_timestamp_slug();
+            let log_path = format!("{}/{}-android-{}.yaml", dir, spec.id, ts_slug);
+            if let Ok(yaml_out) = serde_yaml::to_string(&run_log) {
+                let _ = std::fs::write(&log_path, &yaml_out);
+                eprintln!("run log → {log_path}");
+            }
+        }
 
         if result.status == "PASS" {
             pass += 1;
@@ -228,6 +292,20 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     Ok(())
 }
 
+fn detect_results_dir(spec_path: &str) -> Option<String> {
+    let p = std::path::Path::new(spec_path);
+    // Walk up looking for a "tests" directory — results go in tests/results/
+    let mut dir = p.parent();
+    while let Some(d) = dir {
+        if d.file_name().map_or(false, |n| n == "tests") {
+            return Some(d.join("results").to_string_lossy().to_string());
+        }
+        dir = d.parent();
+    }
+    // Fallback: put results next to the spec file
+    p.parent().map(|d| d.join("results").to_string_lossy().to_string())
+}
+
 fn set_animations(enabled: bool) {
     let val = if enabled { "1" } else { "0" };
     let _ = std::process::Command::new("curl")
@@ -235,14 +313,59 @@ fn set_animations(enabled: bool) {
         .output();
 }
 
-fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> TestResult {
+fn now_iso() -> String {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    let days = secs / 86400;
+    let y = 1970 + days / 365;
+    format!("{y}-01-01T{h:02}:{m:02}:{s:02}Z")
+}
+
+fn now_timestamp_slug() -> String {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}", d.as_secs())
+}
+
+fn step_target_desc(step: &Step) -> Option<String> {
+    match step {
+        Step::Action(a) => a.target.as_ref().map(|t| {
+            if let Some(ref id) = t.id { format!("{{id: \"{id}\"}}") }
+            else if let Some(ref text) = t.text { format!("{{text: \"{text}\"}}") }
+            else if let Some(ref fuzzy) = t.content_fuzzy { format!("{{content_fuzzy: \"{fuzzy}\"}}") }
+            else { "{}".to_string() }
+        }),
+        Step::Assert(a) => a.target.as_ref().map(|t| {
+            if let Some(ref id) = t.id { format!("{{id: \"{id}\"}}") }
+            else if let Some(ref text) = t.text { format!("{{text: \"{text}\"}}") }
+            else if let Some(ref fuzzy) = t.content_fuzzy { format!("{{content_fuzzy: \"{fuzzy}\"}}") }
+            else { "{}".to_string() }
+        }),
+    }
+}
+
+fn fetch_ui_dump(dev: Option<&Device>) -> String {
+    match adb::shell(dev, &["uiautomator", "dump", "/dev/tty"]) {
+        Ok(out) => out,
+        Err(_) => "(ui dump failed)".to_string(),
+    }
+}
+
+fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
+    let mut step_logs: Vec<StepLogEntry> = Vec::new();
+
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
         if let Some(ref activity) = pre.activity {
-            // Verify current activity
             if let Ok(current) = get_current_activity(dev) {
                 if !current.contains(activity) {
-                    return TestResult {
+                    return (TestResult {
                         id: spec.id.clone(),
                         name: spec.name.clone(),
                         status: "FAIL".to_string(),
@@ -253,7 +376,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> TestResult {
                             description: format!("precondition failed: expected activity {activity}, got {current}"),
                             screenshot: None,
                         }),
-                    };
+                    }, step_logs);
                 }
             }
         }
@@ -262,62 +385,112 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> TestResult {
         }
     }
 
-    // Wait for idle
     wait_idle(dev, timeout);
 
-    // Run steps
     for (i, step) in spec.steps.iter().enumerate() {
         let result = match step {
             Step::Action(a) => execute_action(dev, a),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
 
-        if let Err(err) = result {
-            // Capture screenshot on failure
-            let screenshot = capture_failure_screenshot(dev, &spec.id, i);
-            return TestResult {
-                id: spec.id.clone(),
-                name: spec.name.clone(),
-                status: "FAIL".to_string(),
-                steps_run: i,
-                steps_total: spec.steps.len(),
-                failure: Some(FailureDetail {
+        match &result {
+            Ok(found_desc) => {
+                let (action_name, assert_name) = match step {
+                    Step::Action(a) => (Some(a.action.clone()), None),
+                    Step::Assert(a) => (None, Some(a.assert.clone())),
+                };
+                // On PASS, include full ui dump as proof
+                let ui_dump = if matches!(step, Step::Assert(_)) {
+                    Some(fetch_ui_dump(dev))
+                } else {
+                    None
+                };
+                step_logs.push(StepLogEntry {
                     step: i + 1,
-                    description: err,
-                    screenshot,
-                }),
-            };
+                    action: action_name,
+                    assert: assert_name,
+                    target: step_target_desc(step),
+                    result: "PASS".to_string(),
+                    element_found: if found_desc.is_empty() { None } else { Some(found_desc.clone()) },
+                    timestamp: now_iso(),
+                    error: None,
+                    agent_yaml: None,
+                    ui_dump,
+                });
+            }
+            Err(err) => {
+                let (action_name, assert_name) = match step {
+                    Step::Action(a) => (Some(a.action.clone()), None),
+                    Step::Assert(a) => (None, Some(a.assert.clone())),
+                };
+                let agent_yaml = fetch_agent_yaml(dev).ok();
+                let ui_dump = Some(fetch_ui_dump(dev));
+                let screenshot = capture_failure_screenshot(dev, &spec.id, i);
+
+                step_logs.push(StepLogEntry {
+                    step: i + 1,
+                    action: action_name,
+                    assert: assert_name,
+                    target: step_target_desc(step),
+                    result: "FAIL".to_string(),
+                    element_found: None,
+                    timestamp: now_iso(),
+                    error: Some(err.clone()),
+                    agent_yaml,
+                    ui_dump,
+                });
+
+                return (TestResult {
+                    id: spec.id.clone(),
+                    name: spec.name.clone(),
+                    status: "FAIL".to_string(),
+                    steps_run: i,
+                    steps_total: spec.steps.len(),
+                    failure: Some(FailureDetail {
+                        step: i + 1,
+                        description: err.clone(),
+                        screenshot,
+                    }),
+                }, step_logs);
+            }
         }
 
-        // Wait for idle after actions
         if matches!(step, Step::Action(_)) {
             wait_idle(dev, timeout);
         }
     }
 
-    TestResult {
+    // On overall PASS, grab final ui dump as proof
+    let final_ui = fetch_ui_dump(dev);
+    if let Some(last) = step_logs.last_mut() {
+        if last.ui_dump.is_none() {
+            last.ui_dump = Some(final_ui);
+        }
+    }
+
+    (TestResult {
         id: spec.id.clone(),
         name: spec.name.clone(),
         status: "PASS".to_string(),
         steps_run: spec.steps.len(),
         steps_total: spec.steps.len(),
         failure: None,
-    }
+    }, step_logs)
 }
 
-fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), String> {
+fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
             let target = action.target.as_ref().ok_or("tap: no target")?;
-            let (x, y) = find_element(dev, target)?;
+            let (x, y, desc) = find_element(dev, target)?;
             adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
-            Ok(())
+            Ok(desc)
         }
         "type" => {
             let text = action.text.as_ref().ok_or("type: no text")?;
             let escaped = text.replace(' ', "%s");
             adb::shell(dev, &["input", "text", &escaped])?;
-            Ok(())
+            Ok(format!("typed \"{}\"", text))
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
@@ -325,22 +498,26 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
                 scroll_to_element(dev, id_or_text)?;
             } else {
                 let dir = action.direction.as_deref().unwrap_or("down");
-                scroll_direction(dev, dir)?;
+                let times = action.times.unwrap_or(1);
+                for _ in 0..times {
+                    scroll_direction(dev, dir)?;
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
             }
-            Ok(())
+            Ok(String::new())
         }
         "back" => {
             adb::shell(dev, &["input", "keyevent", "4"])?;
-            Ok(())
+            Ok(String::new())
         }
         "home" => {
             adb::shell(dev, &["input", "keyevent", "3"])?;
-            Ok(())
+            Ok(String::new())
         }
         "wait" => {
             let secs = action.seconds.unwrap_or(2);
             std::thread::sleep(std::time::Duration::from_secs(secs));
-            Ok(())
+            Ok(String::new())
         }
         "capture" => {
             let output_raw = action.output.as_ref().ok_or("capture: no output path")?;
@@ -379,7 +556,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
                 let count = schema.elements.len() as u64;
                 crate::catalogue::update_manifest_semantic(&cat_root, &entry_key, count, history_count)?;
             }
-            Ok(())
+            Ok(format!("captured → {output}"))
         }
         "capture_screenshot" => {
             let output_raw = action.output.as_ref().ok_or("capture_screenshot: no output path")?;
@@ -415,19 +592,19 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
             if let Some((cat_root, Some(entry_key))) = cat_info {
                 let _ = crate::catalogue::update_manifest_screenshot(&cat_root, &entry_key);
             }
-            Ok(())
+            Ok(format!("screenshot → {output}"))
         }
         other => Err(format!("unknown action: {other}")),
     }
 }
 
-fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Result<(), String> {
+fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Result<String, String> {
     match assert.assert.as_str() {
         "activity" => {
             let expected = assert.expected.as_ref().ok_or("assert activity: no expected")?;
             let current = get_current_activity(dev)?;
             if current.contains(expected.as_str()) {
-                Ok(())
+                Ok(format!("activity matches: {current}"))
             } else {
                 Err(format!("expected activity {expected}, got {current}"))
             }
@@ -438,7 +615,7 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
             let expected_text = assert.text.as_deref();
             let expected_hint = assert.hint.as_deref();
 
-            let found = elements.iter().any(|e| {
+            let found = elements.iter().find(|e| {
                 let id_match = target
                     .and_then(|t| t.id.as_deref())
                     .map_or(true, |id| {
@@ -469,10 +646,16 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                 id_match && text_match && fuzzy_match
             });
 
-            if found {
-                Ok(())
+            if let Some(elem) = found {
+                let content_line = elem.lines()
+                    .find(|l| l.trim().starts_with("content:"))
+                    .map(|l| l.trim().to_string())
+                    .unwrap_or_default();
+                Ok(format!("found: {content_line}"))
             } else {
-                let desc = target.and_then(|t| t.id.as_deref()).unwrap_or("(unnamed)");
+                let desc = target
+                    .and_then(|t| t.content_fuzzy.as_deref().or(t.id.as_deref()))
+                    .unwrap_or("(unnamed)");
                 Err(format!("element not found: {desc}"))
             }
         }
@@ -494,21 +677,20 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                 }
             }
 
-            Ok(())
+            Ok(format!("element state OK: {id}"))
         }
         other => Err(format!("unknown assert: {other}")),
     }
 }
 
-fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), String> {
-    // Try agent first for precise bounds
+fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, String), String> {
     let yaml = fetch_agent_yaml(dev)?;
 
     let search_id = target.id.as_deref().unwrap_or("");
     let search_text = target.text.as_deref().unwrap_or("");
     let search_fuzzy = target.content_fuzzy.as_deref().unwrap_or("");
 
-    let mut fuzzy_candidate: Option<(i32, i32)> = None;
+    let mut fuzzy_candidate: Option<(i32, i32, String)> = None;
     let mut fuzzy_clickable = false;
 
     for chunk in yaml.split("\n- ") {
@@ -548,22 +730,28 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), Str
                 let cx = ((x + w / 2) as f64 * density) as i32;
                 let cy = ((y + h / 2) as f64 * density) as i32;
 
+                let content_line = chunk.lines()
+                    .find(|l| l.trim().starts_with("content:"))
+                    .map(|l| l.trim().to_string())
+                    .unwrap_or_default();
+                let desc = format!("{} at ({}, {})", content_line, cx, cy);
+
                 if exact_match {
-                    return Ok((cx, cy));
+                    return Ok((cx, cy, desc));
                 }
                 let is_clickable = chunk.contains("clickable: true");
                 match (is_clickable, fuzzy_clickable) {
-                    (true, false) => { fuzzy_candidate = Some((cx, cy)); fuzzy_clickable = true; }
-                    (true, true) => {} // keep first clickable
-                    (_, _) if fuzzy_candidate.is_none() => { fuzzy_candidate = Some((cx, cy)); }
+                    (true, false) => { fuzzy_candidate = Some((cx, cy, desc)); fuzzy_clickable = true; }
+                    (true, true) => {}
+                    (_, _) if fuzzy_candidate.is_none() => { fuzzy_candidate = Some((cx, cy, desc)); }
                     _ => {}
                 }
             }
         }
     }
 
-    if let Some(coords) = fuzzy_candidate {
-        return Ok(coords);
+    if let Some(candidate) = fuzzy_candidate {
+        return Ok(candidate);
     }
 
     let desc = if !search_id.is_empty() { search_id }
