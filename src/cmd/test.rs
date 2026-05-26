@@ -745,10 +745,33 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                     .unwrap_or_default();
                 Ok(format!("found: {content_line}"))
             } else {
-                let desc = target
-                    .and_then(|t| t.content_fuzzy.as_deref().or(t.id.as_deref()))
-                    .unwrap_or("(unnamed)");
-                Err(format!("element not found: {desc}"))
+                // Fallback: uiautomator dump catches AlertDialogs and system windows
+                // that the semantic agent doesn't see
+                let ui_xml = fetch_ui_dump(dev);
+                let fuzzy = target.and_then(|t| t.content_fuzzy.as_deref());
+                let id = target.and_then(|t| t.id.as_deref());
+                let ui_lower = ui_xml.to_lowercase();
+
+                let found_in_ui = fuzzy
+                    .map(|f| ui_lower.contains(&f.to_lowercase()))
+                    .unwrap_or(false)
+                    || id
+                        .map(|i| ui_xml.contains(&format!("resource-id=\"{}\"", i))
+                            || ui_xml.contains(&format!(":id/{}\"", i)))
+                        .unwrap_or(false)
+                    || expected_text
+                        .map(|t| ui_lower.contains(&t.to_lowercase()))
+                        .unwrap_or(false);
+
+                if found_in_ui {
+                    let desc = fuzzy.or(id).unwrap_or("(unnamed)");
+                    Ok(format!("found (uiautomator fallback): {desc}"))
+                } else {
+                    let desc = target
+                        .and_then(|t| t.content_fuzzy.as_deref().or(t.id.as_deref()))
+                        .unwrap_or("(unnamed)");
+                    Err(format!("element not found: {desc}"))
+                }
             }
         }
         "element_not_exists" => {
