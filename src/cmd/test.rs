@@ -412,15 +412,17 @@ fn fetch_ui_dump(dev: Option<&Device>) -> String {
 fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
 
-    // Reset to MainActivity without killing the process (preserves semantic agent)
+    // Reset to MainActivity: use monkey (same as ddb app launch) after clearing task
     let pkg = "se.naturkartan.android";
     let _ = adb::shell(dev, &[
-        "am", "start", "-n",
-        &format!("{pkg}/.ui.mainfragment.MainActivity"),
+        "am", "start",
+        "-a", "android.intent.action.MAIN",
+        "-c", "android.intent.category.LAUNCHER",
+        "-n", &format!("{pkg}/.ui.mainfragment.MainActivity"),
         "--activity-clear-task",
     ]);
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    wait_idle(dev, 5);
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    wait_idle(dev, 10);
 
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
