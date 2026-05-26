@@ -57,14 +57,20 @@ struct TestSpecRaw {
     name: String,
     #[serde(default)]
     precondition: Option<Precondition>,
+    #[serde(default)]
+    pre_steps: Vec<StepRaw>,
     steps: Vec<StepRaw>,
+    #[serde(default)]
+    post_steps: Vec<StepRaw>,
 }
 
 struct TestSpec {
     id: String,
     name: String,
     precondition: Option<Precondition>,
+    pre_steps: Vec<Step>,
     steps: Vec<Step>,
+    post_steps: Vec<Step>,
 }
 
 #[derive(serde::Deserialize)]
@@ -247,15 +253,25 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             .map_err(|e| format!("read {spec_path}: {e}"))?;
         let raw: TestSpecRaw = serde_yaml::from_str(&content)
             .map_err(|e| format!("parse {spec_path}: {e}"))?;
+        let pre_steps: Vec<Step> = raw.pre_steps.into_iter()
+            .map(|s| s.into_step())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("invalid pre_step in {spec_path}: {e}"))?;
         let steps: Vec<Step> = raw.steps.into_iter()
             .map(|s| s.into_step())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("invalid step in {spec_path}: {e}"))?;
+        let post_steps: Vec<Step> = raw.post_steps.into_iter()
+            .map(|s| s.into_step())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("invalid post_step in {spec_path}: {e}"))?;
         let spec = TestSpec {
             id: raw.id,
             name: raw.name,
             precondition: raw.precondition,
+            pre_steps,
             steps,
+            post_steps,
         };
 
         let started = now_iso();
@@ -465,6 +481,29 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     wait_idle(dev, timeout);
 
+    // Run pre_steps (API setup, data seeding)
+    for (i, step) in spec.pre_steps.iter().enumerate() {
+        let result = match step {
+            Step::Action(a) => execute_action(dev, a),
+            Step::Assert(a) => execute_assert(dev, a, timeout),
+        };
+        if let Err(e) = result {
+            eprintln!("  pre_step {} FAIL: {e}", i + 1);
+            return (TestResult {
+                id: spec.id.clone(),
+                name: spec.name.clone(),
+                status: "FAIL".to_string(),
+                steps_run: 0,
+                steps_total: spec.steps.len(),
+                failure: Some(FailureDetail {
+                    step: 0,
+                    description: format!("pre_step {} failed: {e}", i + 1),
+                    screenshot: None,
+                }),
+            }, step_logs);
+        }
+    }
+
     for (i, step) in spec.steps.iter().enumerate() {
         let result = match step {
             Step::Action(a) => execute_action(dev, a),
@@ -543,6 +582,17 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     if let Some(last) = step_logs.last_mut() {
         if last.ui_dump.is_none() {
             last.ui_dump = Some(final_ui);
+        }
+    }
+
+    // Run post_steps (cleanup, API teardown) — always run, even conceptually on success
+    for (i, step) in spec.post_steps.iter().enumerate() {
+        let result = match step {
+            Step::Action(a) => execute_action(dev, a),
+            Step::Assert(a) => execute_assert(dev, a, timeout),
+        };
+        if let Err(e) = &result {
+            eprintln!("  post_step {} FAIL: {e}", i + 1);
         }
     }
 
@@ -721,7 +771,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         "api_call" => {
             let url = action.url.as_deref().ok_or("api_call: no url")?;
             let method = action.method.as_deref().unwrap_or("GET");
-            let base = "https://api.naturkartan.se";
+            let base = "https://apiv3.naturkartan.se";
             let full_url = if url.starts_with("http") { url.to_string() } else { format!("{base}{url}") };
 
             let mut req = match method.to_uppercase().as_str() {
