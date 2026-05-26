@@ -55,6 +55,10 @@ struct StepRaw {
     #[serde(default)]
     direction: Option<String>,
     #[serde(default)]
+    output: Option<String>,
+    #[serde(default)]
+    catalogue: Option<String>,
+    #[serde(default)]
     expected: Option<String>,
     #[serde(default)]
     hint: Option<String>,
@@ -72,6 +76,8 @@ struct ActionStep {
     target: Option<Target>,
     text: Option<String>,
     direction: Option<String>,
+    output: Option<String>,
+    catalogue: Option<String>,
 }
 
 struct AssertStep {
@@ -91,6 +97,8 @@ impl StepRaw {
                 target: self.target,
                 text: self.text,
                 direction: self.direction,
+                output: self.output,
+                catalogue: self.catalogue,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -321,6 +329,79 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
         }
         "home" => {
             adb::shell(dev, &["input", "keyevent", "3"])?;
+            Ok(())
+        }
+        "capture" => {
+            let output = action.output.as_ref().ok_or("capture: no output path")?;
+            let output_path = std::path::Path::new(output);
+            if let Some(parent) = output_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            let cat_info = action
+                .catalogue
+                .as_deref()
+                .map(|c| {
+                    let key = crate::catalogue::detect_catalogue_path(output).map(|(_, k)| k);
+                    (std::path::PathBuf::from(c), key)
+                })
+                .or_else(|| {
+                    crate::catalogue::detect_catalogue_path(output)
+                        .map(|(root, key)| (root, Some(key)))
+                });
+
+            let history_count = if output_path.exists() {
+                crate::catalogue::archive_existing(output_path)?
+            } else {
+                0
+            };
+
+            let yaml = fetch_agent_yaml(dev)?;
+            std::fs::write(output, &yaml).map_err(|e| format!("write capture: {e}"))?;
+            eprintln!("captured → {output}");
+
+            if let Some((cat_root, Some(entry_key))) = cat_info {
+                let schema: crate::semantic::SemanticSchema =
+                    serde_yaml::from_str(&yaml)
+                        .map_err(|e| format!("count elements: {e}"))?;
+                let count = schema.elements.len() as u64;
+                crate::catalogue::update_manifest_semantic(&cat_root, &entry_key, count, history_count)?;
+            }
+            Ok(())
+        }
+        "capture_screenshot" => {
+            let output = action.output.as_ref().ok_or("capture_screenshot: no output path")?;
+            let output_path = std::path::Path::new(output);
+            if let Some(parent) = output_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            let cat_info = action
+                .catalogue
+                .as_deref()
+                .map(|c| {
+                    let key = crate::catalogue::detect_catalogue_path(output).map(|(_, k)| k);
+                    (std::path::PathBuf::from(c), key)
+                })
+                .or_else(|| {
+                    crate::catalogue::detect_catalogue_path(output)
+                        .map(|(root, key)| (root, Some(key)))
+                });
+
+            if output_path.exists() {
+                let _ = crate::catalogue::archive_existing(output_path);
+            }
+
+            let png = adb::adb_raw(dev, &["exec-out", "screencap", "-p"])?;
+            std::fs::write(output, &png).map_err(|e| format!("write screenshot: {e}"))?;
+            let _ = std::process::Command::new("sips")
+                .args(["-Z", "1200", output])
+                .output();
+            eprintln!("screenshot → {output}");
+
+            if let Some((cat_root, Some(entry_key))) = cat_info {
+                let _ = crate::catalogue::update_manifest_screenshot(&cat_root, &entry_key);
+            }
             Ok(())
         }
         other => Err(format!("unknown action: {other}")),
