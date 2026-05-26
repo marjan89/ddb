@@ -113,6 +113,7 @@ ddb ui --semantic --source-root ./  # resolve resource IDs from source tree
 | `--no-agent` | Skip semantic agent auto-detect, use uiautomator |
 | `--source-root <path>` | Android source root for resource resolution |
 | `-o, --output <path>` | Output file (default: stdout) |
+| `--catalogue <path>` | Catalogue root for manifest auto-update (see [Catalogue Integration](#catalogue-integration)) |
 
 **Semantic agent:** When `--semantic` is used, ddb first tries `curl http://localhost:9876/semantic` to get agent-provided data. If unavailable, falls back to uiautomator parsing.
 
@@ -123,7 +124,12 @@ Capture and auto-downscale a screenshot.
 ```bash
 ddb screenshot [output]             # default: /tmp/screen.png
 ddb screenshot -d pixel /tmp/s.png  # specific device
+ddb screenshot /tmp/s.png --catalogue /path/to/catalogue  # auto-update manifest
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--catalogue <path>` | Catalogue root for manifest auto-update (see [Catalogue Integration](#catalogue-integration)) |
 
 ### scroll-capture
 
@@ -205,6 +211,8 @@ steps:
     text: "user@example.com"
   - action: tap
     target: { text: "Sign In" }
+  - action: wait
+    seconds: 2
   - assert: activity
     expected: "com.example.HomeActivity"
   - assert: element_exists
@@ -212,7 +220,47 @@ steps:
     text: "Welcome"
 ```
 
-Actions: `tap`, `type`, `scroll`, `scroll_to`, `back`, `home`. Assertions: `activity`, `element_exists`, `element_state`. Disables animations during test. Captures screenshot on failure.
+**Actions:**
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| `tap` | `target` | Tap on a matched element |
+| `type` | `text` | Type text into focused field |
+| `scroll` | `direction`, `target` | Scroll in direction or to a target element |
+| `scroll_to` | `target` | Scroll until target is visible |
+| `back` | — | Press back button |
+| `home` | — | Press home button |
+| `wait` | `seconds` | Sleep for N seconds (default: 2) |
+| `capture` | `output`, `catalogue` | Capture semantic YAML via agent, write to output path |
+| `capture_screenshot` | `output`, `catalogue` | Capture device screenshot, write to output path |
+
+**Assertions:** `activity`, `element_exists`, `element_state`.
+
+**Target matching:**
+
+```yaml
+target: { id: "loginButton" }              # exact resource ID match
+target: { text: "Sign In" }                # exact content match
+target: { content_fuzzy: "sign in" }       # case-insensitive contains on content field
+target: { id: "btn", content_fuzzy: "ok" } # exact ID takes priority, fuzzy is fallback
+```
+
+`content_fuzzy` matches against the element's `content:` field only (not IDs or other metadata). When multiple elements match, clickable elements are preferred for tap actions.
+
+**Capture actions:**
+
+```yaml
+- action: capture
+  output: catalogue/{platform}/site-detail/semantic.yaml
+  catalogue: /path/to/catalogue/
+- action: capture_screenshot
+  output: catalogue/{platform}/site-detail/screenshot.png
+  catalogue: /path/to/catalogue/
+```
+
+The `{platform}` template variable is replaced with `android` in output paths. When `catalogue` is provided, the manifest is auto-updated with element count, timestamp, and history tracking (existing files are archived to `.history/`).
+
+Disables animations during test. Captures screenshot on failure.
 
 ### mirror
 
@@ -305,7 +353,34 @@ ddb app deploy /tmp/app-debug.apk
 ddb ui --semantic -o /tmp/semantic.yaml
 ```
 
-**Test runner:**
+**Test runner with catalogue capture:**
 ```bash
-ddb test tests/login.yaml tests/search.yaml --report /tmp/qa-results.json
+ddb test tests/site-detail-navigate.yaml -d a54 --report /tmp/results.json
 ```
+
+## Catalogue Integration
+
+ddb integrates with a cross-platform catalogue system for tracking semantic captures and screenshots across Android, iOS, and Figma.
+
+**How it works:**
+
+1. When `--catalogue <path>` is passed (or auto-detected from the output path), ddb archives any existing artifact to `.history/` with a timestamp suffix.
+2. Writes the new artifact (semantic YAML or screenshot).
+3. Updates `manifest.yaml` with element count, capture timestamp, and history count.
+
+**Auto-detection:** If the output path contains `catalogue/{platform}/{screen}/`, the catalogue root and entry key are detected automatically. The `--catalogue` flag overrides auto-detection.
+
+**Manifest format:**
+```yaml
+version: 1
+updated: "2026-05-26T14:04:11Z"
+project: naturkartan
+entries:
+  android/site-detail:
+    last_captured: "2026-05-26T14:04:11Z"
+    elements: 69
+    state: default
+    history_count: 2
+```
+
+**History archiving:** Existing artifacts are moved to `.history/` before overwriting, with timestamp suffix (e.g. `semantic-20260526T1404.yaml`). This enables diffing across captures.
