@@ -29,6 +29,10 @@ pub struct UiArgs {
     /// Force uiautomator (skip agent auto-detect)
     #[arg(long)]
     pub no_agent: bool,
+
+    /// Catalogue root path — auto-update manifest.yaml after writing
+    #[arg(long)]
+    pub catalogue: Option<String>,
 }
 
 pub fn run(dev_name: Option<&str>, args: UiArgs) -> Result<(), String> {
@@ -56,8 +60,49 @@ pub fn run(dev_name: Option<&str>, args: UiArgs) -> Result<(), String> {
     if args.semantic {
         let yaml = run_semantic(dev.as_ref(), &xml, &args)?;
         if let Some(ref path) = args.output {
+            let output_path = std::path::Path::new(path);
+
+            // Detect catalogue path from output or explicit flag
+            let cat_info = args
+                .catalogue
+                .as_deref()
+                .map(|c| {
+                    let key = crate::catalogue::detect_catalogue_path(path)
+                        .map(|(_, k)| k);
+                    (std::path::PathBuf::from(c), key)
+                })
+                .or_else(|| {
+                    crate::catalogue::detect_catalogue_path(path)
+                        .map(|(root, key)| (root, Some(key)))
+                });
+
+            // Archive existing artifact before overwriting
+            let history_count = if output_path.exists() {
+                crate::catalogue::archive_existing(output_path)?
+            } else {
+                if let Some(parent) = output_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("create dirs: {e}"))?;
+                }
+                0
+            };
+
             std::fs::write(path, &yaml).map_err(|e| format!("write error: {e}"))?;
             eprintln!("wrote {}", path);
+
+            // Update manifest if catalogue path detected
+            if let Some((cat_root, Some(entry_key))) = cat_info {
+                let schema: crate::semantic::SemanticSchema =
+                    serde_yaml::from_str(&yaml)
+                        .map_err(|e| format!("count elements: {e}"))?;
+                let count = schema.elements.len() as u64;
+                crate::catalogue::update_manifest_semantic(
+                    &cat_root,
+                    &entry_key,
+                    count,
+                    history_count,
+                )?;
+            }
         } else {
             print!("{yaml}");
         }

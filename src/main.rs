@@ -1,4 +1,5 @@
 mod adb;
+mod catalogue;
 mod cmd;
 mod config;
 mod registry;
