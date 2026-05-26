@@ -594,12 +594,22 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
+                // Preflight: check full dump first — if element not in full tree, fail fast
+                let search = target.content_fuzzy.as_deref()
+                    .or(target.id.as_deref())
+                    .unwrap_or("");
+                if let Ok(full_yaml) = fetch_agent_yaml_full(dev) {
+                    if !search.is_empty() && !full_yaml.to_lowercase().contains(&search.to_lowercase()) {
+                        return Err(format!("scroll_to: '{}' not in full page dump — element doesn't exist", search));
+                    }
+                }
+                // Scroll until element is in viewport
                 for attempt in 0..10 {
                     if find_element(dev, target).is_ok() {
                         break;
                     }
                     if attempt == 9 {
-                        return Err(format!("scroll_to: element not found after 10 scrolls"));
+                        return Err(format!("scroll_to: element not found in viewport after 10 scrolls"));
                     }
                     scroll_direction(dev, "down")?;
                     wait_idle(dev, 3);
@@ -1033,6 +1043,18 @@ fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
     Ok(body.contains("\"idle\":true") || body.contains("\"idle\": true"))
 }
 
+fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
+    let resp = std::process::Command::new("curl")
+        .args(["-s", "--connect-timeout", "5", "http://localhost:9876/semantic?scroll=0"])
+        .output()
+        .map_err(|e| format!("curl error: {e}"))?;
+    if !resp.status.success() {
+        return Err("agent not responding (full dump)".to_string());
+    }
+    let body = String::from_utf8_lossy(&resp.stdout).into_owned();
+    if body.contains("elements:") { Ok(body) } else { Err("invalid agent response (full)".to_string()) }
+}
+
 fn fetch_agent_yaml(dev: Option<&Device>) -> Result<String, String> {
     let resp = std::process::Command::new("curl")
         .args(["-s", "--connect-timeout", "2", "http://localhost:9876/semantic"])
@@ -1052,7 +1074,7 @@ fn fetch_agent_yaml(dev: Option<&Device>) -> Result<String, String> {
 }
 
 fn get_semantic_elements(dev: Option<&Device>) -> Result<Vec<String>, String> {
-    let yaml = fetch_agent_yaml(dev)?;
+    let yaml = fetch_agent_yaml_full(dev).or_else(|_| fetch_agent_yaml(dev))?;
     let elements: Vec<String> = yaml.split("\n- ")
         .skip(1)
         .map(|s| s.to_string())
