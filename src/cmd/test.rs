@@ -180,6 +180,8 @@ struct Target {
     text: Option<String>,
     #[serde(default)]
     content_fuzzy: Option<String>,
+    #[serde(default)]
+    clickable_only: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -951,6 +953,10 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
         let exact_match = id_match || text_match;
 
         if exact_match || fuzzy_match {
+            // Skip non-clickable elements when clickable_only is set
+            if target.clickable_only == Some(true) && !chunk.contains("clickable: true") {
+                continue;
+            }
             let x = extract_yaml_int(chunk, "x: ");
             let y = extract_yaml_int(chunk, "y: ");
             let w = extract_yaml_int(chunk, "w: ");
