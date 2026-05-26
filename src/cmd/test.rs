@@ -588,8 +588,27 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             } else {
                 ensure_input_focus(dev);
             }
-            let escaped = text.replace(' ', "%s");
-            adb::shell(dev, &["input", "text", &escaped])?;
+            let has_non_ascii = text.chars().any(|c| !c.is_ascii());
+            if has_non_ascii {
+                // Clipboard paste for non-ASCII text (ö, å, ä, etc.)
+                adb::shell(dev, &["am", "broadcast", "-a", "clipper.set", "-e", "text", text])?;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                // Long press to trigger paste menu
+                let (x, y) = if let Some(ref target) = action.target {
+                    let (x, y, _) = find_element(dev, target)?;
+                    (x, y)
+                } else {
+                    (540, 300) // fallback center-ish
+                };
+                adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                // Tap paste button
+                adb::shell(dev, &["input", "keyevent", "279"])?; // KEYCODE_PASTE
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            } else {
+                let escaped = text.replace(' ', "%s");
+                adb::shell(dev, &["input", "text", &escaped])?;
+            }
             Ok(format!("typed \"{}\"", text))
         }
         "scroll" | "scroll_to" => {
