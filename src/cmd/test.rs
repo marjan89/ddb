@@ -79,7 +79,7 @@ struct Precondition {
     logged_in: Option<bool>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 struct StepRaw {
     #[serde(default)]
     action: Option<String>,
@@ -111,6 +111,16 @@ struct StepRaw {
     site_id: Option<i64>,
     #[serde(default)]
     user_id: Option<i64>,
+    #[serde(default)]
+    platform: Option<PlatformSteps>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct PlatformSteps {
+    #[serde(default)]
+    android: Option<Vec<StepRaw>>,
+    #[serde(default)]
+    ios: Option<Vec<StepRaw>>,
 }
 
 enum Step {
@@ -172,7 +182,7 @@ impl StepRaw {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 struct Target {
     #[serde(default)]
     id: Option<String>,
@@ -235,7 +245,17 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             .map_err(|e| format!("read {spec_path}: {e}"))?;
         let raw: TestSpecRaw = serde_yaml::from_str(&content)
             .map_err(|e| format!("parse {spec_path}: {e}"))?;
-        let steps: Vec<Step> = raw.steps.into_iter()
+        let expanded: Vec<StepRaw> = raw.steps.into_iter()
+            .flat_map(|s| {
+                if let Some(ref plat) = s.platform {
+                    if let Some(android_steps) = &plat.android {
+                        return android_steps.clone();
+                    }
+                }
+                vec![s]
+            })
+            .collect();
+        let steps: Vec<Step> = expanded.into_iter()
             .map(|s| s.into_step())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("invalid step in {spec_path}: {e}"))?;
@@ -638,50 +658,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             }
             Ok(String::new())
         }
-        "deep_link" | "navigate_to_site" => {
-            let site_id = action.site_id
-                .map(|id| id.to_string())
-                .or_else(|| {
-                    action.url.as_deref()
-                        .and_then(|u| u.rsplit('/').next())
-                        .map(|s| s.to_string())
-                })
-                .ok_or("navigate_to_site: no site_id")?;
-            // Category browse: search tab → nature reserve → list → scroll to site
-            let search_target = Target { id: None, text: None, content_fuzzy: Some("search".into()), clickable_only: None, exclude_type: None };
-            let (sx, sy, _) = poll_for_element(dev, &search_target, 10_000)?;
-            adb::shell(dev, &["input", "tap", &sx.to_string(), &sy.to_string()])?;
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            let cat_target = Target { id: None, text: None, content_fuzzy: Some("nature reserve".into()), clickable_only: None, exclude_type: None };
-            let (cx, cy, _) = poll_for_element(dev, &cat_target, 10_000)?;
-            adb::shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()])?;
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            let list_target = Target { id: None, text: None, content_fuzzy: Some("list".into()), clickable_only: None, exclude_type: None };
-            let (lx, ly, _) = poll_for_element(dev, &list_target, 10_000)?;
-            adb::shell(dev, &["input", "tap", &lx.to_string(), &ly.to_string()])?;
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            // Scroll to site name in the list
-            let site_name = match site_id.as_str() {
-                "31255" => "sandhammaren",
-                "82" => "lunda",
-                "53" => "hjälmmossen",
-                _ => &site_id,
-            };
-            let site_target = Target { id: None, text: None, content_fuzzy: Some(site_name.into()), clickable_only: None, exclude_type: None };
-            for attempt in 0..20 {
-                if find_element(dev, &site_target).is_ok() { break; }
-                if attempt == 19 { return Err(format!("navigate_to_site: '{}' not found after 20 scrolls", site_name)); }
-                scroll_direction(dev, "down")?;
-                wait_idle(dev, 3);
-            }
-            let (tx, ty, _) = find_element(dev, &site_target)?;
-            adb::shell(dev, &["input", "tap", &tx.to_string(), &ty.to_string()])?;
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            wait_idle(dev, 5);
-            Ok(format!("navigate_to_site → {} (category browse)", site_id))
+        "deep_link" | "navigate_to_site" | "navigate_to_user" => {
+            // Runner no longer handles navigation — TC YAML must provide platform-specific steps
+            Err(format!("{}: use platform: android: steps in TC YAML", action.action))
         }
         "navigate_to_user" => {
             let user_id = action.user_id
