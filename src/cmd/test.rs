@@ -111,6 +111,14 @@ struct StepRaw {
     site_id: Option<i64>,
     #[serde(default)]
     user_id: Option<i64>,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    body: Option<serde_json::Value>,
+    #[serde(default)]
+    headers: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    save_as: Option<String>,
 }
 
 enum Step {
@@ -130,6 +138,10 @@ struct ActionStep {
     url: Option<String>,
     site_id: Option<i64>,
     user_id: Option<i64>,
+    method: Option<String>,
+    body: Option<serde_json::Value>,
+    headers: Option<std::collections::HashMap<String, String>>,
+    save_as: Option<String>,
 }
 
 struct AssertStep {
@@ -156,6 +168,10 @@ impl StepRaw {
                 url: self.url,
                 site_id: self.site_id,
                 user_id: self.user_id,
+                method: self.method,
+                body: self.body,
+                headers: self.headers,
+                save_as: self.save_as,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -701,6 +717,44 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                 let _ = crate::catalogue::update_manifest_screenshot(&cat_root, &entry_key);
             }
             Ok(format!("screenshot → {output}"))
+        }
+        "api_call" => {
+            let url = action.url.as_deref().ok_or("api_call: no url")?;
+            let method = action.method.as_deref().unwrap_or("GET");
+            let base = "https://api.naturkartan.se";
+            let full_url = if url.starts_with("http") { url.to_string() } else { format!("{base}{url}") };
+
+            let mut req = match method.to_uppercase().as_str() {
+                "GET" => ureq::get(&full_url),
+                "POST" => ureq::post(&full_url),
+                "PUT" => ureq::put(&full_url),
+                "DELETE" => ureq::delete(&full_url),
+                "PATCH" => ureq::patch(&full_url),
+                _ => return Err(format!("api_call: unsupported method {method}")),
+            };
+
+            if let Some(ref hdrs) = action.headers {
+                for (k, v) in hdrs {
+                    req = req.set(k, v);
+                }
+            }
+
+            let resp = if let Some(ref body) = action.body {
+                req.set("Content-Type", "application/json")
+                    .send_string(&body.to_string())
+                    .map_err(|e| format!("api_call {method} {full_url}: {e}"))?
+            } else {
+                req.call().map_err(|e| format!("api_call {method} {full_url}: {e}"))?
+            };
+
+            let status = resp.status();
+            let body_str = resp.into_string().unwrap_or_default();
+
+            if status >= 400 {
+                return Err(format!("api_call {method} {full_url}: HTTP {status} — {body_str}"));
+            }
+
+            Ok(format!("api_call {method} {full_url} → {status} ({} bytes)", body_str.len()))
         }
         other => Err(format!("unknown action: {other}")),
     }

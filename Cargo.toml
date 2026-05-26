@@ -18,3 +18,4 @@ serde_yaml = "0.9"
 walkdir = "2"
 semantic-schema = { path = "../../semantic-schema" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+ureq = { version = "2", features = ["json"] }
