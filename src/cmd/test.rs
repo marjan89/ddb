@@ -568,8 +568,16 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                let id_or_text = target.id.as_deref().or(target.text.as_deref()).unwrap_or("");
-                scroll_to_element(dev, id_or_text)?;
+                for attempt in 0..10 {
+                    if find_element(dev, target).is_ok() {
+                        break;
+                    }
+                    if attempt == 9 {
+                        return Err(format!("scroll_to: element not found after 10 scrolls"));
+                    }
+                    scroll_direction(dev, "down")?;
+                    wait_idle(dev, 3);
+                }
             } else {
                 let dir = action.direction.as_deref().unwrap_or("down");
                 let times = action.times.unwrap_or(1);
