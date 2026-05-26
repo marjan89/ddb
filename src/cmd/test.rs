@@ -343,8 +343,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
             Ok(())
         }
         "capture" => {
-            let output = action.output.as_ref().ok_or("capture: no output path")?;
-            let output_path = std::path::Path::new(output);
+            let output_raw = action.output.as_ref().ok_or("capture: no output path")?;
+            let output = output_raw.replace("{platform}", "android");
+            let output_path = std::path::Path::new(&output);
             if let Some(parent) = output_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -353,11 +354,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
                 .catalogue
                 .as_deref()
                 .map(|c| {
-                    let key = crate::catalogue::detect_catalogue_path(output).map(|(_, k)| k);
+                    let key = crate::catalogue::detect_catalogue_path(&output).map(|(_, k)| k);
                     (std::path::PathBuf::from(c), key)
                 })
                 .or_else(|| {
-                    crate::catalogue::detect_catalogue_path(output)
+                    crate::catalogue::detect_catalogue_path(&output)
                         .map(|(root, key)| (root, Some(key)))
                 });
 
@@ -368,7 +369,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
             };
 
             let yaml = fetch_agent_yaml(dev)?;
-            std::fs::write(output, &yaml).map_err(|e| format!("write capture: {e}"))?;
+            std::fs::write(&output, &yaml).map_err(|e| format!("write capture: {e}"))?;
             eprintln!("captured → {output}");
 
             if let Some((cat_root, Some(entry_key))) = cat_info {
@@ -381,8 +382,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
             Ok(())
         }
         "capture_screenshot" => {
-            let output = action.output.as_ref().ok_or("capture_screenshot: no output path")?;
-            let output_path = std::path::Path::new(output);
+            let output_raw = action.output.as_ref().ok_or("capture_screenshot: no output path")?;
+            let output = output_raw.replace("{platform}", "android");
+            let output_path = std::path::Path::new(&output);
             if let Some(parent) = output_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -391,11 +393,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
                 .catalogue
                 .as_deref()
                 .map(|c| {
-                    let key = crate::catalogue::detect_catalogue_path(output).map(|(_, k)| k);
+                    let key = crate::catalogue::detect_catalogue_path(&output).map(|(_, k)| k);
                     (std::path::PathBuf::from(c), key)
                 })
                 .or_else(|| {
-                    crate::catalogue::detect_catalogue_path(output)
+                    crate::catalogue::detect_catalogue_path(&output)
                         .map(|(root, key)| (root, Some(key)))
                 });
 
@@ -404,9 +406,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
             }
 
             let png = adb::adb_raw(dev, &["exec-out", "screencap", "-p"])?;
-            std::fs::write(output, &png).map_err(|e| format!("write screenshot: {e}"))?;
+            std::fs::write(&output, &png).map_err(|e| format!("write screenshot: {e}"))?;
             let _ = std::process::Command::new("sips")
-                .args(["-Z", "1200", output])
+                .args(["-Z", "1200", &output])
                 .output();
             eprintln!("screenshot → {output}");
 
@@ -507,6 +509,7 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), Str
     let search_fuzzy = target.content_fuzzy.as_deref().unwrap_or("");
 
     let mut fuzzy_candidate: Option<(i32, i32)> = None;
+    let mut fuzzy_clickable = false;
 
     for chunk in yaml.split("\n- ") {
         let id_match = !search_id.is_empty() && (
@@ -520,8 +523,17 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), Str
             || chunk.contains(&format!("content: {}", search_text))
             || chunk.contains(search_text)
         );
-        let fuzzy_match = !search_fuzzy.is_empty()
-            && chunk.to_lowercase().contains(&search_fuzzy.to_lowercase());
+        let fuzzy_match = !search_fuzzy.is_empty() && {
+            let needle = search_fuzzy.to_lowercase();
+            chunk.lines().any(|line| {
+                let t = line.trim();
+                if let Some(rest) = t.strip_prefix("content:") {
+                    rest.to_lowercase().contains(&needle)
+                } else {
+                    false
+                }
+            })
+        };
 
         let exact_match = id_match || text_match;
 
@@ -539,11 +551,12 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), Str
                 if exact_match {
                     return Ok((cx, cy));
                 }
-                if fuzzy_candidate.is_none() {
-                    let is_clickable = chunk.contains("clickable: true");
-                    if is_clickable || fuzzy_candidate.is_none() {
-                        fuzzy_candidate = Some((cx, cy));
-                    }
+                let is_clickable = chunk.contains("clickable: true");
+                match (is_clickable, fuzzy_clickable) {
+                    (true, false) => { fuzzy_candidate = Some((cx, cy)); fuzzy_clickable = true; }
+                    (true, true) => {} // keep first clickable
+                    (_, _) if fuzzy_candidate.is_none() => { fuzzy_candidate = Some((cx, cy)); }
+                    _ => {}
                 }
             }
         }
