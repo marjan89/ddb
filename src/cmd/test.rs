@@ -441,8 +441,50 @@ fn fetch_ui_dump(dev: Option<&Device>) -> String {
     }
 }
 
+struct RunContext {
+    vars: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl RunContext {
+    fn new() -> Self {
+        Self { vars: std::collections::HashMap::new() }
+    }
+
+    fn interpolate(&self, s: &str) -> String {
+        let mut result = s.to_string();
+        for (key, val) in &self.vars {
+            let patterns = self.flatten_patterns(key, val);
+            for (pattern, replacement) in patterns {
+                result = result.replace(&format!("{{{{{}}}}}", pattern), &replacement);
+            }
+        }
+        result
+    }
+
+    fn flatten_patterns(&self, prefix: &str, val: &serde_json::Value) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        match val {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    out.extend(self.flatten_patterns(&format!("{prefix}.{k}"), v));
+                }
+            }
+            serde_json::Value::String(s) => out.push((prefix.to_string(), s.clone())),
+            serde_json::Value::Number(n) => out.push((prefix.to_string(), n.to_string())),
+            serde_json::Value::Bool(b) => out.push((prefix.to_string(), b.to_string())),
+            _ => out.push((prefix.to_string(), val.to_string())),
+        }
+        out
+    }
+
+    fn save(&mut self, key: &str, val: serde_json::Value) {
+        self.vars.insert(key.to_string(), val);
+    }
+}
+
 fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
+    let mut ctx = RunContext::new();
 
     // Known state reset: kill + relaunch app if package specified
     if let Some(ref pre) = spec.precondition {
@@ -484,7 +526,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     // Run pre_steps (API setup, data seeding)
     for (i, step) in spec.pre_steps.iter().enumerate() {
         let result = match step {
-            Step::Action(a) => execute_action(dev, a),
+            Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
         if let Err(e) = result {
@@ -506,7 +548,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     for (i, step) in spec.steps.iter().enumerate() {
         let result = match step {
-            Step::Action(a) => execute_action(dev, a),
+            Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
 
@@ -588,7 +630,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     // Run post_steps (cleanup, API teardown) — always run, even conceptually on success
     for (i, step) in spec.post_steps.iter().enumerate() {
         let result = match step {
-            Step::Action(a) => execute_action(dev, a),
+            Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
         if let Err(e) = &result {
@@ -606,7 +648,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     }, step_logs)
 }
 
-fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, String> {
+fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContext) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
             dismiss_keyboard_if_visible(dev);
@@ -769,7 +811,8 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             Ok(format!("screenshot → {output}"))
         }
         "api_call" => {
-            let url = action.url.as_deref().ok_or("api_call: no url")?;
+            let raw_url = action.url.as_deref().ok_or("api_call: no url")?;
+            let url = ctx.interpolate(raw_url);
             let method = action.method.as_deref().unwrap_or("GET");
             let base = "https://apiv3.naturkartan.se";
             let full_url = if url.starts_with("http") { url.to_string() } else { format!("{base}{url}") };
@@ -785,13 +828,14 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
 
             if let Some(ref hdrs) = action.headers {
                 for (k, v) in hdrs {
-                    req = req.set(k, v);
+                    req = req.set(k, &ctx.interpolate(v));
                 }
             }
 
             let resp = if let Some(ref body) = action.body {
+                let body_str = ctx.interpolate(&body.to_string());
                 req.set("Content-Type", "application/json")
-                    .send_string(&body.to_string())
+                    .send_string(&body_str)
                     .map_err(|e| format!("api_call {method} {full_url}: {e}"))?
             } else {
                 req.call().map_err(|e| format!("api_call {method} {full_url}: {e}"))?
@@ -802,6 +846,12 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
 
             if status >= 400 {
                 return Err(format!("api_call {method} {full_url}: HTTP {status} — {body_str}"));
+            }
+
+            if let Some(ref save_key) = action.save_as {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body_str) {
+                    ctx.save(save_key, json_val);
+                }
             }
 
             Ok(format!("api_call {method} {full_url} → {status} ({} bytes)", body_str.len()))
