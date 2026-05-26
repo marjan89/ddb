@@ -109,6 +109,8 @@ struct StepRaw {
     url: Option<String>,
     #[serde(default)]
     site_id: Option<i64>,
+    #[serde(default)]
+    user_id: Option<i64>,
 }
 
 enum Step {
@@ -127,6 +129,7 @@ struct ActionStep {
     times: Option<u64>,
     url: Option<String>,
     site_id: Option<i64>,
+    user_id: Option<i64>,
 }
 
 struct AssertStep {
@@ -152,6 +155,7 @@ impl StepRaw {
                 times: self.times,
                 url: self.url,
                 site_id: self.site_id,
+                user_id: self.user_id,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -590,6 +594,18 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             ])?;
             std::thread::sleep(std::time::Duration::from_secs(3));
             Ok(format!("navigate_to_site → {site_id}"))
+        }
+        "navigate_to_user" => {
+            let user_id = action.user_id
+                .map(|id| id.to_string())
+                .ok_or("navigate_to_user: no user_id")?;
+            adb::shell(dev, &[
+                "am", "start", "-n",
+                "se.naturkartan.android/.ui.userprofile.UserProfileActivity",
+                "--ei", "extra_user_id", &user_id,
+            ])?;
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            Ok(format!("navigate_to_user → {user_id}"))
         }
         "long_press" => {
             dismiss_keyboard_if_visible(dev);
