@@ -598,7 +598,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                 let search = target.content_fuzzy.as_deref()
                     .or(target.id.as_deref())
                     .unwrap_or("");
-                if let Ok(full_yaml) = fetch_agent_yaml_full(dev) {
+                if let Ok(full_yaml) = fetch_agent_yaml_full_with_retry(dev) {
                     if !search.is_empty() && !full_yaml.to_lowercase().contains(&search.to_lowercase()) {
                         return Err(format!("scroll_to: '{}' not in full page dump — element doesn't exist", search));
                     }
@@ -1043,6 +1043,16 @@ fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
     Ok(body.contains("\"idle\":true") || body.contains("\"idle\": true"))
 }
 
+fn fetch_agent_yaml_full_with_retry(dev: Option<&Device>) -> Result<String, String> {
+    for _ in 0..3 {
+        if let Ok(yaml) = fetch_agent_yaml_full(dev) {
+            return Ok(yaml);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    fetch_agent_yaml(dev)
+}
+
 fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
     let resp = std::process::Command::new("curl")
         .args(["-s", "--connect-timeout", "5", "http://localhost:9876/semantic?scroll=0"])
@@ -1074,7 +1084,7 @@ fn fetch_agent_yaml(dev: Option<&Device>) -> Result<String, String> {
 }
 
 fn get_semantic_elements(dev: Option<&Device>) -> Result<Vec<String>, String> {
-    let yaml = fetch_agent_yaml_full(dev).or_else(|_| fetch_agent_yaml(dev))?;
+    let yaml = fetch_agent_yaml_full_with_retry(dev)?;
     let elements: Vec<String> = yaml.split("\n- ")
         .skip(1)
         .map(|s| s.to_string())
