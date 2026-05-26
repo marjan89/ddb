@@ -59,6 +59,8 @@ struct StepRaw {
     #[serde(default)]
     catalogue: Option<String>,
     #[serde(default)]
+    seconds: Option<u64>,
+    #[serde(default)]
     expected: Option<String>,
     #[serde(default)]
     hint: Option<String>,
@@ -78,6 +80,7 @@ struct ActionStep {
     direction: Option<String>,
     output: Option<String>,
     catalogue: Option<String>,
+    seconds: Option<u64>,
 }
 
 struct AssertStep {
@@ -99,6 +102,7 @@ impl StepRaw {
                 direction: self.direction,
                 output: self.output,
                 catalogue: self.catalogue,
+                seconds: self.seconds,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -121,6 +125,8 @@ struct Target {
     id: Option<String>,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    content_fuzzy: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -331,6 +337,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<(), Strin
             adb::shell(dev, &["input", "keyevent", "3"])?;
             Ok(())
         }
+        "wait" => {
+            let secs = action.seconds.unwrap_or(2);
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            Ok(())
+        }
         "capture" => {
             let output = action.output.as_ref().ok_or("capture: no output path")?;
             let output_path = std::path::Path::new(output);
@@ -446,7 +457,14 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                     }
                 });
 
-                id_match && text_match
+                let fuzzy_match = target
+                    .and_then(|t| t.content_fuzzy.as_deref())
+                    .map_or(true, |fuzzy| {
+                        let lower = e.to_lowercase();
+                        lower.contains(&fuzzy.to_lowercase())
+                    });
+
+                id_match && text_match && fuzzy_match
             });
 
             if found {
@@ -486,8 +504,10 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), Str
 
     let search_id = target.id.as_deref().unwrap_or("");
     let search_text = target.text.as_deref().unwrap_or("");
+    let search_fuzzy = target.content_fuzzy.as_deref().unwrap_or("");
 
-    // Parse elements from YAML to find bounds
+    let mut fuzzy_candidate: Option<(i32, i32)> = None;
+
     for chunk in yaml.split("\n- ") {
         let id_match = !search_id.is_empty() && (
             chunk.contains(&format!("platform_id: \"{}\"", search_id))
@@ -500,26 +520,43 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32), Str
             || chunk.contains(&format!("content: {}", search_text))
             || chunk.contains(search_text)
         );
-        let matches = id_match || text_match;
+        let fuzzy_match = !search_fuzzy.is_empty()
+            && chunk.to_lowercase().contains(&search_fuzzy.to_lowercase());
 
-        if matches {
-            // Extract center from bounds
+        let exact_match = id_match || text_match;
+
+        if exact_match || fuzzy_match {
             let x = extract_yaml_int(chunk, "x: ");
             let y = extract_yaml_int(chunk, "y: ");
             let w = extract_yaml_int(chunk, "w: ");
             let h = extract_yaml_int(chunk, "h: ");
 
             if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                // Convert dp back to px for input commands
                 let density = get_density(dev).unwrap_or(2.8);
                 let cx = ((x + w / 2) as f64 * density) as i32;
                 let cy = ((y + h / 2) as f64 * density) as i32;
-                return Ok((cx, cy));
+
+                if exact_match {
+                    return Ok((cx, cy));
+                }
+                if fuzzy_candidate.is_none() {
+                    let is_clickable = chunk.contains("clickable: true");
+                    if is_clickable || fuzzy_candidate.is_none() {
+                        fuzzy_candidate = Some((cx, cy));
+                    }
+                }
             }
         }
     }
 
-    Err(format!("element not found: id={search_id} text={search_text}"))
+    if let Some(coords) = fuzzy_candidate {
+        return Ok(coords);
+    }
+
+    let desc = if !search_id.is_empty() { search_id }
+        else if !search_text.is_empty() { search_text }
+        else { search_fuzzy };
+    Err(format!("element not found: {desc}"))
 }
 
 fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), String> {
