@@ -415,13 +415,19 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     // Always reset app to clean state before each TC
     let pkg = "se.naturkartan.android";
     let _ = adb::shell(dev, &["am", "force-stop", pkg]);
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_secs(1));
     let _ = adb::shell(dev, &[
         "am", "start", "-n",
         &format!("{pkg}/.ui.mainfragment.MainActivity"),
         "--activity-clear-task",
     ]);
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // Wait for app + semantic agent to be ready
+    for _ in 0..15 {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if check_idle(dev).unwrap_or(false) {
+            break;
+        }
+    }
 
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
