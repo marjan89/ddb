@@ -751,6 +751,39 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                 Err(format!("element not found: {desc}"))
             }
         }
+        "element_not_exists" => {
+            let elements = get_semantic_elements(dev)?;
+            let target = assert.target.as_ref();
+
+            let found = elements.iter().find(|e| {
+                let id_match = target
+                    .and_then(|t| t.id.as_deref())
+                    .map_or(true, |id| {
+                        e.contains(&format!("platform_id: \"{}\"", id))
+                        || e.contains(&format!("id: \"{}\"", id))
+                    });
+
+                let fuzzy_match = target
+                    .and_then(|t| t.content_fuzzy.as_deref())
+                    .map_or(true, |fuzzy| {
+                        e.to_lowercase().contains(&fuzzy.to_lowercase())
+                    });
+
+                id_match && fuzzy_match
+            });
+
+            if found.is_none() {
+                let desc = target
+                    .and_then(|t| t.content_fuzzy.as_deref().or(t.id.as_deref()))
+                    .unwrap_or("(unnamed)");
+                Ok(format!("correctly absent: {desc}"))
+            } else {
+                let desc = target
+                    .and_then(|t| t.content_fuzzy.as_deref().or(t.id.as_deref()))
+                    .unwrap_or("(unnamed)");
+                Err(format!("element should not exist but found: {desc}"))
+            }
+        }
         "element_state" => {
             let target = assert.target.as_ref().ok_or("assert element_state: no target")?;
             let elements = get_semantic_elements(dev)?;
