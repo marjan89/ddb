@@ -424,6 +424,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     std::thread::sleep(std::time::Duration::from_secs(3));
     wait_idle(dev, 10);
 
+    // #1: /health check — verify agent is responding before first step
+    if !check_idle(dev).unwrap_or(false) {
+        eprintln!("  warning: agent /health not responding, waiting 5s...");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
         if let Some(ref activity) = pre.activity {
@@ -489,6 +495,10 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                 };
                 let agent_yaml = fetch_agent_yaml(dev).ok();
                 let ui_dump = Some(fetch_ui_dump(dev));
+                let debug_log = fetch_debug_log();
+                if let Some(ref log) = debug_log {
+                    eprintln!("  debug-log: {}", &log[..log.len().min(200)]);
+                }
                 let screenshot = capture_failure_screenshot(dev, &spec.id, i);
 
                 step_logs.push(StepLogEntry {
@@ -603,6 +613,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                 "--ei", "extra_site_id", &site_id,
             ])?;
             std::thread::sleep(std::time::Duration::from_secs(3));
+            wait_idle(dev, 5);
             Ok(format!("navigate_to_site → {site_id}"))
         }
         "navigate_to_user" => {
@@ -615,6 +626,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                 "--ei", "extra_user_id", &user_id,
             ])?;
             std::thread::sleep(std::time::Duration::from_secs(3));
+            wait_idle(dev, 5);
             Ok(format!("navigate_to_user → {user_id}"))
         }
         "long_press" => {
@@ -1078,6 +1090,15 @@ fn poll_for_element(dev: Option<&Device>, target: &Target, timeout_ms: u64) -> R
             Err(e) => return Err(e),
         }
     }
+}
+
+fn fetch_debug_log() -> Option<String> {
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--connect-timeout", "2", "http://localhost:9876/debug-log"])
+        .output()
+        .ok()?;
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+    if body.is_empty() { None } else { Some(body) }
 }
 
 fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
