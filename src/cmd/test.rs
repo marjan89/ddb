@@ -326,7 +326,18 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Re-enable animations (always, even on failure)
     set_animations(true);
 
-    println!("\n{} passed, {} failed, {} total", pass, fail, pass + fail);
+    println!("\n========================================");
+    println!("SCORECARD: {} PASS / {} FAIL / {} total", pass, fail, pass + fail);
+    if fail > 0 {
+        println!("FAILED TCs:");
+        for r in &results {
+            if r.status == "FAIL" {
+                let detail = r.failure.as_ref().map(|f| f.description.as_str()).unwrap_or("unknown");
+                println!("  {} — {}", r.id, detail);
+            }
+        }
+    }
+    println!("========================================");
 
     if let Some(ref report_path) = args.report {
         let json = serde_json::to_string_pretty(&results)
