@@ -541,7 +541,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         "tap" => {
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("tap: no target")?;
-            let (x, y, desc) = find_element(dev, target)?;
+            let (x, y, desc) = poll_for_element(dev, target, 10_000)?;
             adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
             Ok(desc)
         }
@@ -732,7 +732,15 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                     .and_then(|t| t.content_fuzzy.as_deref())
                     .map_or(true, |fuzzy| {
                         let lower = e.to_lowercase();
-                        lower.contains(&fuzzy.to_lowercase())
+                        let needle = fuzzy.to_lowercase();
+                        lower.contains(&needle) || e.lines().any(|line| {
+                            let t = line.trim();
+                            if let Some(rest) = t.strip_prefix("content:") {
+                                token_jaccard(&needle, &rest.to_lowercase()) >= 0.6
+                            } else {
+                                false
+                            }
+                        })
                     });
 
                 id_match && text_match && fuzzy_match
@@ -858,7 +866,8 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
             chunk.lines().any(|line| {
                 let t = line.trim();
                 if let Some(rest) = t.strip_prefix("content:") {
-                    rest.to_lowercase().contains(&needle)
+                    let hay = rest.to_lowercase();
+                    hay.contains(&needle) || token_jaccard(&needle, &hay) >= 0.6
                 } else {
                     false
                 }
@@ -1015,6 +1024,34 @@ fn extract_yaml_int(chunk: &str, key: &str) -> Option<i32> {
         }
     }
     None
+}
+
+fn token_jaccard(a: &str, b: &str) -> f64 {
+    use std::collections::HashSet;
+    let a_tokens: HashSet<&str> = a.split_whitespace().collect();
+    let b_tokens: HashSet<&str> = b.split_whitespace().collect();
+    let intersection = a_tokens.intersection(&b_tokens).count() as f64;
+    let union = a_tokens.union(&b_tokens).count() as f64;
+    if union == 0.0 { return 0.0; }
+    intersection / union
+}
+
+fn poll_for_element(dev: Option<&Device>, target: &Target, timeout_ms: u64) -> Result<(i32, i32, String), String> {
+    let start = std::time::Instant::now();
+    let interval = std::time::Duration::from_millis(500);
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+
+    wait_idle(dev, 5);
+
+    loop {
+        match find_element(dev, target) {
+            Ok(result) => return Ok(result),
+            Err(_) if start.elapsed() < timeout => {
+                std::thread::sleep(interval);
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
