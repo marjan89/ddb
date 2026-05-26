@@ -73,6 +73,10 @@ struct Precondition {
     activity: Option<String>,
     #[serde(default)]
     scroll_to: Option<String>,
+    #[serde(default)]
+    package: Option<String>,
+    #[serde(default)]
+    logged_in: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -350,6 +354,42 @@ fn step_target_desc(step: &Step) -> Option<String> {
     }
 }
 
+fn ensure_input_focus(dev: Option<&Device>) {
+    // Check if any input field is focused; if not, find and tap the first EditText
+    if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
+        if out.contains("mServedView=null") || !out.contains("mServedView=") {
+            // No input field focused — find first EditText via agent
+            if let Ok(yaml) = fetch_agent_yaml(dev) {
+                for chunk in yaml.split("\n- ") {
+                    if chunk.contains("type: input") || chunk.contains("type: text_field") || chunk.contains("EditText") {
+                        let x = extract_yaml_int(chunk, "x: ");
+                        let y = extract_yaml_int(chunk, "y: ");
+                        let w = extract_yaml_int(chunk, "w: ");
+                        let h = extract_yaml_int(chunk, "h: ");
+                        if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
+                            let density = get_density(dev).unwrap_or(2.8);
+                            let cx = ((x + w / 2) as f64 * density) as i32;
+                            let cy = ((y + h / 2) as f64 * density) as i32;
+                            let _ = adb::shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
+    if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
+        if out.contains("mInputShown=true") {
+            let _ = adb::shell(dev, &["input", "keyevent", "4"]); // BACK dismisses keyboard
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+}
+
 fn fetch_ui_dump(dev: Option<&Device>) -> String {
     match adb::shell(dev, &["uiautomator", "dump", "/dev/tty"]) {
         Ok(out) => out,
@@ -359,6 +399,16 @@ fn fetch_ui_dump(dev: Option<&Device>) -> String {
 
 fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
+
+    // Known state reset: kill + relaunch app if package specified
+    if let Some(ref pre) = spec.precondition {
+        if let Some(ref pkg) = pre.package {
+            let _ = adb::shell(dev, &["am", "force-stop", pkg]);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let _ = adb::shell(dev, &["monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"]);
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+    }
 
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
@@ -481,13 +531,23 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
+            dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("tap: no target")?;
             let (x, y, desc) = find_element(dev, target)?;
             adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
             Ok(desc)
         }
         "type" => {
+            dismiss_keyboard_if_visible(dev);
             let text = action.text.as_ref().ok_or("type: no text")?;
+            // Auto-focus: if a target is specified, tap it first; otherwise find focused field
+            if let Some(ref target) = action.target {
+                let (x, y, _) = find_element(dev, target)?;
+                adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            } else {
+                ensure_input_focus(dev);
+            }
             let escaped = text.replace(' ', "%s");
             adb::shell(dev, &["input", "text", &escaped])?;
             Ok(format!("typed \"{}\"", text))
@@ -505,6 +565,13 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                 }
             }
             Ok(String::new())
+        }
+        "long_press" => {
+            dismiss_keyboard_if_visible(dev);
+            let target = action.target.as_ref().ok_or("long_press: no target")?;
+            let (x, y, desc) = find_element(dev, target)?;
+            adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
+            Ok(desc)
         }
         "back" => {
             adb::shell(dev, &["input", "keyevent", "4"])?;
