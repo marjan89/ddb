@@ -647,14 +647,41 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                         .map(|s| s.to_string())
                 })
                 .ok_or("navigate_to_site: no site_id")?;
-            adb::shell(dev, &[
-                "am", "start", "-n",
-                "se.naturkartan.android/.ui.sitedetail.SiteDetailActivity",
-                "--ei", "extra_site_id", &site_id,
-            ])?;
+            // Category browse: search tab → nature reserve → list → scroll to site
+            let search_target = Target { id: None, text: None, content_fuzzy: Some("search".into()), clickable_only: None, exclude_type: None };
+            let (sx, sy, _) = poll_for_element(dev, &search_target, 10_000)?;
+            adb::shell(dev, &["input", "tap", &sx.to_string(), &sy.to_string()])?;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            let cat_target = Target { id: None, text: None, content_fuzzy: Some("nature reserve".into()), clickable_only: None, exclude_type: None };
+            let (cx, cy, _) = poll_for_element(dev, &cat_target, 10_000)?;
+            adb::shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()])?;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            let list_target = Target { id: None, text: None, content_fuzzy: Some("list".into()), clickable_only: None, exclude_type: None };
+            let (lx, ly, _) = poll_for_element(dev, &list_target, 10_000)?;
+            adb::shell(dev, &["input", "tap", &lx.to_string(), &ly.to_string()])?;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Scroll to site name in the list
+            let site_name = match site_id.as_str() {
+                "31255" => "sandhammaren",
+                "82" => "lunda",
+                "53" => "hjälmmossen",
+                _ => &site_id,
+            };
+            let site_target = Target { id: None, text: None, content_fuzzy: Some(site_name.into()), clickable_only: None, exclude_type: None };
+            for attempt in 0..20 {
+                if find_element(dev, &site_target).is_ok() { break; }
+                if attempt == 19 { return Err(format!("navigate_to_site: '{}' not found after 20 scrolls", site_name)); }
+                scroll_direction(dev, "down")?;
+                wait_idle(dev, 3);
+            }
+            let (tx, ty, _) = find_element(dev, &site_target)?;
+            adb::shell(dev, &["input", "tap", &tx.to_string(), &ty.to_string()])?;
             std::thread::sleep(std::time::Duration::from_secs(3));
             wait_idle(dev, 5);
-            Ok(format!("navigate_to_site → {site_id}"))
+            Ok(format!("navigate_to_site → {} (category browse)", site_id))
         }
         "navigate_to_user" => {
             let user_id = action.user_id
