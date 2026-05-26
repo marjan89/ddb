@@ -244,6 +244,9 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Disable animations for reliable test execution
     set_animations(false);
 
+    // Fixture preflight: verify API data availability
+    run_fixture_preflight();
+
     let mut results = Vec::new();
     let mut pass = 0;
     let mut fail = 0;
@@ -1223,6 +1226,45 @@ fn poll_for_element(dev: Option<&Device>, target: &Target, timeout_ms: u64) -> R
             Err(e) => return Err(e),
         }
     }
+}
+
+fn run_fixture_preflight() {
+    let base = "https://apiv3.naturkartan.se";
+    let fixtures = [
+        (31255, "Sandhammaren"),
+        (82, "Södra Lunda"),
+        (53, "Stora Hjälmmossen"),
+    ];
+
+    eprintln!("\n=== FIXTURE PREFLIGHT ===");
+    for (site_id, name) in &fixtures {
+        let qa_url = format!("{base}/v3.1/sites/{site_id}/relationships/questions");
+        let reviews_url = format!("{base}/v3.1/sites/{site_id}/relationships/reviews");
+
+        let qa_count = match ureq::get(&qa_url).call() {
+            Ok(resp) => {
+                let body = resp.into_string().unwrap_or_default();
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                json["data"].as_array().map(|a| a.len()).unwrap_or(0)
+            }
+            Err(_) => 0,
+        };
+
+        let review_count = match ureq::get(&reviews_url).call() {
+            Ok(resp) => {
+                let body = resp.into_string().unwrap_or_default();
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                json["data"].as_array().map(|a| a.len()).unwrap_or(0)
+            }
+            Err(_) => 0,
+        };
+
+        eprintln!(
+            "  {} ({}): {} questions, {} reviews",
+            name, site_id, qa_count, review_count
+        );
+    }
+    eprintln!("========================\n");
 }
 
 fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
