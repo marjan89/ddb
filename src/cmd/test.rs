@@ -418,7 +418,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         "am", "start",
         "-a", "android.intent.action.MAIN",
         "-c", "android.intent.category.LAUNCHER",
-        "-n", &format!("{pkg}/.ui.mainfragment.MainActivity"),
+        "-n", &format!("{pkg}/.ui.MainActivity"),
         "--activity-clear-task",
     ]);
     std::thread::sleep(std::time::Duration::from_secs(3));
