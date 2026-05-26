@@ -430,6 +430,22 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
+    // Handle logged_in: false — clear app data for guest state
+    if let Some(ref pre) = spec.precondition {
+        if pre.logged_in == Some(false) {
+            let _ = adb::shell(dev, &["pm", "clear", pkg]);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let _ = adb::shell(dev, &[
+                "am", "start",
+                "-a", "android.intent.action.MAIN",
+                "-c", "android.intent.category.LAUNCHER",
+                "-n", &format!("{pkg}/.ui.MainActivity"),
+            ]);
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            wait_idle(dev, 10);
+        }
+    }
+
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
         if let Some(ref activity) = pre.activity {
