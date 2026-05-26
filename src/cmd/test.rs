@@ -57,20 +57,14 @@ struct TestSpecRaw {
     name: String,
     #[serde(default)]
     precondition: Option<Precondition>,
-    #[serde(default)]
-    pre_steps: Vec<StepRaw>,
     steps: Vec<StepRaw>,
-    #[serde(default)]
-    post_steps: Vec<StepRaw>,
 }
 
 struct TestSpec {
     id: String,
     name: String,
     precondition: Option<Precondition>,
-    pre_steps: Vec<Step>,
     steps: Vec<Step>,
-    post_steps: Vec<Step>,
 }
 
 #[derive(serde::Deserialize)]
@@ -117,14 +111,6 @@ struct StepRaw {
     site_id: Option<i64>,
     #[serde(default)]
     user_id: Option<i64>,
-    #[serde(default)]
-    method: Option<String>,
-    #[serde(default)]
-    body: Option<serde_json::Value>,
-    #[serde(default)]
-    headers: Option<std::collections::HashMap<String, String>>,
-    #[serde(default)]
-    save_as: Option<String>,
 }
 
 enum Step {
@@ -144,10 +130,6 @@ struct ActionStep {
     url: Option<String>,
     site_id: Option<i64>,
     user_id: Option<i64>,
-    method: Option<String>,
-    body: Option<serde_json::Value>,
-    headers: Option<std::collections::HashMap<String, String>>,
-    save_as: Option<String>,
 }
 
 struct AssertStep {
@@ -174,10 +156,6 @@ impl StepRaw {
                 url: self.url,
                 site_id: self.site_id,
                 user_id: self.user_id,
-                method: self.method,
-                body: self.body,
-                headers: self.headers,
-                save_as: self.save_as,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -244,9 +222,6 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Disable animations for reliable test execution
     set_animations(false);
 
-    // Fixture preflight: verify API data availability
-    run_fixture_preflight();
-
     let mut results = Vec::new();
     let mut pass = 0;
     let mut fail = 0;
@@ -256,25 +231,15 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             .map_err(|e| format!("read {spec_path}: {e}"))?;
         let raw: TestSpecRaw = serde_yaml::from_str(&content)
             .map_err(|e| format!("parse {spec_path}: {e}"))?;
-        let pre_steps: Vec<Step> = raw.pre_steps.into_iter()
-            .map(|s| s.into_step())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("invalid pre_step in {spec_path}: {e}"))?;
         let steps: Vec<Step> = raw.steps.into_iter()
             .map(|s| s.into_step())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("invalid step in {spec_path}: {e}"))?;
-        let post_steps: Vec<Step> = raw.post_steps.into_iter()
-            .map(|s| s.into_step())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("invalid post_step in {spec_path}: {e}"))?;
         let spec = TestSpec {
             id: raw.id,
             name: raw.name,
             precondition: raw.precondition,
-            pre_steps,
             steps,
-            post_steps,
         };
 
         let started = now_iso();
@@ -326,18 +291,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Re-enable animations (always, even on failure)
     set_animations(true);
 
-    println!("\n========================================");
-    println!("SCORECARD: {} PASS / {} FAIL / {} total", pass, fail, pass + fail);
-    if fail > 0 {
-        println!("FAILED TCs:");
-        for r in &results {
-            if r.status == "FAIL" {
-                let detail = r.failure.as_ref().map(|f| f.description.as_str()).unwrap_or("unknown");
-                println!("  {} — {}", r.id, detail);
-            }
-        }
-    }
-    println!("========================================");
+    println!("\n{} passed, {} failed, {} total", pass, fail, pass + fail);
 
     if let Some(ref report_path) = args.report {
         let json = serde_json::to_string_pretty(&results)
@@ -455,50 +409,8 @@ fn fetch_ui_dump(dev: Option<&Device>) -> String {
     }
 }
 
-struct RunContext {
-    vars: std::collections::HashMap<String, serde_json::Value>,
-}
-
-impl RunContext {
-    fn new() -> Self {
-        Self { vars: std::collections::HashMap::new() }
-    }
-
-    fn interpolate(&self, s: &str) -> String {
-        let mut result = s.to_string();
-        for (key, val) in &self.vars {
-            let patterns = self.flatten_patterns(key, val);
-            for (pattern, replacement) in patterns {
-                result = result.replace(&format!("{{{{{}}}}}", pattern), &replacement);
-            }
-        }
-        result
-    }
-
-    fn flatten_patterns(&self, prefix: &str, val: &serde_json::Value) -> Vec<(String, String)> {
-        let mut out = Vec::new();
-        match val {
-            serde_json::Value::Object(map) => {
-                for (k, v) in map {
-                    out.extend(self.flatten_patterns(&format!("{prefix}.{k}"), v));
-                }
-            }
-            serde_json::Value::String(s) => out.push((prefix.to_string(), s.clone())),
-            serde_json::Value::Number(n) => out.push((prefix.to_string(), n.to_string())),
-            serde_json::Value::Bool(b) => out.push((prefix.to_string(), b.to_string())),
-            _ => out.push((prefix.to_string(), val.to_string())),
-        }
-        out
-    }
-
-    fn save(&mut self, key: &str, val: serde_json::Value) {
-        self.vars.insert(key.to_string(), val);
-    }
-}
-
 fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
-    let mut ctx = RunContext::new();
 
     // Always reset app to clean state before each TC
     let pkg = "se.naturkartan.android";
@@ -538,32 +450,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     wait_idle(dev, timeout);
 
-    // Run pre_steps (API setup, data seeding)
-    for (i, step) in spec.pre_steps.iter().enumerate() {
-        let result = match step {
-            Step::Action(a) => execute_action(dev, a, &mut ctx),
-            Step::Assert(a) => execute_assert(dev, a, timeout),
-        };
-        if let Err(e) = result {
-            eprintln!("  pre_step {} FAIL: {e}", i + 1);
-            return (TestResult {
-                id: spec.id.clone(),
-                name: spec.name.clone(),
-                status: "FAIL".to_string(),
-                steps_run: 0,
-                steps_total: spec.steps.len(),
-                failure: Some(FailureDetail {
-                    step: 0,
-                    description: format!("pre_step {} failed: {e}", i + 1),
-                    screenshot: None,
-                }),
-            }, step_logs);
-        }
-    }
-
     for (i, step) in spec.steps.iter().enumerate() {
         let result = match step {
-            Step::Action(a) => execute_action(dev, a, &mut ctx),
+            Step::Action(a) => execute_action(dev, a),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
 
@@ -642,17 +531,6 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
-    // Run post_steps (cleanup, API teardown) — always run, even conceptually on success
-    for (i, step) in spec.post_steps.iter().enumerate() {
-        let result = match step {
-            Step::Action(a) => execute_action(dev, a, &mut ctx),
-            Step::Assert(a) => execute_assert(dev, a, timeout),
-        };
-        if let Err(e) = &result {
-            eprintln!("  post_step {} FAIL: {e}", i + 1);
-        }
-    }
-
     (TestResult {
         id: spec.id.clone(),
         name: spec.name.clone(),
@@ -663,7 +541,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     }, step_logs)
 }
 
-fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContext) -> Result<String, String> {
+fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
             dismiss_keyboard_if_visible(dev);
@@ -824,52 +702,6 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 let _ = crate::catalogue::update_manifest_screenshot(&cat_root, &entry_key);
             }
             Ok(format!("screenshot → {output}"))
-        }
-        "api_call" => {
-            let raw_url = action.url.as_deref().ok_or("api_call: no url")?;
-            let url = ctx.interpolate(raw_url);
-            let method = action.method.as_deref().unwrap_or("GET");
-            let base = "https://apiv3.naturkartan.se";
-            let full_url = if url.starts_with("http") { url.to_string() } else { format!("{base}{url}") };
-
-            let mut req = match method.to_uppercase().as_str() {
-                "GET" => ureq::get(&full_url),
-                "POST" => ureq::post(&full_url),
-                "PUT" => ureq::put(&full_url),
-                "DELETE" => ureq::delete(&full_url),
-                "PATCH" => ureq::patch(&full_url),
-                _ => return Err(format!("api_call: unsupported method {method}")),
-            };
-
-            if let Some(ref hdrs) = action.headers {
-                for (k, v) in hdrs {
-                    req = req.set(k, &ctx.interpolate(v));
-                }
-            }
-
-            let resp = if let Some(ref body) = action.body {
-                let body_str = ctx.interpolate(&body.to_string());
-                req.set("Content-Type", "application/json")
-                    .send_string(&body_str)
-                    .map_err(|e| format!("api_call {method} {full_url}: {e}"))?
-            } else {
-                req.call().map_err(|e| format!("api_call {method} {full_url}: {e}"))?
-            };
-
-            let status = resp.status();
-            let body_str = resp.into_string().unwrap_or_default();
-
-            if status >= 400 {
-                return Err(format!("api_call {method} {full_url}: HTTP {status} — {body_str}"));
-            }
-
-            if let Some(ref save_key) = action.save_as {
-                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body_str) {
-                    ctx.save(save_key, json_val);
-                }
-            }
-
-            Ok(format!("api_call {method} {full_url} → {status} ({} bytes)", body_str.len()))
         }
         other => Err(format!("unknown action: {other}")),
     }
@@ -1237,45 +1069,6 @@ fn poll_for_element(dev: Option<&Device>, target: &Target, timeout_ms: u64) -> R
             Err(e) => return Err(e),
         }
     }
-}
-
-fn run_fixture_preflight() {
-    let base = "https://apiv3.naturkartan.se";
-    let fixtures = [
-        (31255, "Sandhammaren"),
-        (82, "Södra Lunda"),
-        (53, "Stora Hjälmmossen"),
-    ];
-
-    eprintln!("\n=== FIXTURE PREFLIGHT ===");
-    for (site_id, name) in &fixtures {
-        let qa_url = format!("{base}/v3.1/sites/{site_id}/relationships/questions");
-        let reviews_url = format!("{base}/v3.1/sites/{site_id}/relationships/reviews");
-
-        let qa_count = match ureq::get(&qa_url).call() {
-            Ok(resp) => {
-                let body = resp.into_string().unwrap_or_default();
-                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-                json["data"].as_array().map(|a| a.len()).unwrap_or(0)
-            }
-            Err(_) => 0,
-        };
-
-        let review_count = match ureq::get(&reviews_url).call() {
-            Ok(resp) => {
-                let body = resp.into_string().unwrap_or_default();
-                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-                json["data"].as_array().map(|a| a.len()).unwrap_or(0)
-            }
-            Err(_) => 0,
-        };
-
-        eprintln!(
-            "  {} ({}): {} questions, {} reviews",
-            name, site_id, qa_count, review_count
-        );
-    }
-    eprintln!("========================\n");
 }
 
 fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
