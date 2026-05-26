@@ -486,15 +486,16 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
     let mut ctx = RunContext::new();
 
-    // Known state reset: kill + relaunch app if package specified
-    if let Some(ref pre) = spec.precondition {
-        if let Some(ref pkg) = pre.package {
-            let _ = adb::shell(dev, &["am", "force-stop", pkg]);
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            let _ = adb::shell(dev, &["monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"]);
-            std::thread::sleep(std::time::Duration::from_secs(3));
-        }
-    }
+    // Always reset app to clean state before each TC
+    let pkg = "se.naturkartan.android";
+    let _ = adb::shell(dev, &["am", "force-stop", pkg]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = adb::shell(dev, &[
+        "am", "start", "-n",
+        &format!("{pkg}/.ui.mainfragment.MainActivity"),
+        "--activity-clear-task",
+    ]);
+    std::thread::sleep(std::time::Duration::from_secs(3));
 
     // Check preconditions
     if let Some(ref pre) = spec.precondition {
