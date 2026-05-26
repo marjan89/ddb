@@ -594,16 +594,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                // Preflight: check full dump first — if element not in full tree, fail fast
-                let search = target.content_fuzzy.as_deref()
-                    .or(target.id.as_deref())
-                    .unwrap_or("");
-                if let Ok(full_yaml) = fetch_agent_yaml_full_with_retry(dev) {
-                    if !search.is_empty() && !full_yaml.to_lowercase().contains(&search.to_lowercase()) {
-                        return Err(format!("scroll_to: '{}' not in full page dump — element doesn't exist", search));
-                    }
-                }
-                // Scroll until element is in viewport
+                // Scroll until element is in viewport (no preflight — async content loads after /idle)
                 for attempt in 0..10 {
                     if find_element(dev, target).is_ok() {
                         break;
