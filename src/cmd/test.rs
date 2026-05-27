@@ -612,6 +612,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             } else {
                 ensure_input_focus(dev);
             }
+            // Clear existing field content: Ctrl+A (select all) + Delete
+            adb::shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
+            adb::shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
+            adb::shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
             let has_non_ascii = text.chars().any(|c| !c.is_ascii());
             if has_non_ascii {
                 // Clipboard paste for non-ASCII text (ö, å, ä, etc.)
