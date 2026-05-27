@@ -1044,13 +1044,7 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
 }
 
 fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
-    let (x1, y1, x2, y2) = match dir {
-        "down" => (540, 1800, 540, 900),
-        "up" => (540, 900, 540, 1800),
-        "left" => (800, 1100, 200, 1100),
-        "right" => (200, 1100, 800, 1100),
-        _ => return Err(format!("unknown scroll direction: {dir}")),
-    };
+    let (x1, y1, x2, y2) = compute_scroll_bounds(dev, dir);
     adb::shell(dev, &[
         "input", "swipe",
         &x1.to_string(), &y1.to_string(),
@@ -1058,6 +1052,46 @@ fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
         "500",
     ])?;
     Ok(())
+}
+
+fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32, i32) {
+    let density = get_density(dev).unwrap_or(2.8);
+    // Try to find scrollable container bounds from semantic dump
+    if let Ok(yaml) = fetch_agent_yaml(dev) {
+        for chunk in yaml.split("\n- ") {
+            let is_scrollable = chunk.contains("type: container") && (
+                chunk.to_lowercase().contains("recyclerview")
+                || chunk.to_lowercase().contains("nestedscrollview")
+                || chunk.to_lowercase().contains("scrollview")
+            );
+            if is_scrollable {
+                let x = extract_yaml_int(chunk, "x: ").unwrap_or(0);
+                let y = extract_yaml_int(chunk, "y: ").unwrap_or(0);
+                let w = extract_yaml_int(chunk, "w: ").unwrap_or(0);
+                let h = extract_yaml_int(chunk, "h: ").unwrap_or(0);
+                if w > 100 && h > 200 {
+                    let cx = ((x + w / 2) as f64 * density) as i32;
+                    let top = ((y + h / 4) as f64 * density) as i32;
+                    let bot = ((y + h * 3 / 4) as f64 * density) as i32;
+                    return match dir {
+                        "down" => (cx, bot, cx, top),
+                        "up" => (cx, top, cx, bot),
+                        "left" => (bot, cx, top, cx),
+                        "right" => (top, cx, bot, cx),
+                        _ => (540, 1800, 540, 900),
+                    };
+                }
+            }
+        }
+    }
+    // Fallback: screen center
+    match dir {
+        "down" => (540, 1800, 540, 900),
+        "up" => (540, 900, 540, 1800),
+        "left" => (800, 1100, 200, 1100),
+        "right" => (200, 1100, 800, 1100),
+        _ => (540, 1800, 540, 900),
+    }
 }
 
 fn get_current_activity(dev: Option<&Device>) -> Result<String, String> {
