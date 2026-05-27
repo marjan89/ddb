@@ -642,19 +642,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                // Page-stable preflight: if page is stable and target not in full dump, fail fast
-                if let Some(stable) = is_page_stable(dev) {
-                    if stable {
-                        let search = target.content_fuzzy.as_deref().unwrap_or("");
-                        if !search.is_empty() {
-                            if let Ok(full) = fetch_agent_yaml_full(dev) {
-                                if !full.to_lowercase().contains(&search.to_lowercase()) {
-                                    return Err(format!("scroll_to: '{}' not on stable page", search));
-                                }
-                            }
-                        }
-                    }
-                }
+                // Page-stable preflight: informational only (async content may not be in dump yet)
                 // Scroll until element is in viewport
                 for attempt in 0..20 {
                     if find_element(dev, target).is_ok() {
