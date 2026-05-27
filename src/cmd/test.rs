@@ -642,7 +642,20 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                // Scroll until element is in viewport (no preflight — async content loads after /idle)
+                // Page-stable preflight: if page is stable and target not in full dump, fail fast
+                if let Some(stable) = is_page_stable(dev) {
+                    if stable {
+                        let search = target.content_fuzzy.as_deref().unwrap_or("");
+                        if !search.is_empty() {
+                            if let Ok(full) = fetch_agent_yaml_full(dev) {
+                                if !full.to_lowercase().contains(&search.to_lowercase()) {
+                                    return Err(format!("scroll_to: '{}' not on stable page", search));
+                                }
+                            }
+                        }
+                    }
+                }
+                // Scroll until element is in viewport
                 for attempt in 0..20 {
                     if find_element(dev, target).is_ok() {
                         break;
@@ -1052,6 +1065,18 @@ fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
         "500",
     ])?;
     Ok(())
+}
+
+fn is_page_stable(dev: Option<&Device>) -> Option<bool> {
+    let count1 = fetch_agent_yaml_full(dev).ok()
+        .map(|y| y.matches("\n- ").count());
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let count2 = fetch_agent_yaml_full(dev).ok()
+        .map(|y| y.matches("\n- ").count());
+    match (count1, count2) {
+        (Some(c1), Some(c2)) if c1 > 0 => Some(c1 == c2),
+        _ => None,
+    }
 }
 
 fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32, i32) {
