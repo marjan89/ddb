@@ -875,10 +875,20 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
             }
         }
         "element_exists" => {
-            let elements = get_semantic_elements(dev)?;
             let target = assert.target.as_ref();
             let expected_text = assert.text.as_deref();
             let expected_hint = assert.hint.as_deref();
+
+            // Quick check: uiautomator first (catches AlertDialogs before they auto-dismiss)
+            let fuzzy = target.and_then(|t| t.content_fuzzy.as_deref());
+            if let Some(f) = fuzzy {
+                let ui_xml = fetch_ui_dump(dev);
+                if ui_xml.to_lowercase().contains(&f.to_lowercase()) {
+                    return Ok(format!("found in uiautomator: {f}"));
+                }
+            }
+
+            let elements = get_semantic_elements(dev)?;
 
             let found = elements.iter().find(|e| {
                 let id_match = target
