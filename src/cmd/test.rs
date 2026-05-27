@@ -761,6 +761,36 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             }
             Ok(format!("screenshot → {output}"))
         }
+        "api_call" => {
+            let raw_url = action.url.as_deref().ok_or("api_call: no url")?;
+            let method = action.text.as_deref().unwrap_or("GET"); // reuse text field for method
+            let base = "https://apiv3.naturkartan.se";
+            let full_url = if raw_url.starts_with("http") { raw_url.to_string() } else { format!("{base}{raw_url}") };
+
+            let mut curl_args = vec![
+                "-s".to_string(),
+                "-w".to_string(), "\n%{http_code}".to_string(),
+                "-X".to_string(), method.to_uppercase(),
+                "--connect-timeout".to_string(), "10".to_string(),
+            ];
+
+            curl_args.push(full_url.clone());
+
+            let output = std::process::Command::new("curl")
+                .args(&curl_args)
+                .output()
+                .map_err(|e| format!("api_call curl: {e}"))?;
+
+            let raw = String::from_utf8_lossy(&output.stdout).to_string();
+            let (body_str, status_str) = raw.rsplit_once('\n').unwrap_or((&raw, "0"));
+            let status: u16 = status_str.trim().parse().unwrap_or(0);
+
+            if status >= 400 || status == 0 {
+                return Err(format!("api_call {method} {full_url}: HTTP {status} — {}", &body_str[..body_str.len().min(200)]));
+            }
+
+            Ok(format!("api_call {method} {full_url} → {status} ({} bytes)", body_str.len()))
+        }
         other => Err(format!("unknown action: {other}")),
     }
 }
