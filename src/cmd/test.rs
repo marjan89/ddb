@@ -643,12 +643,12 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
                 // Scroll until element is in viewport (no preflight — async content loads after /idle)
-                for attempt in 0..10 {
+                for attempt in 0..20 {
                     if find_element(dev, target).is_ok() {
                         break;
                     }
-                    if attempt == 9 {
-                        return Err(format!("scroll_to: element not found in viewport after 10 scrolls"));
+                    if attempt == 19 {
+                        return Err(format!("scroll_to: element not found in viewport after 20 scrolls"));
                     }
                     scroll_direction(dev, "down")?;
                     wait_idle(dev, 3);
@@ -1045,8 +1045,8 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
 
 fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
     let (x1, y1, x2, y2) = match dir {
-        "down" => (540, 1400, 540, 800),
-        "up" => (540, 800, 540, 1400),
+        "down" => (540, 1600, 540, 1000),
+        "up" => (540, 1000, 540, 1600),
         "left" => (800, 1100, 200, 1100),
         "right" => (200, 1100, 800, 1100),
         _ => return Err(format!("unknown scroll direction: {dir}")),
