@@ -1073,11 +1073,17 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
                     return Ok((cx, cy, desc));
                 }
                 let is_clickable = chunk.contains("clickable: true");
-                match (is_clickable, fuzzy_clickable) {
-                    (true, false) => { fuzzy_candidate = Some((cx, cy, desc)); fuzzy_clickable = true; }
-                    (true, true) => {}
-                    (_, _) if fuzzy_candidate.is_none() => { fuzzy_candidate = Some((cx, cy, desc)); }
-                    _ => {}
+                let chunk_lower = chunk.to_lowercase();
+                let is_nav_link = chunk_lower.contains("see all") || chunk_lower.contains("inspiration");
+                let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
+                    (None, _, _) => true,
+                    (_, true, false) => true,
+                    _ if !is_nav_link => true,
+                    _ => false,
+                };
+                if is_better {
+                    fuzzy_candidate = Some((cx, cy, desc));
+                    fuzzy_clickable = is_clickable;
                 }
             }
         }
