@@ -417,6 +417,69 @@ fn ensure_input_focus(dev: Option<&Device>) {
     }
 }
 
+fn dismiss_permission_dialog(dev: Option<&Device>) {
+    let ui = fetch_ui_dump(dev);
+    let ui_lower = ui.to_lowercase();
+    // Check for permission dialog keywords
+    if ui_lower.contains("permission") || ui_lower.contains("allow") || ui_lower.contains("while using") {
+        // Try common permission button IDs
+        for btn_id in &["permission_allow_foreground_only_button", "permission_allow_button"] {
+            if ui.contains(btn_id) {
+                let _ = adb::shell(dev, &[
+                    "input", "keyevent", "KEYCODE_TAB",
+                ]);
+                // Find and tap the button via uiautomator coordinates
+                if let Some(bounds) = extract_ui_bounds(&ui, btn_id) {
+                    let _ = adb::shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    return;
+                }
+            }
+        }
+        // Fallback: tap "While using the app" text
+        if let Some(bounds) = extract_ui_text_bounds(&ui, "While using") {
+            let _ = adb::shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+}
+
+fn extract_ui_bounds(xml: &str, resource_id: &str) -> Option<(i32, i32)> {
+    let id_pattern = format!("id/{}", resource_id);
+    if let Some(idx) = xml.find(&id_pattern) {
+        let chunk = &xml[idx..xml.len().min(idx + 200)];
+        if let Some(b_start) = chunk.find("bounds=\"[") {
+            let bounds_str = &chunk[b_start + 9..];
+            if let Some(b_end) = bounds_str.find(']') {
+                let coords: Vec<&str> = bounds_str[..b_end].split(',').collect();
+                if coords.len() == 2 {
+                    let x1: i32 = coords[0].parse().unwrap_or(0);
+                    let y1: i32 = coords[1].parse().unwrap_or(0);
+                    // Get second bracket for x2,y2
+                    if let Some(b2) = bounds_str[b_end+2..].find(']') {
+                        let c2: Vec<&str> = bounds_str[b_end+2..b_end+2+b2].split(',').collect();
+                        if c2.len() == 2 {
+                            let x2: i32 = c2[0].parse().unwrap_or(0);
+                            let y2: i32 = c2[1].parse().unwrap_or(0);
+                            return Some(((x1 + x2) / 2, (y1 + y2) / 2));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_ui_text_bounds(xml: &str, text: &str) -> Option<(i32, i32)> {
+    let pattern = format!("text=\"{}", text);
+    if let Some(idx) = xml.find(&pattern) {
+        let chunk = &xml[idx..xml.len().min(idx + 300)];
+        return extract_ui_bounds(chunk, "");
+    }
+    None
+}
+
 fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
     if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
         if out.contains("mInputShown=true") {
@@ -448,6 +511,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     std::thread::sleep(std::time::Duration::from_secs(3));
     wait_idle(dev, 10);
 
+    // Auto-dismiss permission dialog if present after launch
+    dismiss_permission_dialog(dev);
+
     // #1: /health check — verify agent is responding before first step
     if !check_idle(dev).unwrap_or(false) {
         eprintln!("  warning: agent /health not responding, waiting 5s...");
@@ -466,6 +532,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                 "-n", &format!("{pkg}/.ui.MainActivity"),
             ]);
             std::thread::sleep(std::time::Duration::from_secs(5));
+            dismiss_permission_dialog(dev);
             wait_idle(dev, 10);
         }
     }
