@@ -537,24 +537,37 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
-    // Check preconditions
+    // Check preconditions (with retry + permission auto-dismiss)
     if let Some(ref pre) = spec.precondition {
         if let Some(ref activity) = pre.activity {
-            if let Ok(current) = get_current_activity(dev) {
-                if !current.contains(activity) {
-                    return (TestResult {
-                        id: spec.id.clone(),
-                        name: spec.name.clone(),
-                        status: "FAIL".to_string(),
-                        steps_run: 0,
-                        steps_total: spec.steps.len(),
-                        failure: Some(FailureDetail {
-                            step: 0,
-                            description: format!("precondition failed: expected activity {activity}, got {current}"),
-                            screenshot: None,
-                        }),
-                    }, step_logs);
+            let mut precondition_ok = false;
+            for retry in 0..3 {
+                if let Ok(current) = get_current_activity(dev) {
+                    if current.contains(activity) {
+                        precondition_ok = true;
+                        break;
+                    }
+                    if current.contains("GrantPermissions") || current.contains("Permission") {
+                        dismiss_permission_dialog(dev);
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        continue;
+                    }
+                    if retry == 2 {
+                        return (TestResult {
+                            id: spec.id.clone(),
+                            name: spec.name.clone(),
+                            status: "FAIL".to_string(),
+                            steps_run: 0,
+                            steps_total: spec.steps.len(),
+                            failure: Some(FailureDetail {
+                                step: 0,
+                                description: format!("precondition failed: expected activity {activity}, got {current}"),
+                                screenshot: None,
+                            }),
+                        }, step_logs);
+                    }
                 }
+                std::thread::sleep(std::time::Duration::from_secs(2));
             }
         }
         if let Some(ref scroll_target) = pre.scroll_to {
