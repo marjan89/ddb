@@ -1045,8 +1045,8 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
 
 fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
     let (x1, y1, x2, y2) = match dir {
-        "down" => (540, 1600, 540, 1000),
-        "up" => (540, 1000, 540, 1600),
+        "down" => (540, 1800, 540, 900),
+        "up" => (540, 900, 540, 1800),
         "left" => (800, 1100, 200, 1100),
         "right" => (200, 1100, 800, 1100),
         _ => return Err(format!("unknown scroll direction: {dir}")),
