@@ -659,21 +659,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
             Ok(String::new())
         }
         "deep_link" | "navigate_to_site" | "navigate_to_user" => {
-            // Runner no longer handles navigation — TC YAML must provide platform-specific steps
             Err(format!("{}: use platform: android: steps in TC YAML", action.action))
-        }
-        "navigate_to_user" => {
-            let user_id = action.user_id
-                .map(|id| id.to_string())
-                .ok_or("navigate_to_user: no user_id")?;
-            adb::shell(dev, &[
-                "am", "start", "-n",
-                "se.naturkartan.android/.ui.userprofile.UserProfileActivity",
-                "--ei", "extra_user_id", &user_id,
-            ])?;
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            wait_idle(dev, 5);
-            Ok(format!("navigate_to_user → {user_id}"))
         }
         "long_press" => {
             dismiss_keyboard_if_visible(dev);
@@ -1183,4 +1169,56 @@ fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) 
     let _ = adb::shell(dev, &["screencap", "-p", "/sdcard/fail.png"]);
     let _ = adb::adb(dev, &["pull", "/sdcard/fail.png", &path]);
     Some(path)
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn test_platform_fork_parsing() {
+        let yaml = r#"
+id: TC-19
+name: "test"
+steps:
+  - action: navigate_to_site
+    site_id: 31255
+    platform:
+      android:
+        - action: tap
+          target: {content_fuzzy: "search"}
+        - action: wait
+          seconds: 2
+      ios:
+        - action: tap
+          target: {content_fuzzy: "search ios"}
+  - action: scroll_to
+    target: {content_fuzzy: "questions"}
+"#;
+        let raw: TestSpecRaw = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(raw.steps.len(), 2, "should have 2 raw steps");
+        
+        let first = &raw.steps[0];
+        assert!(first.platform.is_some(), "first step should have platform");
+        let plat = first.platform.as_ref().unwrap();
+        assert!(plat.android.is_some(), "should have android sub-steps");
+        let android = plat.android.as_ref().unwrap();
+        assert_eq!(android.len(), 2, "android should have 2 sub-steps");
+        assert_eq!(android[0].action.as_deref(), Some("tap"));
+        
+        // Test expansion
+        let expanded: Vec<StepRaw> = raw.steps.into_iter()
+            .flat_map(|s| {
+                if let Some(ref plat) = s.platform {
+                    if let Some(android_steps) = &plat.android {
+                        return android_steps.clone();
+                    }
+                }
+                vec![s]
+            })
+            .collect();
+        assert_eq!(expanded.len(), 3, "expanded should have 3 steps (2 android + 1 scroll)");
+        assert_eq!(expanded[0].action.as_deref(), Some("tap"));
+        assert_eq!(expanded[2].action.as_deref(), Some("scroll_to"));
+    }
 }
