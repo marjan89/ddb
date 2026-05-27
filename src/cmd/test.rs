@@ -879,92 +879,41 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
             let expected_text = assert.text.as_deref();
             let expected_hint = assert.hint.as_deref();
 
-            // Quick check: uiautomator first (catches AlertDialogs before they auto-dismiss)
+            // Poll uiautomator + semantic agent in parallel loop (catches AlertDialogs + async content)
             let fuzzy = target.and_then(|t| t.content_fuzzy.as_deref());
-            if let Some(f) = fuzzy {
+            let id = target.and_then(|t| t.id.as_deref());
+            for poll in 0..10 {
+                // Check uiautomator (fast, catches system dialogs)
                 let ui_xml = fetch_ui_dump(dev);
-                if ui_xml.to_lowercase().contains(&f.to_lowercase()) {
-                    return Ok(format!("found in uiautomator: {f}"));
-                }
-            }
-
-            let elements = get_semantic_elements(dev)?;
-
-            let found = elements.iter().find(|e| {
-                let id_match = target
-                    .and_then(|t| t.id.as_deref())
-                    .map_or(true, |id| {
-                        e.contains(&format!("platform_id: \"{}\"", id))
-                        || e.contains(&format!("id: \"{}\"", id))
-                        || e.contains(&format!("platform_id: {}", id))
-                        || e.contains(&format!("id: {}", id))
-                    });
-
-                let text_match = expected_text.map_or(true, |t| {
-                    if t.starts_with("contains(") && t.ends_with(')') {
-                        let inner = &t[9..t.len() - 1].trim_matches('"');
-                        e.contains(inner)
-                    } else {
-                        e.contains(&format!("content: \"{}\"", t))
-                        || e.contains(&format!("content: {}", t))
-                        || e.contains(t)
-                    }
-                });
-
-                let fuzzy_match = target
-                    .and_then(|t| t.content_fuzzy.as_deref())
-                    .map_or(true, |fuzzy| {
-                        let lower = e.to_lowercase();
-                        let needle = fuzzy.to_lowercase();
-                        lower.contains(&needle) || e.lines().any(|line| {
-                            let t = line.trim();
-                            if let Some(rest) = t.strip_prefix("content:") {
-                                token_jaccard(&needle, &rest.to_lowercase()) >= 0.6
-                            } else {
-                                false
-                            }
-                        })
-                    });
-
-                id_match && text_match && fuzzy_match
-            });
-
-            if let Some(elem) = found {
-                let content_line = elem.lines()
-                    .find(|l| l.trim().starts_with("content:"))
-                    .map(|l| l.trim().to_string())
-                    .unwrap_or_default();
-                Ok(format!("found: {content_line}"))
-            } else {
-                // Fallback: uiautomator dump catches AlertDialogs and system windows
-                // that the semantic agent doesn't see
-                let ui_xml = fetch_ui_dump(dev);
-                let fuzzy = target.and_then(|t| t.content_fuzzy.as_deref());
-                let id = target.and_then(|t| t.id.as_deref());
                 let ui_lower = ui_xml.to_lowercase();
-
-                let found_in_ui = fuzzy
-                    .map(|f| ui_lower.contains(&f.to_lowercase()))
-                    .unwrap_or(false)
-                    || id
-                        .map(|i| ui_xml.contains(&format!("resource-id=\"{}\"", i))
-                            || ui_xml.contains(&format!(":id/{}\"", i)))
-                        .unwrap_or(false)
-                    || expected_text
-                        .map(|t| ui_lower.contains(&t.to_lowercase()))
-                        .unwrap_or(false);
-
-                if found_in_ui {
-                    let desc = fuzzy.or(id).unwrap_or("(unnamed)");
-                    Ok(format!("found (uiautomator fallback): {desc}"))
-                } else {
-                    let desc = target
-                        .and_then(|t| t.content_fuzzy.as_deref().or(t.id.as_deref()))
-                        .unwrap_or("(unnamed)");
-                    Err(format!("element not found: {desc}"))
+                let found_ui = fuzzy.map(|f| ui_lower.contains(&f.to_lowercase())).unwrap_or(false)
+                    || id.map(|i| ui_xml.contains(i)).unwrap_or(false)
+                    || expected_text.map(|t| ui_lower.contains(&t.to_lowercase())).unwrap_or(false);
+                if found_ui {
+                    return Ok(format!("found in uiautomator (poll {})", poll));
+                }
+                // Check semantic agent (full dump, catches app content)
+                if let Ok(elements) = get_semantic_elements(dev) {
+                    let found_agent = elements.iter().any(|e| {
+                        let e_lower = e.to_lowercase();
+                        fuzzy.map(|f| e_lower.contains(&f.to_lowercase())).unwrap_or(false)
+                            || id.map(|i| e.contains(i)).unwrap_or(false)
+                    });
+                    if found_agent {
+                        let content = elements.iter()
+                            .find(|e| fuzzy.map(|f| e.to_lowercase().contains(&f.to_lowercase())).unwrap_or(false))
+                            .and_then(|e| e.lines().find(|l| l.trim().starts_with("content:")).map(|l| l.trim().to_string()))
+                            .unwrap_or_default();
+                        return Ok(format!("found: {content}"));
+                    }
+                }
+                if poll < 9 {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
                 }
             }
+            return Err(format!("element not found after 10 polls: {:?}", fuzzy.or(id)));
         }
+
         "element_not_exists" => {
             let elements = get_semantic_elements(dev)?;
             let target = assert.target.as_ref();
