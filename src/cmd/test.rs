@@ -417,6 +417,28 @@ fn ensure_input_focus(dev: Option<&Device>) {
     }
 }
 
+fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
+    if let Ok(dump) = adb::shell(dev, &["pm", "dump", pkg]) {
+        for line in dump.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("android.permission.") && trimmed.contains(": granted=false") {
+                let perm = trimmed.split(':').next().unwrap_or("").trim();
+                if !perm.is_empty() {
+                    let _ = adb::shell(dev, &["pm", "grant", pkg, perm]);
+                }
+            }
+        }
+    }
+    // Fallback: always try the common runtime permissions
+    for perm in &[
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
+    ] {
+        let _ = adb::shell(dev, &["pm", "grant", pkg, perm]);
+    }
+}
+
 fn dismiss_permission_dialog(dev: Option<&Device>) {
     let ui = fetch_ui_dump(dev);
     let ui_lower = ui.to_lowercase();
@@ -511,9 +533,8 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     std::thread::sleep(std::time::Duration::from_secs(3));
     wait_idle(dev, 10);
 
-    // Grant location permissions via adb (prevents dialog from appearing)
-    let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_FINE_LOCATION"]);
-    let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_COARSE_LOCATION"]);
+    // Grant all app permissions from manifest (prevents any dialog)
+    grant_all_permissions(dev, pkg);
 
     // #1: /health check — verify agent is responding before first step
     if !check_idle(dev).unwrap_or(false) {
@@ -533,8 +554,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                 "-n", &format!("{pkg}/.ui.MainActivity"),
             ]);
             std::thread::sleep(std::time::Duration::from_secs(5));
-            let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_FINE_LOCATION"]);
-            let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_COARSE_LOCATION"]);
+            grant_all_permissions(dev, pkg);
             wait_idle(dev, 10);
         }
     }
