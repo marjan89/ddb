@@ -511,8 +511,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     std::thread::sleep(std::time::Duration::from_secs(3));
     wait_idle(dev, 10);
 
-    // Auto-dismiss permission dialog if present after launch
-    dismiss_permission_dialog(dev);
+    // Grant location permissions via adb (prevents dialog from appearing)
+    let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_FINE_LOCATION"]);
+    let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_COARSE_LOCATION"]);
 
     // #1: /health check — verify agent is responding before first step
     if !check_idle(dev).unwrap_or(false) {
@@ -532,7 +533,8 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                 "-n", &format!("{pkg}/.ui.MainActivity"),
             ]);
             std::thread::sleep(std::time::Duration::from_secs(5));
-            dismiss_permission_dialog(dev);
+            let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_FINE_LOCATION"]);
+            let _ = adb::shell(dev, &["pm", "grant", pkg, "android.permission.ACCESS_COARSE_LOCATION"]);
             wait_idle(dev, 10);
         }
     }
