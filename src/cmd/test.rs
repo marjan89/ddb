@@ -564,8 +564,14 @@ fn ensure_logged_in(dev: Option<&Device>, pkg: &str) {
         return;
     }
 
-    let email = std::env::var("NK_TEST_EMAIL").unwrap_or_else(|_| "sinisa@outdoormap.com".into());
-    let password = std::env::var("NK_TEST_PASSWORD").unwrap_or_else(|_| "rolnica1".into());
+    let email = match std::env::var("NK_TEST_EMAIL") {
+        Ok(e) => e,
+        Err(_) => { eprintln!("  ERROR: NK_TEST_EMAIL not set — cannot login"); return; }
+    };
+    let password = match std::env::var("NK_TEST_PASSWORD") {
+        Ok(p) => p,
+        Err(_) => { eprintln!("  ERROR: NK_TEST_PASSWORD not set — cannot login"); return; }
+    };
     eprintln!("  logging in as {}...", email);
 
     // Tap email field + type
