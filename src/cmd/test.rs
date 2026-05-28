@@ -747,7 +747,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     let mut ctx = RunContext::new();
 
     // Reset to MainActivity: use monkey (same as ddb app launch) after clearing task
-    let pkg = "se.naturkartan.android";
+    let pkg_env = std::env::var("DDB_TEST_PACKAGE").ok();
+    let pkg = spec.precondition.as_ref()
+        .and_then(|p| p.package.as_deref())
+        .or(pkg_env.as_deref())
+        .unwrap_or("se.naturkartan.android");
     let _ = adb::shell(dev, &[
         "am", "start",
         "-a", "android.intent.action.MAIN",
