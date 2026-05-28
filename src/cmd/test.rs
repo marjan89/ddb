@@ -1066,9 +1066,32 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
             Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
-        // Retry once on failure (handles async content, transient UI state)
+        // Retry once on failure with precondition check
         let result = if result.is_err() {
-            eprintln!("  step {} failed, retrying in 2s...", i + 1);
+            eprintln!("  step {} failed, checking preconditions...", i + 1);
+            // Check for permission dialog
+            let ui = fetch_ui_dump(dev);
+            let ui_lower = ui.to_lowercase();
+            if ui_lower.contains("permission_allow") || ui_lower.contains("while using") {
+                eprintln!("  → permission dialog detected, dismissing...");
+                grant_all_permissions(dev, pkg);
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            // Check for keyboard covering elements
+            dismiss_keyboard_if_visible(dev);
+            // Check if app crashed (on launcher/home)
+            if let Ok(current) = get_current_activity(dev) {
+                if !current.contains(pkg) {
+                    eprintln!("  → app not foreground ({}), relaunching...", current.trim());
+                    let _ = adb::shell(dev, &[
+                        "am", "start", "-a", "android.intent.action.MAIN",
+                        "-c", "android.intent.category.LAUNCHER",
+                        "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
+                    ]);
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                }
+            }
+            eprintln!("  step {} retrying...", i + 1);
             std::thread::sleep(std::time::Duration::from_secs(2));
             match step {
                 Step::Action(a) => execute_action(dev, a, &mut ctx),
@@ -1303,6 +1326,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             let secs = action.seconds.unwrap_or(2);
             std::thread::sleep(std::time::Duration::from_secs(secs));
             Ok(String::new())
+        }
+        "wait_idle" => {
+            let timeout = action.seconds.unwrap_or(10);
+            wait_idle(dev, timeout);
+            Ok("idle".into())
         }
         "capture" => {
             let output_raw = action.output.as_ref().ok_or("capture: no output path")?;
