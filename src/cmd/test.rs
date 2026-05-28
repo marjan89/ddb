@@ -319,6 +319,10 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             .map_err(|e| format!("parse {spec_path}: {e}"))?;
         let expanded: Vec<StepRaw> = raw.steps.into_iter()
             .flat_map(|s| {
+                let action_name = s.action.as_deref().unwrap_or("");
+                if action_name == "navigate_to_site" || action_name == "navigate_to_user" {
+                    return vec![s];
+                }
                 if let Some(ref plat) = s.platform {
                     if let Some(android_steps) = &plat.android {
                         return android_steps.clone();
@@ -1675,6 +1679,10 @@ steps:
         // Test expansion
         let expanded: Vec<StepRaw> = raw.steps.into_iter()
             .flat_map(|s| {
+                let action_name = s.action.as_deref().unwrap_or("");
+                if action_name == "navigate_to_site" || action_name == "navigate_to_user" {
+                    return vec![s];
+                }
                 if let Some(ref plat) = s.platform {
                     if let Some(android_steps) = &plat.android {
                         return android_steps.clone();
