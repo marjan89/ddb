@@ -1305,6 +1305,14 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
                 if found_ui {
                     return Ok(format!("found in uiautomator (poll {})", poll));
                 }
+                // Check accessibility dump (catches AlertDialog content that uiautomator dump misses)
+                if let Ok(a11y_dump) = adb::shell(dev, &["dumpsys", "activity", "top"]) {
+                    let a11y_lower = a11y_dump.to_lowercase();
+                    let found_a11y = fuzzy.map(|f| a11y_lower.contains(&f.to_lowercase())).unwrap_or(false);
+                    if found_a11y {
+                        return Ok(format!("found in activity dump (poll {})", poll));
+                    }
+                }
                 // Check semantic agent (full dump, catches app content)
                 if let Ok(elements) = get_semantic_elements(dev) {
                     let found_agent = elements.iter().any(|e| {
