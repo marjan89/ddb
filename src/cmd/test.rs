@@ -551,27 +551,19 @@ fn get_failed_tc_specs(results_dir: &str, tests_dir: &str) -> Result<Vec<String>
     Ok(specs)
 }
 
-fn ensure_logged_in(dev: Option<&Device>, pkg: &str) {
-    // Check if already logged in: tap My Page, look for profile elements
-    let profile_target = Target { id: None, text: None, content_fuzzy: Some("my page".into()), clickable_only: None, exclude_type: None };
-    if let Ok((x, y, _)) = find_element(dev, &profile_target) {
-        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
+fn ensure_logged_in(dev: Option<&Device>, _pkg: &str) {
+    let base = agent_base_url();
 
-    // Check if login screen is showing (has email field)
-    let yaml = fetch_agent_yaml(dev).unwrap_or_default();
-    let has_email = yaml.to_lowercase().contains("emailedittext") || yaml.to_lowercase().contains("email");
-    let has_sign_in = yaml.to_lowercase().contains("signbutton") || yaml.to_lowercase().contains("sign in");
-
-    if !has_email || !has_sign_in {
-        // Already logged in or not on login screen — go back to discover
-        let discover_target = Target { id: None, text: None, content_fuzzy: Some("discover".into()), clickable_only: None, exclude_type: None };
-        if let Ok((x, y, _)) = find_element(dev, &discover_target) {
-            let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
-            std::thread::sleep(std::time::Duration::from_secs(1));
+    // Check auth state via agent
+    let state_out = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "5", &format!("{base}/auth/state")])
+        .output();
+    if let Ok(out) = state_out {
+        let body = String::from_utf8_lossy(&out.stdout);
+        if body.contains("\"logged_in\":true") {
+            eprintln!("  already logged in");
+            return;
         }
-        return;
     }
 
     let email = match std::env::var("NK_TEST_EMAIL") {
@@ -582,52 +574,27 @@ fn ensure_logged_in(dev: Option<&Device>, pkg: &str) {
         Ok(p) => p,
         Err(_) => { eprintln!("  ERROR: NK_TEST_PASSWORD not set — cannot login"); return; }
     };
-    eprintln!("  logging in as {}...", email);
+    eprintln!("  logging in as {} via agent...", email);
 
-    // Tap email field + type
-    let email_target = Target { id: Some("emailEditText".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
-    if let Ok((x, y, _)) = find_element(dev, &email_target) {
-        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        let _ = adb::shell(dev, &["input", "text", &email.replace('@', "\\@")]);
-        let _ = adb::shell(dev, &["input", "keyevent", "4"]);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-
-    // Tap password field + type
-    let pw_target = Target { id: Some("passwordEditText".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
-    if let Ok((x, y, _)) = find_element(dev, &pw_target) {
-        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        let _ = adb::shell(dev, &["input", "text", &password]);
-        let _ = adb::shell(dev, &["input", "keyevent", "4"]); // dismiss keyboard
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-
-    // Tap sign in button (no visible text — find by ID)
-    let sign_target = Target { id: Some("signButton".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
-    if let Ok((x, y, _)) = find_element(dev, &sign_target) {
-        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
-        std::thread::sleep(std::time::Duration::from_secs(3));
-    }
-
-    // Dismiss Samsung Pass dialog if present
-    let ui = fetch_ui_dump(dev);
-    if ui.contains("autofill_save_no") {
-        if let Some(bounds) = extract_ui_bounds(&ui, "autofill_save_no") {
-            let _ = adb::shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
-            std::thread::sleep(std::time::Duration::from_secs(1));
+    let payload = format!(r#"{{"email":"{}","password":"{}"}}"#,
+        email.replace('"', "\\\""), password.replace('"', "\\\""));
+    let login_out = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "10", "-X", "POST",
+               "-H", "Content-Type: application/json",
+               "-d", &payload,
+               &format!("{base}/auth/login")])
+        .output();
+    match login_out {
+        Ok(out) => {
+            let body = String::from_utf8_lossy(&out.stdout);
+            if body.contains("\"logged_in\":true") {
+                eprintln!("  login complete");
+            } else {
+                eprintln!("  login failed: {}", body.trim());
+            }
         }
+        Err(e) => eprintln!("  login curl failed: {e}"),
     }
-
-    // Navigate back to discover tab
-    let discover_target = Target { id: None, text: None, content_fuzzy: Some("discover".into()), clickable_only: None, exclude_type: None };
-    if let Ok((x, y, _)) = find_element(dev, &discover_target) {
-        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-
-    eprintln!("  login complete");
 }
 
 fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
@@ -1055,7 +1022,43 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             }
             Ok(String::new())
         }
-        "deep_link" | "navigate_to_site" | "navigate_to_user" => {
+        "navigate_to_site" => {
+            let site_id = action.site_id
+                .map(|id| id.to_string())
+                .or_else(|| ctx.vars.get("site_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.vars.get("site_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
+                .ok_or("navigate_to_site: no site_id")?;
+            let base = agent_base_url();
+            let out = std::process::Command::new("curl")
+                .args(["-s", "--max-time", "10", "-X", "POST", &format!("{base}/navigate/site/{site_id}")])
+                .output()
+                .map_err(|e| format!("navigate_to_site curl: {e}"))?;
+            let body = String::from_utf8_lossy(&out.stdout);
+            if body.contains("\"navigated\"") {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                Ok(format!("navigated to site {site_id}"))
+            } else {
+                Err(format!("navigate_to_site failed: {}", body.trim()))
+            }
+        }
+        "navigate_to_user" => {
+            let user_id = action.user_id
+                .map(|id| id.to_string())
+                .or_else(|| ctx.vars.get("user_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.vars.get("user_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
+                .ok_or("navigate_to_user: no user_id")?;
+            let base = agent_base_url();
+            let out = std::process::Command::new("curl")
+                .args(["-s", "--max-time", "10", "-X", "POST", &format!("{base}/navigate/user/{user_id}")])
+                .output()
+                .map_err(|e| format!("navigate_to_user curl: {e}"))?;
+            let body = String::from_utf8_lossy(&out.stdout);
+            if body.contains("\"navigated\"") {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                Ok(format!("navigated to user {user_id}"))
+            } else {
+                Err(format!("navigate_to_user failed: {}", body.trim()))
+            }
+        }
+        "deep_link" => {
             Err(format!("{}: use platform: android: steps in TC YAML", action.action))
         }
         "long_press" => {
