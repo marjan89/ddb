@@ -483,9 +483,8 @@ fn ensure_input_focus(dev: Option<&Device>) {
                         let w = extract_yaml_int(chunk, "w: ");
                         let h = extract_yaml_int(chunk, "h: ");
                         if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                            let density = get_density(dev).unwrap_or(2.8);
-                            let cx = ((x + w / 2) as f64 * density) as i32;
-                            let cy = ((y + h / 2) as f64 * density) as i32;
+                            let cx = x + w / 2;
+                            let cy = y + h / 2;
                             let _ = adb::shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
                             std::thread::sleep(std::time::Duration::from_millis(300));
                             break;
@@ -1377,9 +1376,8 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
             let h = extract_yaml_int(chunk, "h: ");
 
             if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                let density = get_density(dev).unwrap_or(2.8);
-                let cx = ((x + w / 2) as f64 * density) as i32;
-                let cy = ((y + h / 2) as f64 * density) as i32;
+                let cx = x + w / 2;
+                let cy = y + h / 2;
 
                 let content_line = chunk.lines()
                     .find(|l| l.trim().starts_with("content:"))
@@ -1456,7 +1454,6 @@ fn is_page_stable(dev: Option<&Device>) -> Option<bool> {
 }
 
 fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32, i32) {
-    let density = get_density(dev).unwrap_or(2.8);
     // Try to find scrollable container bounds from semantic dump
     if let Ok(yaml) = fetch_agent_yaml(dev) {
         for chunk in yaml.split("\n- ") {
@@ -1471,9 +1468,9 @@ fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32, i32
                 let w = extract_yaml_int(chunk, "w: ").unwrap_or(0);
                 let h = extract_yaml_int(chunk, "h: ").unwrap_or(0);
                 if w > 100 && h > 200 {
-                    let cx = ((x + w / 2) as f64 * density) as i32;
-                    let top = ((y + h / 4) as f64 * density) as i32;
-                    let bot = ((y + h * 3 / 4) as f64 * density) as i32;
+                    let cx = x + w / 2;
+                    let top = y + h / 4;
+                    let bot = y + h * 3 / 4;
                     return match dir {
                         "down" => (cx, bot, cx, top),
                         "up" => (cx, top, cx, bot),
