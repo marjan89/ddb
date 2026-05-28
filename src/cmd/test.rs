@@ -1014,6 +1014,20 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
+    // Load standalone fixtures.yaml if present
+    let fixtures_paths = ["catalogue/fixtures.yaml", "catalogue/tests/fixtures.yaml"];
+    for fp in &fixtures_paths {
+        let fp = std::path::Path::new(fp);
+        if fp.exists() {
+            if let Ok(content) = std::fs::read_to_string(fp) {
+                if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
+                    ctx.vars.insert("fixtures".into(), val);
+                }
+            }
+            break;
+        }
+    }
+
     if let Some(serde_json::Value::String(v)) = ctx.vars.get("config.deprioritize_patterns") {
         if std::env::var("DDB_DEPRIORITIZE_PATTERNS").is_err() {
             unsafe { std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", v); }
