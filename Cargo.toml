@@ -5,7 +5,7 @@ edition = "2024"
 description = "Device Debug Bridge — unified Android device CLI"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 quick-xml = "0.37"

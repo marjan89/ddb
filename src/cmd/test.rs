@@ -59,12 +59,12 @@ pub struct TestArgs {
     pub suite: Option<String>,
 
     /// Results directory for matrix lookup
-    #[arg(long, default_value = "/Users/Shared/projects/Outdoors/catalogue/tests/results")]
-    pub results_dir: String,
+    #[arg(long, env = "DDB_RESULTS_DIR")]
+    pub results_dir: Option<String>,
 
     /// Test cases directory
-    #[arg(long, default_value = "/Users/Shared/projects/Outdoors/catalogue/tests")]
-    pub tests_dir: String,
+    #[arg(long, env = "DDB_TESTS_DIR")]
+    pub tests_dir: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -276,7 +276,9 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         println!("Suite: {} TCs from {}", ordered.len(), suite_path);
         ordered
     } else if args.rerun_failed {
-        let failed = get_failed_tc_specs(&args.results_dir, &args.tests_dir)?;
+        let results_dir = args.results_dir.as_deref().ok_or("--rerun-failed requires --results-dir or DDB_RESULTS_DIR")?;
+        let tests_dir = args.tests_dir.as_deref().ok_or("--rerun-failed requires --tests-dir or DDB_TESTS_DIR")?;
+        let failed = get_failed_tc_specs(results_dir, tests_dir)?;
         if failed.is_empty() {
             println!("All TCs passing — nothing to rerun.");
             return Ok(());
@@ -416,10 +418,14 @@ fn detect_results_dir(spec_path: &str) -> Option<String> {
     p.parent().map(|d| d.join("results").to_string_lossy().to_string())
 }
 
+fn agent_base_url() -> String {
+    let port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
+    format!("http://localhost:{port}")
+}
+
 fn set_animations(enabled: bool) {
-    let val = if enabled { "1" } else { "0" };
     let _ = std::process::Command::new("curl")
-        .args(["-s", "-X", "POST", &format!("http://localhost:9876/animations?enabled={enabled}")])
+        .args(["-s", "--max-time", "3", "-X", "POST", &format!("{}/animations?enabled={enabled}", agent_base_url())])
         .output();
 }
 
@@ -761,7 +767,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     let pkg = spec.precondition.as_ref()
         .and_then(|p| p.package.as_deref())
         .or(pkg_env.as_deref())
-        .unwrap_or("se.naturkartan.android");
+        .expect("No package name. Set DDB_TEST_PACKAGE env var or add precondition.package to TC YAML.");
     let _ = adb::shell(dev, &[
         "am", "start",
         "-a", "android.intent.action.MAIN",
@@ -1151,7 +1157,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             let raw_url = action.url.as_deref().ok_or("api_call: no url")?;
             let url = ctx.interpolate(raw_url);
             let method = action.method.as_deref().unwrap_or("GET");
-            let base = "https://apiv3.naturkartan.se";
+            let base = std::env::var("DDB_API_BASE_URL").unwrap_or_default();
             let full_url = if url.starts_with("http") { url.to_string() } else { format!("{base}{url}") };
 
             let mut curl_args = vec![
@@ -1507,7 +1513,7 @@ fn wait_idle(dev: Option<&Device>, timeout: u64) {
 
 fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "1", "--max-time", "5", "http://localhost:9876/idle"])
+        .args(["-s", "--connect-timeout", "1", "--max-time", "5", &format!("{}/idle", agent_base_url())])
         .output()
         .map_err(|e| format!("curl error: {e}"))?;
 
@@ -1527,7 +1533,7 @@ fn fetch_agent_yaml_full_with_retry(dev: Option<&Device>) -> Result<String, Stri
 
 fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "5", "--max-time", "15", "http://localhost:9876/semantic?scroll=0"])
+        .args(["-s", "--connect-timeout", "5", "--max-time", "15", &format!("{}/semantic?scroll=0", agent_base_url())])
         .output()
         .map_err(|e| format!("curl error: {e}"))?;
     if !resp.status.success() {
@@ -1539,7 +1545,7 @@ fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
 
 fn fetch_agent_yaml(dev: Option<&Device>) -> Result<String, String> {
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "2", "--max-time", "10", "http://localhost:9876/semantic"])
+        .args(["-s", "--connect-timeout", "2", "--max-time", "10", &format!("{}/semantic", agent_base_url())])
         .output()
         .map_err(|e| format!("curl error: {e}"))?;
 
@@ -1614,7 +1620,7 @@ fn poll_for_element(dev: Option<&Device>, target: &Target, timeout_ms: u64) -> R
 
 fn fetch_debug_log() -> Option<String> {
     let output = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "2", "http://localhost:9876/debug-log"])
+        .args(["-s", "--connect-timeout", "2", &format!("{}/debug-log", agent_base_url())])
         .output()
         .ok()?;
     let body = String::from_utf8_lossy(&output.stdout).to_string();

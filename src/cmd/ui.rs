@@ -197,10 +197,11 @@ fn run_semantic(dev: Option<&Device>, xml: &str, args: &UiArgs) -> Result<String
 }
 
 fn try_agent(dev: Option<&Device>) -> Option<String> {
-    let _ = adb::adb(dev, &["forward", "tcp:9876", "tcp:9876"]).ok()?;
+    let port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
+    let _ = adb::adb(dev, &["forward", &format!("tcp:{port}"), "tcp:9876"]).ok()?;
 
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "1", "http://localhost:9876/semantic"])
+        .args(["-s", "--connect-timeout", "1", &format!("http://localhost:{port}/semantic")])
         .output()
         .ok()?;
 
