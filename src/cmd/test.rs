@@ -405,6 +405,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             steps,
         };
 
+        switchboard_notify(&format!("run started {} — {}", spec.id, spec.name));
         let started = now_iso();
         let (result, step_logs) = run_spec(&spec, dev.as_ref(), args.step_timeout);
         let finished = now_iso();
@@ -1012,7 +1013,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     if let Some(serde_json::Value::String(v)) = ctx.vars.get("config.deprioritize_patterns") {
         if std::env::var("DDB_DEPRIORITIZE_PATTERNS").is_err() {
-            std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", v);
+            unsafe { std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", v); }
         }
     }
 
