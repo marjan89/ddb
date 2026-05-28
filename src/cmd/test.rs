@@ -49,6 +49,18 @@ pub struct TestArgs {
     /// Timeout per step in seconds
     #[arg(long, default_value = "10")]
     pub step_timeout: u64,
+
+    /// Re-run only failed TCs from the matrix
+    #[arg(long)]
+    pub rerun_failed: bool,
+
+    /// Results directory for matrix lookup
+    #[arg(long, default_value = "/Users/Shared/projects/Outdoors/catalogue/tests/results")]
+    pub results_dir: String,
+
+    /// Test cases directory
+    #[arg(long, default_value = "/Users/Shared/projects/Outdoors/catalogue/tests")]
+    pub tests_dir: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -224,7 +236,23 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         Some(d)
     };
 
-    if args.specs.is_empty() {
+    // Resolve specs: if --rerun-failed, get failed TC list from vdb matrix
+    let specs = if args.rerun_failed {
+        let failed = get_failed_tc_specs(&args.results_dir, &args.tests_dir)?;
+        if failed.is_empty() {
+            println!("All TCs passing — nothing to rerun.");
+            return Ok(());
+        }
+        println!("Re-running {} failed TCs:", failed.len());
+        for s in &failed {
+            println!("  {}", s);
+        }
+        failed
+    } else {
+        args.specs.clone()
+    };
+
+    if specs.is_empty() {
         return Err("no test spec files provided".to_string());
     }
 
@@ -240,7 +268,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     let mut pass = 0;
     let mut fail = 0;
 
-    for spec_path in &args.specs {
+    for spec_path in &specs {
         let content = std::fs::read_to_string(spec_path)
             .map_err(|e| format!("read {spec_path}: {e}"))?;
         let raw: TestSpecRaw = serde_yaml::from_str(&content)
@@ -415,6 +443,64 @@ fn ensure_input_focus(dev: Option<&Device>) {
             }
         }
     }
+}
+
+fn get_failed_tc_specs(results_dir: &str, tests_dir: &str) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("vdb")
+        .args(["matrix", "--results", results_dir, "--json"])
+        .output()
+        .map_err(|e| format!("vdb matrix: {e}"))?;
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&json_str)
+        .map_err(|e| format!("parse matrix json: {e}"))?;
+
+    let mut specs = Vec::new();
+    let tests_path = std::path::Path::new(tests_dir);
+
+    for entry in &entries {
+        let platform = entry["platform"].as_str().unwrap_or("");
+        let result = entry["result"].as_str().unwrap_or("");
+        let tc_id = entry["tc_id"].as_str().unwrap_or("");
+
+        if platform != "android" || result == "PASS" || tc_id.is_empty() {
+            continue;
+        }
+
+        // Find the TC YAML file — try common naming patterns
+        let candidates = [
+            format!("qa-{}.yaml", tc_id.to_lowercase().replace("tc-", "")),
+            format!("{}.yaml", tc_id.to_lowercase()),
+        ];
+        for candidate in &candidates {
+            let path = tests_path.join(candidate);
+            if path.exists() {
+                specs.push(path.to_str().unwrap_or("").to_string());
+                break;
+            }
+        }
+        // Also try glob: any file containing the TC ID
+        if let Ok(entries) = std::fs::read_dir(tests_dir) {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_str().unwrap_or("").to_string();
+                if fname.ends_with(".yaml") && !fname.contains("suite") && !fname.contains("results") {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if content.contains(&format!("id: {}", tc_id)) {
+                            let p = entry.path().to_str().unwrap_or("").to_string();
+                            if !specs.contains(&p) {
+                                specs.push(p);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    specs.sort();
+    specs.dedup();
+    Ok(specs)
 }
 
 fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
