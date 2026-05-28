@@ -548,15 +548,17 @@ fn ensure_logged_in(dev: Option<&Device>, pkg: &str) {
         return;
     }
 
-    eprintln!("  logging in as test user...");
+    let email = std::env::var("NK_TEST_EMAIL").unwrap_or_else(|_| "sinisa@outdoormap.com".into());
+    let password = std::env::var("NK_TEST_PASSWORD").unwrap_or_else(|_| "rolnica1".into());
+    eprintln!("  logging in as {}...", email);
 
     // Tap email field + type
     let email_target = Target { id: Some("emailEditText".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
     if let Ok((x, y, _)) = find_element(dev, &email_target) {
         let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let _ = adb::shell(dev, &["input", "text", "sinisa@outdoormap.com"]);
-        let _ = adb::shell(dev, &["input", "keyevent", "4"]); // dismiss keyboard
+        let _ = adb::shell(dev, &["input", "text", &email.replace('@', "\\@")]);
+        let _ = adb::shell(dev, &["input", "keyevent", "4"]);
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
 
@@ -565,7 +567,7 @@ fn ensure_logged_in(dev: Option<&Device>, pkg: &str) {
     if let Ok((x, y, _)) = find_element(dev, &pw_target) {
         let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let _ = adb::shell(dev, &["input", "text", "rolnica1"]);
+        let _ = adb::shell(dev, &["input", "text", &password]);
         let _ = adb::shell(dev, &["input", "keyevent", "4"]); // dismiss keyboard
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
