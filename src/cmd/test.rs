@@ -69,6 +69,14 @@ pub struct TestArgs {
     /// Expected agent git hash (error if mismatch)
     #[arg(long, env = "DDB_EXPECTED_HASH")]
     pub expected_hash: Option<String>,
+
+    /// Build and install APK before running TCs
+    #[arg(long)]
+    pub build: bool,
+
+    /// Project directory for --build (default: DDB_PROJECT_DIR env var)
+    #[arg(long, env = "DDB_PROJECT_DIR")]
+    pub project_dir: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -259,6 +267,32 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let (_, d) = Registry::resolve(dev_name, &devices)?;
         Some(d)
     };
+
+    // Build + install if --build flag
+    if args.build {
+        let project_dir = args.project_dir.as_deref()
+            .ok_or("--build requires --project-dir or DDB_PROJECT_DIR")?;
+        eprintln!("building APK from {project_dir}...");
+        let build_status = std::process::Command::new("nosandbox")
+            .args(["./gradlew", "assembleStandardDebug", "--no-daemon"])
+            .current_dir(project_dir)
+            .status()
+            .map_err(|e| format!("build failed: {e}"))?;
+        if !build_status.success() {
+            return Err("APK build failed".into());
+        }
+        let apk_src = format!("{project_dir}/app/build/outputs/apk/standard/debug/app-standard-debug.apk");
+        let apk_dst = "/tmp/nk-debug.apk";
+        std::fs::copy(&apk_src, apk_dst)
+            .map_err(|e| format!("copy APK: {e}"))?;
+        eprintln!("installing APK...");
+        let install_result = adb::adb(dev.as_ref(), &["install", "-r", apk_dst]);
+        if install_result.is_err() {
+            return Err("APK install failed".into());
+        }
+        eprintln!("APK installed. waiting for app launch...");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
 
     // Version check: verify agent is running expected build
     if let Some(ref expected) = args.expected_hash {
