@@ -129,6 +129,14 @@ struct StepRaw {
     user_id: Option<i64>,
     #[serde(default)]
     platform: Option<PlatformSteps>,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    body: Option<serde_json::Value>,
+    #[serde(default)]
+    headers: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    save_as: Option<String>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -156,6 +164,10 @@ struct ActionStep {
     url: Option<String>,
     site_id: Option<i64>,
     user_id: Option<i64>,
+    method: Option<String>,
+    body: Option<serde_json::Value>,
+    headers: Option<std::collections::HashMap<String, String>>,
+    save_as: Option<String>,
 }
 
 struct AssertStep {
@@ -182,6 +194,10 @@ impl StepRaw {
                 url: self.url,
                 site_id: self.site_id,
                 user_id: self.user_id,
+                method: self.method,
+                body: self.body,
+                headers: self.headers,
+                save_as: self.save_as,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -699,8 +715,36 @@ fn fetch_ui_dump(dev: Option<&Device>) -> String {
     }
 }
 
+struct RunContext {
+    vars: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl RunContext {
+    fn new() -> Self { Self { vars: std::collections::HashMap::new() } }
+
+    fn interpolate(&self, s: &str) -> String {
+        let mut result = s.to_string();
+        for (key, val) in &self.vars {
+            self.apply_patterns(&mut result, key, val);
+        }
+        result
+    }
+
+    fn apply_patterns(&self, result: &mut String, prefix: &str, val: &serde_json::Value) {
+        match val {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map { self.apply_patterns(result, &format!("{prefix}.{k}"), v); }
+            }
+            serde_json::Value::String(s) => { *result = result.replace(&format!("{{{{{prefix}}}}}"), s); }
+            serde_json::Value::Number(n) => { *result = result.replace(&format!("{{{{{prefix}}}}}"), &n.to_string()); }
+            _ => {}
+        }
+    }
+}
+
 fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
+    let mut ctx = RunContext::new();
 
     // Reset to MainActivity: use monkey (same as ddb app launch) after clearing task
     let pkg = "se.naturkartan.android";
@@ -787,7 +831,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     for (i, step) in spec.steps.iter().enumerate() {
         let result = match step {
-            Step::Action(a) => execute_action(dev, a),
+            Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
 
@@ -880,7 +924,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     }, step_logs)
 }
 
-fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, String> {
+fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContext) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
             dismiss_keyboard_if_visible(dev);
@@ -1052,9 +1096,10 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
         }
         "api_call" => {
             let raw_url = action.url.as_deref().ok_or("api_call: no url")?;
-            let method = action.text.as_deref().unwrap_or("GET"); // reuse text field for method
+            let url = ctx.interpolate(raw_url);
+            let method = action.method.as_deref().unwrap_or("GET");
             let base = "https://apiv3.naturkartan.se";
-            let full_url = if raw_url.starts_with("http") { raw_url.to_string() } else { format!("{base}{raw_url}") };
+            let full_url = if url.starts_with("http") { url.to_string() } else { format!("{base}{url}") };
 
             let mut curl_args = vec![
                 "-s".to_string(),
@@ -1062,6 +1107,21 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
                 "-X".to_string(), method.to_uppercase(),
                 "--connect-timeout".to_string(), "10".to_string(),
             ];
+
+            if let Some(ref hdrs) = action.headers {
+                for (k, v) in hdrs {
+                    curl_args.push("-H".to_string());
+                    curl_args.push(format!("{}: {}", k, ctx.interpolate(v)));
+                }
+            }
+
+            if let Some(ref body) = action.body {
+                let body_str = ctx.interpolate(&body.to_string());
+                curl_args.push("-H".to_string());
+                curl_args.push("Content-Type: application/json".to_string());
+                curl_args.push("-d".to_string());
+                curl_args.push(body_str);
+            }
 
             curl_args.push(full_url.clone());
 
@@ -1076,6 +1136,12 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep) -> Result<String, S
 
             if status >= 400 || status == 0 {
                 return Err(format!("api_call {method} {full_url}: HTTP {status} — {}", &body_str[..body_str.len().min(200)]));
+            }
+
+            if let Some(ref save_key) = action.save_as {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(body_str) {
+                    ctx.vars.insert(save_key.clone(), json_val);
+                }
             }
 
             Ok(format!("api_call {method} {full_url} → {status} ({} bytes)", body_str.len()))
