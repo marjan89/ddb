@@ -1019,6 +1019,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
             unsafe { std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", v); }
         }
     }
+    if let Some(serde_json::Value::String(v)) = ctx.vars.get("config.jaccard_threshold") {
+        if std::env::var("DDB_JACCARD_THRESHOLD").is_err() {
+            unsafe { std::env::set_var("DDB_JACCARD_THRESHOLD", v); }
+        }
+    }
 
     let tc_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout * spec.steps.len() as u64);
 
@@ -1555,7 +1560,9 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
                 let t = line.trim();
                 if let Some(rest) = t.strip_prefix("content:").or_else(|| t.strip_prefix("a11y_label:")) {
                     let hay = rest.to_lowercase();
-                    hay.contains(&needle) || token_jaccard(&needle, &hay) >= 0.6
+                    let threshold: f64 = std::env::var("DDB_JACCARD_THRESHOLD")
+                        .ok().and_then(|v| v.parse().ok()).unwrap_or(0.6);
+                    hay.contains(&needle) || token_jaccard(&needle, &hay) >= threshold
                 } else {
                     false
                 }
