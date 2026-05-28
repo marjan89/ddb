@@ -294,9 +294,13 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         return Err("no test spec files provided".to_string());
     }
 
-    // Set up port forwarding for agent
+    // Set up port forwarding for agent (DDB_AGENT_PORT overrides local port)
+    let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
     if let Some(ref d) = dev {
-        let _ = adb::adb(Some(d), &["forward", "tcp:9876", "tcp:9876"]);
+        let _ = adb::adb(Some(d), &["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
+    }
+    if agent_port != "9876" {
+        eprintln!("  agent port: {agent_port} (forwarded to device 9876)");
     }
 
     // Disable animations for reliable test execution
