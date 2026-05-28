@@ -1336,7 +1336,10 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
                 }
                 let is_clickable = chunk.contains("clickable: true");
                 let chunk_lower = chunk.to_lowercase();
-                let is_nav_link = chunk_lower.contains("see all") || chunk_lower.contains("inspiration");
+                let deprioritize = std::env::var("DDB_DEPRIORITIZE_PATTERNS")
+                    .unwrap_or_else(|_| "see all,inspiration".into());
+                let is_nav_link = deprioritize.split(',')
+                    .any(|p| chunk_lower.contains(p.trim()));
                 let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
                     (None, _, _) => true,
                     (_, true, false) => true,
