@@ -1281,7 +1281,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             if let Some(ref target) = action.target {
                 // Page-stable preflight: informational only (async content may not be in dump yet)
                 // Scroll until element is in viewport
+                let scroll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
                 for attempt in 0..20 {
+                    if std::time::Instant::now() > scroll_deadline {
+                        return Err("scroll_to: timeout (60s)".into());
+                    }
                     if find_element(dev, target).is_ok() {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         break;
@@ -1527,7 +1531,9 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
             let fuzzy_resolved = fuzzy_raw.map(|f| ctx.interpolate(f));
             let fuzzy = fuzzy_resolved.as_deref();
             let id = target.and_then(|t| t.id.as_deref());
+            let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout.min(30));
             for poll in 0..10 {
+                if std::time::Instant::now() > poll_deadline { break; }
                 // Check uiautomator (fast, catches system dialogs)
                 let ui_xml = fetch_ui_dump(dev);
                 let ui_lower = ui_xml.to_lowercase();
