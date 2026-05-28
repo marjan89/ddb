@@ -1804,6 +1804,11 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
 }
 
 fn wait_idle(dev: Option<&Device>, timeout: u64) {
+    // Try SSE first — wait for idle event push
+    if wait_for_event(dev, "idle", timeout.min(5)) {
+        return;
+    }
+    // Fallback: poll /idle
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     loop {
         if std::time::Instant::now() > deadline { break; }
