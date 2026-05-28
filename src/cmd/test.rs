@@ -749,8 +749,8 @@ fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
     let _ = std::process::Command::new("curl")
         .args(["-s", "--max-time", "3", "-X", "POST", &format!("{base}/keyboard/dismiss")])
         .output();
-    std::thread::sleep(std::time::Duration::from_millis(800));
-    wait_idle(dev, 3);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    wait_idle(dev, 5);
 }
 
 fn fetch_ui_dump(dev: Option<&Device>) -> String {
