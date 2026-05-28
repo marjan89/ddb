@@ -744,13 +744,12 @@ fn extract_ui_text_bounds(xml: &str, text: &str) -> Option<(i32, i32)> {
     None
 }
 
-fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
-    if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
-        if out.contains("mInputShown=true") {
-            let _ = adb::shell(dev, &["input", "keyevent", "4"]); // BACK dismisses keyboard
-            std::thread::sleep(std::time::Duration::from_millis(300));
-        }
-    }
+fn dismiss_keyboard_if_visible(_dev: Option<&Device>) {
+    let base = agent_base_url();
+    let _ = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "3", "-X", "POST", &format!("{base}/keyboard/dismiss")])
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(500));
 }
 
 fn fetch_ui_dump(dev: Option<&Device>) -> String {
