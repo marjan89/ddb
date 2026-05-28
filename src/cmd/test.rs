@@ -54,6 +54,10 @@ pub struct TestArgs {
     #[arg(long)]
     pub rerun_failed: bool,
 
+    /// Run TCs in order from a suite YAML file
+    #[arg(long)]
+    pub suite: Option<String>,
+
     /// Results directory for matrix lookup
     #[arg(long, default_value = "/Users/Shared/projects/Outdoors/catalogue/tests/results")]
     pub results_dir: String,
@@ -236,8 +240,26 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         Some(d)
     };
 
-    // Resolve specs: if --rerun-failed, get failed TC list from vdb matrix
-    let specs = if args.rerun_failed {
+    // Resolve specs: suite > rerun-failed > explicit list
+    let specs = if let Some(ref suite_path) = args.suite {
+        let suite_content = std::fs::read_to_string(suite_path)
+            .map_err(|e| format!("read suite {suite_path}: {e}"))?;
+        let suite_dir = std::path::Path::new(suite_path).parent().unwrap_or(std::path::Path::new("."));
+        let mut ordered = Vec::new();
+        for line in suite_content.lines() {
+            let trimmed = line.trim().trim_start_matches('-').trim();
+            if trimmed.ends_with(".yaml") && !trimmed.starts_with('#') {
+                let tc_path = suite_dir.join(trimmed);
+                if tc_path.exists() {
+                    ordered.push(tc_path.to_str().unwrap_or("").to_string());
+                } else {
+                    eprintln!("  suite: skipping {} (not found)", trimmed);
+                }
+            }
+        }
+        println!("Suite: {} TCs from {}", ordered.len(), suite_path);
+        ordered
+    } else if args.rerun_failed {
         let failed = get_failed_tc_specs(&args.results_dir, &args.tests_dir)?;
         if failed.is_empty() {
             println!("All TCs passing — nothing to rerun.");
