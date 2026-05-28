@@ -525,6 +525,77 @@ fn get_failed_tc_specs(results_dir: &str, tests_dir: &str) -> Result<Vec<String>
     Ok(specs)
 }
 
+fn ensure_logged_in(dev: Option<&Device>, pkg: &str) {
+    // Check if already logged in: tap My Page, look for profile elements
+    let profile_target = Target { id: None, text: None, content_fuzzy: Some("my page".into()), clickable_only: None, exclude_type: None };
+    if let Ok((x, y, _)) = find_element(dev, &profile_target) {
+        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    // Check if login screen is showing (has email field)
+    let yaml = fetch_agent_yaml(dev).unwrap_or_default();
+    let has_email = yaml.to_lowercase().contains("emailedittext") || yaml.to_lowercase().contains("email");
+    let has_sign_in = yaml.to_lowercase().contains("signbutton") || yaml.to_lowercase().contains("sign in");
+
+    if !has_email || !has_sign_in {
+        // Already logged in or not on login screen — go back to discover
+        let discover_target = Target { id: None, text: None, content_fuzzy: Some("discover".into()), clickable_only: None, exclude_type: None };
+        if let Ok((x, y, _)) = find_element(dev, &discover_target) {
+            let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        return;
+    }
+
+    eprintln!("  logging in as test user...");
+
+    // Tap email field + type
+    let email_target = Target { id: Some("emailEditText".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
+    if let Ok((x, y, _)) = find_element(dev, &email_target) {
+        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = adb::shell(dev, &["input", "text", "sinisa@outdoormap.com"]);
+        let _ = adb::shell(dev, &["input", "keyevent", "4"]); // dismiss keyboard
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    // Tap password field + type
+    let pw_target = Target { id: Some("passwordEditText".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
+    if let Ok((x, y, _)) = find_element(dev, &pw_target) {
+        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = adb::shell(dev, &["input", "text", "rolnica1"]);
+        let _ = adb::shell(dev, &["input", "keyevent", "4"]); // dismiss keyboard
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    // Tap sign in button (no visible text — find by ID)
+    let sign_target = Target { id: Some("signButton".into()), text: None, content_fuzzy: None, clickable_only: None, exclude_type: None };
+    if let Ok((x, y, _)) = find_element(dev, &sign_target) {
+        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+
+    // Dismiss Samsung Pass dialog if present
+    let ui = fetch_ui_dump(dev);
+    if ui.contains("autofill_save_no") {
+        if let Some(bounds) = extract_ui_bounds(&ui, "autofill_save_no") {
+            let _ = adb::shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+
+    // Navigate back to discover tab
+    let discover_target = Target { id: None, text: None, content_fuzzy: Some("discover".into()), clickable_only: None, exclude_type: None };
+    if let Ok((x, y, _)) = find_element(dev, &discover_target) {
+        let _ = adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()]);
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    eprintln!("  login complete");
+}
+
 fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
     if let Ok(dump) = adb::shell(dev, &["pm", "dump", pkg]) {
         for line in dump.lines() {
@@ -650,7 +721,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
-    // Handle logged_in: false — clear app data for guest state
+    // Handle logged_in precondition
+    if let Some(ref pre) = spec.precondition {
+        if pre.logged_in == Some(true) {
+            ensure_logged_in(dev, pkg);
+        }
+    }
     if let Some(ref pre) = spec.precondition {
         if pre.logged_in == Some(false) {
             let _ = adb::shell(dev, &["pm", "clear", pkg]);
