@@ -1054,7 +1054,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
-    let tc_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout * spec.steps.len() as u64);
+    let tc_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120.max(timeout * spec.steps.len() as u64).min(300));
     let tc_start = std::time::Instant::now();
 
     // Heartbeat thread
@@ -1070,7 +1070,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
             if !hb_running_clone.load(std::sync::atomic::Ordering::Relaxed) { break; }
             let step = hb_step_clone.load(std::sync::atomic::Ordering::Relaxed);
             let elapsed = hb_start.elapsed().as_secs();
-            switchboard_notify(&format!("heartbeat {} step {} elapsed {}s", hb_tc_id, step, elapsed));
+            if elapsed > 120 {
+                switchboard_notify(&format!("TIMEOUT {} step {} elapsed {}s — killing", hb_tc_id, step, elapsed));
+            } else {
+                switchboard_notify(&format!("heartbeat {} step {} elapsed {}s", hb_tc_id, step, elapsed));
+            }
         }
     });
 
