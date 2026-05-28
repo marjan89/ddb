@@ -1007,6 +1007,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 // Scroll until element is in viewport
                 for attempt in 0..20 {
                     if find_element(dev, target).is_ok() {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
                         break;
                     }
                     if attempt == 19 {
