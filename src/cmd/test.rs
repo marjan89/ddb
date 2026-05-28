@@ -278,19 +278,24 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             .ok_or("--build requires --project-dir or DDB_PROJECT_DIR")?;
         eprintln!("building APK from {project_dir}...");
         let build_status = std::process::Command::new("nosandbox")
-            .args(["./gradlew", "assembleStandardDebug", "--no-daemon"])
+            .args(&[
+                "./gradlew",
+                &std::env::var("DDB_BUILD_TASK").unwrap_or_else(|_| "assembleStandardDebug".into()),
+                "--no-daemon",
+            ])
             .current_dir(project_dir)
             .status()
             .map_err(|e| format!("build failed: {e}"))?;
         if !build_status.success() {
             return Err("APK build failed".into());
         }
-        let apk_src = format!("{project_dir}/app/build/outputs/apk/standard/debug/app-standard-debug.apk");
-        let apk_dst = "/tmp/nk-debug.apk";
-        std::fs::copy(&apk_src, apk_dst)
+        let apk_src = std::env::var("DDB_APK_SRC").unwrap_or_else(|_|
+            format!("{project_dir}/app/build/outputs/apk/standard/debug/app-standard-debug.apk"));
+        let apk_dst = std::env::var("DDB_APK_PATH").unwrap_or_else(|_| "/tmp/app-debug.apk".into());
+        std::fs::copy(&apk_src, &apk_dst)
             .map_err(|e| format!("copy APK: {e}"))?;
         eprintln!("installing APK...");
-        let install_result = adb::adb(dev.as_ref(), &["install", "-r", apk_dst]);
+        let install_result = adb::adb(dev.as_ref(), &["install", "-r", &apk_dst]);
         if install_result.is_err() {
             return Err("APK install failed".into());
         }
@@ -636,13 +641,13 @@ fn ensure_logged_in(dev: Option<&Device>, _pkg: &str) {
         }
     }
 
-    let email = match std::env::var("NK_TEST_EMAIL") {
+    let email = match std::env::var("DDB_TEST_EMAIL") {
         Ok(e) => e,
-        Err(_) => { eprintln!("  ERROR: NK_TEST_EMAIL not set — cannot login"); return; }
+        Err(_) => { eprintln!("  ERROR: DDB_TEST_EMAIL not set — cannot login"); return; }
     };
-    let password = match std::env::var("NK_TEST_PASSWORD") {
+    let password = match std::env::var("DDB_TEST_PASSWORD") {
         Ok(p) => p,
-        Err(_) => { eprintln!("  ERROR: NK_TEST_PASSWORD not set — cannot login"); return; }
+        Err(_) => { eprintln!("  ERROR: DDB_TEST_PASSWORD not set — cannot login"); return; }
     };
     eprintln!("  logging in as {} via agent...", email);
 
@@ -695,7 +700,10 @@ fn dismiss_permission_dialog(dev: Option<&Device>) {
     // Check for permission dialog keywords
     if ui_lower.contains("permission") || ui_lower.contains("allow") || ui_lower.contains("while using") {
         // Try common permission button IDs
-        for btn_id in &["permission_allow_foreground_only_button", "permission_allow_button"] {
+        let perm_buttons = std::env::var("DDB_PERMISSION_BUTTONS")
+            .unwrap_or_else(|_| "permission_allow_foreground_only_button,permission_allow_button".into());
+        for btn_id in perm_buttons.split(',') {
+            let btn_id = btn_id.trim();
             if ui.contains(btn_id) {
                 let _ = adb::shell(dev, &[
                     "input", "keyevent", "KEYCODE_TAB",
@@ -857,11 +865,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         .and_then(|p| p.package.as_deref())
         .or(pkg_env.as_deref())
         .expect("No package name. Set DDB_TEST_PACKAGE env var or add precondition.package to TC YAML.");
+    let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{pkg}/.ui.MainActivity"));
     let _ = adb::shell(dev, &[
         "am", "start",
         "-a", "android.intent.action.MAIN",
         "-c", "android.intent.category.LAUNCHER",
-        "-n", &format!("{pkg}/.ui.MainActivity"),
+        "-n", &main_activity,
         "--activity-clear-task",
     ]);
     std::thread::sleep(std::time::Duration::from_secs(3));
@@ -874,7 +883,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
             let _ = adb::shell(dev, &[
                 "am", "start", "-a", "android.intent.action.MAIN",
                 "-c", "android.intent.category.LAUNCHER",
-                "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
+                "-n", &main_activity, "--activity-clear-task",
             ]);
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
@@ -918,7 +927,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                 "am", "start",
                 "-a", "android.intent.action.MAIN",
                 "-c", "android.intent.category.LAUNCHER",
-                "-n", &format!("{pkg}/.ui.MainActivity"),
+                "-n", &main_activity,
             ]);
             std::thread::sleep(std::time::Duration::from_secs(5));
             grant_all_permissions(dev, pkg);
