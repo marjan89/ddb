@@ -755,7 +755,8 @@ fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
 }
 
 fn fetch_ui_dump(dev: Option<&Device>) -> String {
-    match adb::shell(dev, &["uiautomator", "dump", "/dev/tty"]) {
+    let _ = adb::shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+    match adb::shell(dev, &["cat", "/sdcard/ui.xml"]) {
         Ok(out) => out,
         Err(_) => "(ui dump failed)".to_string(),
     }
