@@ -65,6 +65,10 @@ pub struct TestArgs {
     /// Test cases directory
     #[arg(long, env = "DDB_TESTS_DIR")]
     pub tests_dir: Option<String>,
+
+    /// Expected agent git hash (error if mismatch)
+    #[arg(long, env = "DDB_EXPECTED_HASH")]
+    pub expected_hash: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -255,6 +259,27 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let (_, d) = Registry::resolve(dev_name, &devices)?;
         Some(d)
     };
+
+    // Version check: verify agent is running expected build
+    if let Some(ref expected) = args.expected_hash {
+        let base = agent_base_url();
+        let out = std::process::Command::new("curl")
+            .args(["-s", "--max-time", "5", &format!("{base}/version")])
+            .output();
+        if let Ok(out) = out {
+            let body = String::from_utf8_lossy(&out.stdout);
+            if let Some(hash_start) = body.find("\"git_hash\":\"") {
+                let rest = &body[hash_start + 12..];
+                if let Some(end) = rest.find('"') {
+                    let installed = &rest[..end];
+                    if installed != expected.as_str() {
+                        return Err(format!("STALE BINARY: installed={installed} expected={expected}. Rebuild APK."));
+                    }
+                    eprintln!("  agent version: {installed} ✓");
+                }
+            }
+        }
+    }
 
     // Resolve specs: suite > rerun-failed > explicit list
     let specs = if let Some(ref suite_path) = args.suite {
