@@ -839,6 +839,34 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     wait_idle(dev, timeout);
 
+    // Load fixtures from navigation.yaml if present
+    let nav_env = std::env::var("DDB_NAVIGATION_YAML").ok();
+    let nav_path_str = nav_env.as_deref().unwrap_or("catalogue/android/navigation.yaml");
+    let nav_path = std::path::Path::new(nav_path_str);
+    if nav_path.exists() {
+        if let Ok(nav_content) = std::fs::read_to_string(nav_path) {
+            // Extract fixture values: sites.*.name, users.*.email, etc.
+            let mut in_fixtures = false;
+            let mut current_key = String::new();
+            for line in nav_content.lines() {
+                let trimmed = line.trim();
+                if trimmed == "fixtures:" { in_fixtures = true; continue; }
+                if !in_fixtures { continue; }
+                if !line.starts_with(' ') && !trimmed.is_empty() { break; }
+                if trimmed.ends_with(':') && !trimmed.contains('{') {
+                    current_key = trimmed.trim_end_matches(':').to_string();
+                } else if trimmed.contains(": ") && !current_key.is_empty() {
+                    let parts: Vec<&str> = trimmed.splitn(2, ": ").collect();
+                    if parts.len() == 2 {
+                        let k = format!("fixture.{}.{}", current_key, parts[0].trim());
+                        let v = parts[1].trim().trim_matches('"').trim_matches('\'');
+                        ctx.vars.insert(k, serde_json::Value::String(v.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
     for (i, step) in spec.steps.iter().enumerate() {
         let result = match step {
             Step::Action(a) => execute_action(dev, a, &mut ctx),
