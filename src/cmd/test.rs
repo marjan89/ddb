@@ -1332,6 +1332,15 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             wait_idle(dev, timeout);
             Ok("idle".into())
         }
+        "wait_event" => {
+            let event_type = action.text.as_deref().unwrap_or("activity");
+            let timeout = action.seconds.unwrap_or(10);
+            if wait_for_event(dev, event_type, timeout) {
+                Ok(format!("event: {event_type}"))
+            } else {
+                Err(format!("timeout waiting for event: {event_type}"))
+            }
+        }
         "capture" => {
             let output_raw = action.output.as_ref().ok_or("capture: no output path")?;
             let output = output_raw.replace("{platform}", "android");
@@ -1797,14 +1806,34 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
 fn wait_idle(dev: Option<&Device>, timeout: u64) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     loop {
-        if std::time::Instant::now() > deadline {
-            break;
-        }
-        if let Ok(true) = check_idle(dev) {
-            break;
-        }
+        if std::time::Instant::now() > deadline { break; }
+        if let Ok(true) = check_idle(dev) { break; }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+}
+
+fn wait_for_event(_dev: Option<&Device>, event_type: &str, timeout: u64) -> bool {
+    let base = agent_base_url();
+    let timeout_str = timeout.to_string();
+    let child = std::process::Command::new("curl")
+        .args(["-sN", "--max-time", &timeout_str, &format!("{base}/stream")])
+        .stdout(std::process::Stdio::piped())
+        .spawn();
+    if let Ok(mut child) = child {
+        if let Some(stdout) = child.stdout.take() {
+            let reader = std::io::BufRead::lines(std::io::BufReader::new(stdout));
+            for line in reader {
+                if let Ok(line) = line {
+                    if line.starts_with("event:") && line.contains(event_type) {
+                        let _ = child.kill();
+                        return true;
+                    }
+                }
+            }
+            let _ = child.kill();
+        }
+    }
+    false
 }
 
 fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
