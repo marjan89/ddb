@@ -1049,8 +1049,27 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     }
 
     let tc_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout * spec.steps.len() as u64);
+    let tc_start = std::time::Instant::now();
+
+    // Heartbeat thread
+    let hb_tc_id = spec.id.clone();
+    let hb_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let hb_running_clone = hb_running.clone();
+    let hb_step = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hb_step_clone = hb_step.clone();
+    let hb_start = std::time::Instant::now();
+    std::thread::spawn(move || {
+        while hb_running_clone.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            if !hb_running_clone.load(std::sync::atomic::Ordering::Relaxed) { break; }
+            let step = hb_step_clone.load(std::sync::atomic::Ordering::Relaxed);
+            let elapsed = hb_start.elapsed().as_secs();
+            switchboard_notify(&format!("heartbeat {} step {} elapsed {}s", hb_tc_id, step, elapsed));
+        }
+    });
 
     for (i, step) in spec.steps.iter().enumerate() {
+        hb_step.store(i + 1, std::sync::atomic::Ordering::Relaxed);
         // TC-level timeout
         if std::time::Instant::now() > tc_deadline {
             return (TestResult {
@@ -1107,7 +1126,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                     Step::Action(a) => format!("{}", a.action),
                     Step::Assert(a) => format!("assert {}", a.assert),
                 };
+                let elapsed = tc_start.elapsed().as_secs_f32();
                 eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
+                switchboard_notify(&format!("{} step {}/{} PASS: {} ({:.1}s)", spec.id, i + 1, spec.steps.len(), step_desc, elapsed));
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
                     Step::Assert(a) => (None, Some(a.assert.clone())),
@@ -1157,6 +1178,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                     ui_dump,
                 });
 
+                let step_desc2 = match step {
+                    Step::Action(a) => a.action.clone(),
+                    Step::Assert(a) => format!("assert {}", a.assert),
+                };
+                switchboard_notify(&format!("{} step {}/{} FAIL: {} — {}", spec.id, i + 1, spec.steps.len(), step_desc2, &err[..err.len().min(100)]));
+                hb_running.store(false, std::sync::atomic::Ordering::Relaxed);
                 return (TestResult {
                     id: spec.id.clone(),
                     name: spec.name.clone(),
@@ -1185,6 +1212,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
+    hb_running.store(false, std::sync::atomic::Ordering::Relaxed);
     (TestResult {
         id: spec.id.clone(),
         name: spec.name.clone(),
