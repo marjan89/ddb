@@ -1503,7 +1503,7 @@ fn wait_idle(dev: Option<&Device>, timeout: u64) {
 
 fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "1", "http://localhost:9876/idle"])
+        .args(["-s", "--connect-timeout", "1", "--max-time", "5", "http://localhost:9876/idle"])
         .output()
         .map_err(|e| format!("curl error: {e}"))?;
 
@@ -1523,7 +1523,7 @@ fn fetch_agent_yaml_full_with_retry(dev: Option<&Device>) -> Result<String, Stri
 
 fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "5", "http://localhost:9876/semantic?scroll=0"])
+        .args(["-s", "--connect-timeout", "5", "--max-time", "15", "http://localhost:9876/semantic?scroll=0"])
         .output()
         .map_err(|e| format!("curl error: {e}"))?;
     if !resp.status.success() {
@@ -1535,7 +1535,7 @@ fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
 
 fn fetch_agent_yaml(dev: Option<&Device>) -> Result<String, String> {
     let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "2", "http://localhost:9876/semantic"])
+        .args(["-s", "--connect-timeout", "2", "--max-time", "10", "http://localhost:9876/semantic"])
         .output()
         .map_err(|e| format!("curl error: {e}"))?;
 
