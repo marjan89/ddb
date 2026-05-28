@@ -1377,8 +1377,19 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
             let h = extract_yaml_int(chunk, "h: ");
 
             if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                let cx = x + w / 2;
-                let cy = y + h / 2;
+                let (cx, cy) = if chunk.contains("tap_target:") {
+                    let tx = extract_yaml_int_after(chunk, "tap_target:", "x: ");
+                    let ty = extract_yaml_int_after(chunk, "tap_target:", "y: ");
+                    let tw = extract_yaml_int_after(chunk, "tap_target:", "w: ");
+                    let th = extract_yaml_int_after(chunk, "tap_target:", "h: ");
+                    if let (Some(tx), Some(ty), Some(tw), Some(th)) = (tx, ty, tw, th) {
+                        (tx + tw / 2, ty + th / 2)
+                    } else {
+                        (x + w / 2, y + h / 2)
+                    }
+                } else {
+                    (x + w / 2, y + h / 2)
+                };
 
                 let content_line = chunk.lines()
                     .find(|l| l.trim().starts_with("content:"))
@@ -1594,6 +1605,21 @@ fn get_density(dev: Option<&Device>) -> Option<f64> {
 fn extract_yaml_int(chunk: &str, key: &str) -> Option<i32> {
     for line in chunk.lines() {
         let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(key) {
+            return rest.trim().parse().ok();
+        }
+    }
+    None
+}
+
+fn extract_yaml_int_after(chunk: &str, section: &str, key: &str) -> Option<i32> {
+    let section_pos = chunk.find(section)?;
+    let after = &chunk[section_pos..];
+    for line in after.lines().skip(1) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || (!trimmed.starts_with(key) && !trimmed.contains(": ")) {
+            break;
+        }
         if let Some(rest) = trimmed.strip_prefix(key) {
             return rest.trim().parse().ok();
         }
