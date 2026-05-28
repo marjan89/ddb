@@ -844,6 +844,17 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
             Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
         };
+        // Retry once on failure (handles async content, transient UI state)
+        let result = if result.is_err() {
+            eprintln!("  step {} failed, retrying in 2s...", i + 1);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            match step {
+                Step::Action(a) => execute_action(dev, a, &mut ctx),
+                Step::Assert(a) => execute_assert(dev, a, timeout),
+            }
+        } else {
+            result
+        };
 
         match &result {
             Ok(found_desc) => {
