@@ -744,6 +744,56 @@ fn extract_ui_text_bounds(xml: &str, text: &str) -> Option<(i32, i32)> {
     None
 }
 
+fn extract_ui_bounds_fuzzy(xml: &str, fuzzy: &str) -> Option<(i32, i32)> {
+    let lower = xml.to_lowercase();
+    let needle = fuzzy.to_lowercase();
+    if let Some(idx) = lower.find(&needle) {
+        let chunk = &xml[idx..xml.len().min(idx + 300)];
+        if let Some(b_start) = chunk.find("bounds=\"[") {
+            let bounds_str = &chunk[b_start + 9..];
+            if let Some(b_end) = bounds_str.find(']') {
+                let coords: Vec<&str> = bounds_str[..b_end].split(',').collect();
+                if coords.len() == 2 {
+                    let x1: i32 = coords[0].parse().unwrap_or(0);
+                    let y1: i32 = coords[1].parse().unwrap_or(0);
+                    if let Some(b2) = bounds_str[b_end+2..].find(']') {
+                        let c2: Vec<&str> = bounds_str[b_end+2..b_end+2+b2].split(',').collect();
+                        if c2.len() == 2 {
+                            let x2: i32 = c2[0].parse().unwrap_or(0);
+                            let y2: i32 = c2[1].parse().unwrap_or(0);
+                            return Some(((x1 + x2) / 2, (y1 + y2) / 2));
+                        }
+                    }
+                }
+            }
+        }
+        // bounds may be before the match — search backwards
+        let before = &xml[..idx + needle.len()];
+        if let Some(node_start) = before.rfind('<') {
+            let node = &xml[node_start..xml.len().min(idx + 500)];
+            if let Some(b_start) = node.find("bounds=\"[") {
+                let bounds_str = &node[b_start + 9..];
+                if let Some(b_end) = bounds_str.find(']') {
+                    let coords: Vec<&str> = bounds_str[..b_end].split(',').collect();
+                    if coords.len() == 2 {
+                        let x1: i32 = coords[0].parse().unwrap_or(0);
+                        let y1: i32 = coords[1].parse().unwrap_or(0);
+                        if let Some(b2) = bounds_str[b_end+2..].find(']') {
+                            let c2: Vec<&str> = bounds_str[b_end+2..b_end+2+b2].split(',').collect();
+                            if c2.len() == 2 {
+                                let x2: i32 = c2[0].parse().unwrap_or(0);
+                                let y2: i32 = c2[1].parse().unwrap_or(0);
+                                return Some(((x1 + x2) / 2, (y1 + y2) / 2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
     if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
         if out.contains("mInputShown=true") {
@@ -1491,6 +1541,19 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
 
     if let Some(candidate) = fuzzy_candidate {
         return Ok(candidate);
+    }
+
+    // Fallback: check uiautomator dump for dialog elements
+    let ui_xml = fetch_ui_dump(dev);
+    if !search_fuzzy.is_empty() && ui_xml.to_lowercase().contains(&search_fuzzy.to_lowercase()) {
+        if let Some(bounds) = extract_ui_bounds_fuzzy(&ui_xml, search_fuzzy) {
+            return Ok((bounds.0, bounds.1, format!("uiautomator: {search_fuzzy}")));
+        }
+    }
+    if !search_id.is_empty() && ui_xml.contains(search_id) {
+        if let Some(bounds) = extract_ui_bounds(&ui_xml, search_id) {
+            return Ok((bounds.0, bounds.1, format!("uiautomator: {search_id}")));
+        }
     }
 
     let desc = if !search_id.is_empty() { search_id }
