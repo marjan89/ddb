@@ -1019,7 +1019,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("tap: no target")?;
             let (x, y, desc) = poll_for_element(dev, target, 10_000)?;
-            adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
+            adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
             Ok(desc)
         }
         "type" => {
