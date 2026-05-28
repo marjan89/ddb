@@ -438,6 +438,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         if result.status == "PASS" {
             pass += 1;
             println!("  PASS  {} — {}", result.id, result.name);
+            switchboard_notify(&format!("run finished {} PASS", result.id));
         } else {
             fail += 1;
             let empty = String::new();
@@ -447,6 +448,8 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 result.failure.as_ref().map(|f| f.step).unwrap_or(0),
                 detail
             );
+            switchboard_notify(&format!("run finished {} FAIL step {}: {}",
+                result.id, result.failure.as_ref().map(|f| f.step).unwrap_or(0), detail));
         }
 
         results.push(result);
@@ -1938,4 +1941,15 @@ steps:
         assert_eq!(expanded[0].action.as_deref(), Some("tap"));
         assert_eq!(expanded[2].action.as_deref(), Some("scroll_to"));
     }
+}
+
+fn switchboard_notify(msg: &str) {
+    let handle = std::env::var("SWITCHBOARD_NAME").unwrap_or_default();
+    let channel = std::env::var("SWITCHBOARD_CHANNEL").unwrap_or_default();
+    if handle.is_empty() || channel.is_empty() { return; }
+    let _ = std::process::Command::new("switchboard")
+        .env("SWITCHBOARD_NAME", &handle)
+        .env("SWITCHBOARD_CHANNEL", &channel)
+        .args(["send", msg])
+        .output();
 }
