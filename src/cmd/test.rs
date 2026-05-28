@@ -238,6 +238,10 @@ struct Target {
     clickable_only: Option<bool>,
     #[serde(default)]
     exclude_type: Option<String>,
+    #[serde(default)]
+    x: Option<i32>,
+    #[serde(default)]
+    y: Option<i32>,
 }
 
 #[derive(serde::Serialize)]
@@ -859,13 +863,41 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     std::thread::sleep(std::time::Duration::from_secs(3));
     wait_idle(dev, 10);
 
+    // Verify app is foreground after relaunch
+    if let Ok(current) = get_current_activity(dev) {
+        if !current.contains(pkg) {
+            eprintln!("  warning: app not foreground ({}), retrying launch...", current.trim());
+            let _ = adb::shell(dev, &[
+                "am", "start", "-a", "android.intent.action.MAIN",
+                "-c", "android.intent.category.LAUNCHER",
+                "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
+            ]);
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+    }
+
     // Grant all app permissions from manifest (prevents any dialog)
     grant_all_permissions(dev, pkg);
 
-    // #1: /health check — verify agent is responding before first step
-    if !check_idle(dev).unwrap_or(false) {
-        eprintln!("  warning: agent /health not responding, waiting 5s...");
-        std::thread::sleep(std::time::Duration::from_secs(5));
+    // Agent handshake: verify semantic agent identity
+    let base = agent_base_url();
+    let health_out = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "5", &format!("{base}/health")])
+        .output();
+    match health_out {
+        Ok(out) => {
+            let body = String::from_utf8_lossy(&out.stdout);
+            if body.contains("semantic-agent") {
+                eprintln!("  agent: OK");
+            } else {
+                eprintln!("  warning: agent not responding, waiting 5s...");
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        }
+        Err(_) => {
+            eprintln!("  warning: agent unreachable, waiting 5s...");
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
     }
 
     // Handle logged_in precondition
@@ -958,7 +990,46 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
+    // TC YAML validation: reject steps with missing targets
     for (i, step) in spec.steps.iter().enumerate() {
+        match step {
+            Step::Action(a) if a.action == "tap" || a.action == "long_press" || a.action == "scroll_to" => {
+                if a.target.is_none() {
+                    return (TestResult {
+                        id: spec.id.clone(), name: spec.name.clone(),
+                        status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+                        failure: Some(FailureDetail {
+                            step: i + 1,
+                            description: format!("YAML lint: {} action has no target", a.action),
+                            screenshot: None,
+                        }),
+                    }, step_logs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(serde_json::Value::String(v)) = ctx.vars.get("config.deprioritize_patterns") {
+        if std::env::var("DDB_DEPRIORITIZE_PATTERNS").is_err() {
+            std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", v);
+        }
+    }
+
+    let tc_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout * spec.steps.len() as u64);
+
+    for (i, step) in spec.steps.iter().enumerate() {
+        // TC-level timeout
+        if std::time::Instant::now() > tc_deadline {
+            return (TestResult {
+                id: spec.id.clone(), name: spec.name.clone(),
+                status: "FAIL".to_string(), steps_run: i, steps_total: spec.steps.len(),
+                failure: Some(FailureDetail {
+                    step: i + 1, description: "TC timeout exceeded".to_string(), screenshot: None,
+                }),
+            }, step_logs);
+        }
+
         let result = match step {
             Step::Action(a) => execute_action(dev, a, &mut ctx),
             Step::Assert(a) => execute_assert(dev, a, timeout),
@@ -977,6 +1048,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
         match &result {
             Ok(found_desc) => {
+                let step_desc = match step {
+                    Step::Action(a) => format!("{}", a.action),
+                    Step::Assert(a) => format!("assert {}", a.assert),
+                };
+                eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
                     Step::Assert(a) => (None, Some(a.assert.clone())),
@@ -1444,6 +1520,10 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
 }
 
 fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, String), String> {
+    if let (Some(x), Some(y)) = (target.x, target.y) {
+        return Ok((x, y, format!("position ({x}, {y})")));
+    }
+
     let yaml = fetch_agent_yaml(dev)?;
 
     let search_id = target.id.as_deref().unwrap_or("");
