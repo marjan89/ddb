@@ -1333,7 +1333,7 @@ fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, Stri
             let needle = search_fuzzy.to_lowercase();
             chunk.lines().any(|line| {
                 let t = line.trim();
-                if let Some(rest) = t.strip_prefix("content:") {
+                if let Some(rest) = t.strip_prefix("content:").or_else(|| t.strip_prefix("a11y_label:")) {
                     let hay = rest.to_lowercase();
                     hay.contains(&needle) || token_jaccard(&needle, &hay) >= 0.6
                 } else {
