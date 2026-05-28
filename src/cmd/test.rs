@@ -1024,7 +1024,13 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
     }
 
     // Load standalone fixtures.yaml if present
-    let fixtures_paths = ["catalogue/fixtures.yaml", "catalogue/tests/fixtures.yaml"];
+    let fixtures_paths = [
+        "catalogue/fixtures.yaml",
+        "catalogue/tests/fixtures.yaml",
+        "/Users/Shared/projects/Outdoors/catalogue/fixtures.yaml",
+        "../catalogue/fixtures.yaml",
+        "../../catalogue/fixtures.yaml",
+    ];
     for fp in &fixtures_paths {
         let fp = std::path::Path::new(fp);
         if fp.exists() {
@@ -1083,7 +1089,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
         let result = match step {
             Step::Action(a) => execute_action(dev, a, &mut ctx),
-            Step::Assert(a) => execute_assert(dev, a, timeout),
+            Step::Assert(a) => execute_assert(dev, a, timeout, &ctx),
         };
         // Retry once on failure with precondition check
         let result = if result.is_err() {
@@ -1114,7 +1120,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
             std::thread::sleep(std::time::Duration::from_secs(2));
             match step {
                 Step::Action(a) => execute_action(dev, a, &mut ctx),
-                Step::Assert(a) => execute_assert(dev, a, timeout),
+                Step::Assert(a) => execute_assert(dev, a, timeout, &ctx),
             }
         } else {
             result
@@ -1500,7 +1506,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
     }
 }
 
-fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Result<String, String> {
+fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: &RunContext) -> Result<String, String> {
     match assert.assert.as_str() {
         "activity" => {
             let expected = assert.expected.as_ref().ok_or("assert activity: no expected")?;
@@ -1516,8 +1522,10 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64) -> Re
             let expected_text = assert.text.as_deref();
             let expected_hint = assert.hint.as_deref();
 
-            // Poll uiautomator + semantic agent in parallel loop (catches AlertDialogs + async content)
-            let fuzzy = target.and_then(|t| t.content_fuzzy.as_deref());
+            // Interpolate fixture refs in targets
+            let fuzzy_raw = target.and_then(|t| t.content_fuzzy.as_deref());
+            let fuzzy_resolved = fuzzy_raw.map(|f| ctx.interpolate(f));
+            let fuzzy = fuzzy_resolved.as_deref();
             let id = target.and_then(|t| t.id.as_deref());
             for poll in 0..10 {
                 // Check uiautomator (fast, catches system dialogs)
