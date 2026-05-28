@@ -1038,7 +1038,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 .map_err(|e| format!("navigate_to_site curl: {e}"))?;
             let body = String::from_utf8_lossy(&out.stdout);
             if body.contains("\"navigated\"") {
-                std::thread::sleep(std::time::Duration::from_secs(3));
+                wait_for_idle_after_navigate(dev);
                 Ok(format!("navigated to site {site_id}"))
             } else {
                 Err(format!("navigate_to_site failed: {}", body.trim()))
@@ -1056,7 +1056,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 .map_err(|e| format!("navigate_to_user curl: {e}"))?;
             let body = String::from_utf8_lossy(&out.stdout);
             if body.contains("\"navigated\"") {
-                std::thread::sleep(std::time::Duration::from_secs(3));
+                wait_for_idle_after_navigate(dev);
                 Ok(format!("navigated to user {user_id}"))
             } else {
                 Err(format!("navigate_to_user failed: {}", body.trim()))
@@ -1503,6 +1503,12 @@ fn get_current_activity(dev: Option<&Device>) -> Result<String, String> {
         }
     }
     Ok(String::new())
+}
+
+fn wait_for_idle_after_navigate(dev: Option<&Device>) {
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    wait_idle(dev, 10);
+    std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
 fn wait_idle(dev: Option<&Device>, timeout: u64) {
