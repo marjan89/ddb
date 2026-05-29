@@ -848,7 +848,11 @@ class SemanticServer private constructor(
             server.idleRegistry.register(LayoutIdleResource { server.currentActivity?.get() })
             server.idleRegistry.register(ScrollIdleResource { server.currentActivity?.get() })
             server.idleRegistry.register(NetworkIdleResource(app))
+            server.idleRegistry.register(DialogIdleResource { server.currentActivity?.get() })
+            val activityTransition = ActivityTransitionIdleResource()
+            server.idleRegistry.register(activityTransition)
 
+            app.registerActivityLifecycleCallbacks(activityTransition)
             app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
                 override fun onActivityResumed(activity: Activity) {
                     server.currentActivity = WeakReference(activity)

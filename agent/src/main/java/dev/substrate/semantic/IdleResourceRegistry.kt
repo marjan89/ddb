@@ -144,6 +144,76 @@ class NetworkIdleResource(private val appContext: android.content.Context) : Idl
     }
 }
 
+class DialogIdleResource(private val activityProvider: () -> android.app.Activity?) : IdleResource {
+    override val name = "dialog"
+    @Volatile private var windowCount = 1
+    @Volatile private var stableSince = System.currentTimeMillis()
+    private var lastCount = 1
+    private val handler = Handler(Looper.getMainLooper())
+
+    init {
+        schedulePoll()
+    }
+
+    private fun schedulePoll() {
+        handler.postDelayed({
+            val count = countWindows()
+            if (count != lastCount) {
+                lastCount = count
+                stableSince = System.currentTimeMillis()
+            }
+            windowCount = count
+            schedulePoll()
+        }, 100)
+    }
+
+    private fun countWindows(): Int {
+        try {
+            val wmgClass = Class.forName("android.view.WindowManagerGlobal")
+            val getInstance = wmgClass.getMethod("getInstance")
+            val wmg = getInstance.invoke(null)
+            val viewsField = wmgClass.getDeclaredField("mViews")
+            viewsField.isAccessible = true
+            val views = viewsField.get(wmg) as? java.util.ArrayList<*>
+            return views?.size ?: 1
+        } catch (_: Exception) {
+            return 1
+        }
+    }
+
+    override fun isIdle(): Boolean {
+        // idle = single window (no dialog) AND stable for 300ms
+        return windowCount <= 1 || (System.currentTimeMillis() - stableSince) >= 300
+    }
+}
+
+class ActivityTransitionIdleResource : IdleResource, android.app.Application.ActivityLifecycleCallbacks {
+    override val name = "activity_transition"
+    @Volatile private var transitioning = false
+    @Volatile private var transitionStart = 0L
+
+    override fun onActivityPaused(activity: android.app.Activity) {
+        transitioning = true
+        transitionStart = System.currentTimeMillis()
+    }
+
+    override fun onActivityResumed(activity: android.app.Activity) {
+        transitioning = false
+    }
+
+    override fun isIdle(): Boolean {
+        if (!transitioning) return true
+        // force idle after 5s to prevent permanent hang
+        return (System.currentTimeMillis() - transitionStart) > 5000
+    }
+
+    override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
+    override fun onActivityStarted(activity: android.app.Activity) {}
+    override fun onActivityStopped(activity: android.app.Activity) {}
+    override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+    override fun onActivityDestroyed(activity: android.app.Activity) {}
+}
+
 class IdleResourceRegistry {
     private val resources = ConcurrentHashMap<String, IdleResource>()
 
