@@ -1133,7 +1133,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         }
 
         if matches!(step, Step::Action(_)) {
+            eprintln!("  >>> inter-step wait_idle entering");
             wait_idle(dev, 3);
+            eprintln!("  >>> inter-step wait_idle done");
         }
     }
 
@@ -1551,11 +1553,18 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
 fn wait_idle(_dev: Option<&Device>, timeout: u64) {
     let base = agent_base_url();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
-    let idle_runner = StepRunner::new(deadline, PhaseBudgets { pre_idle_s: timeout, execute_s: timeout, post_idle_s: timeout });
+    eprintln!("    wait_idle: polling {base}/idle for {timeout}s");
     loop {
-        if std::time::Instant::now() > deadline { break; }
-        if let Ok(body) = idle_runner.curl_with_deadline(&format!("{base}/idle"), "GET", None) {
+        if std::time::Instant::now() > deadline { eprintln!("    wait_idle: deadline"); break; }
+        if let Ok(out) = std::process::Command::new("curl")
+            .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/idle")])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+        {
+            let body = String::from_utf8_lossy(&out.stdout);
             if body.contains("true") || body.contains("idle") {
+                eprintln!("    wait_idle: idle");
                 break;
             }
         }
