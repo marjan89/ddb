@@ -643,8 +643,13 @@ pub fn scroll_search(target: &Target, max_scroll: u32) -> Option<(i32, i32, Stri
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&resp_body) {
         if json.get("found") == Some(&serde_json::Value::Bool(true)) {
             let element = json.get("element");
-            let x = element.and_then(|e| e.get("x")).and_then(|v| v.as_i64()).unwrap_or(540) as i32;
-            let y = element.and_then(|e| e.get("y")).and_then(|v| v.as_i64()).unwrap_or(1200) as i32;
+            let bounds = element.and_then(|e| e.get("bounds"));
+            let bx = bounds.and_then(|b| b.get("x")).and_then(|v| v.as_i64()).unwrap_or(540) as i32;
+            let by = bounds.and_then(|b| b.get("y")).and_then(|v| v.as_i64()).unwrap_or(1200) as i32;
+            let bw = bounds.and_then(|b| b.get("w")).and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+            let bh = bounds.and_then(|b| b.get("h")).and_then(|v| v.as_i64()).unwrap_or(50) as i32;
+            let x = bx + bw / 2;
+            let y = by + bh / 2;
             let content = element.and_then(|e| e.get("content")).and_then(|v| v.as_str()).unwrap_or("");
             let scrolls = json.get("scrolls").and_then(|v| v.as_u64()).unwrap_or(0);
             return Some((x, y, format!("scroll-search: {} at ({},{}) scrolls={}", content, x, y, scrolls)));
