@@ -628,8 +628,7 @@ pub fn scroll_search(target: &Target, max_scroll: u32, restore_scroll: bool) -> 
     let url = format!("{}/scroll-search", agent_base_url());
     let max_time = max_scroll as u64 * 2 + 10;
 
-    eprintln!("  scroll-search: POST {} body={}", url, &body_str[..body_str.len().min(200)]);
-    let resp = match std::process::Command::new("curl")
+    let resp = std::process::Command::new("curl")
         .args([
             "-s", "--connect-timeout", "3",
             "--max-time", &max_time.to_string(),
@@ -639,20 +638,9 @@ pub fn scroll_search(target: &Target, max_scroll: u32, restore_scroll: bool) -> 
             &url,
         ])
         .output()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("  scroll-search: curl spawn failed: {e}");
-            return None;
-        }
-    };
+        .ok()?;
 
     let resp_body = String::from_utf8_lossy(&resp.stdout);
-    let resp_stderr = String::from_utf8_lossy(&resp.stderr);
-    eprintln!("  scroll-search: status={} stdout={} stderr={}",
-        resp.status.code().unwrap_or(-1),
-        &resp_body[..resp_body.len().min(200)],
-        &resp_stderr[..resp_stderr.len().min(200)]);
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&resp_body) {
         if json.get("found") == Some(&serde_json::Value::Bool(true)) {
             let element = json.get("element");

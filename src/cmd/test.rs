@@ -1068,7 +1068,6 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, true);
                 let elapsed = tc_start.elapsed().as_secs_f32();
                 eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
-                let _ = std::io::Write::flush(&mut std::io::stderr());
 
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
@@ -1143,11 +1142,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         }
 
         if matches!(step, Step::Action(_)) {
-            eprintln!("  inter-step idle wait (3s cap)...");
-            let _ = std::io::Write::flush(&mut std::io::stderr());
             wait_idle(dev, 3);
-            eprintln!("  inter-step idle done");
-            let _ = std::io::Write::flush(&mut std::io::stderr());
         }
     }
 
@@ -1220,9 +1215,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             Ok(format!("typed \"{}\"", text))
         }
         "scroll" | "scroll_to" => {
-            eprintln!("  scroll_to handler: target={:?}", action.target.as_ref().map(|t| format!("id={:?} text={:?} fuzzy={:?}", t.id, t.text, t.content_fuzzy)));
             if let Some(ref target) = action.target {
-                eprintln!("  scroll_to: calling scroll_search with target");
                 if let Some((_x, _y, desc)) = scroll_search(target, 15, false) {
                     Ok(desc)
                 } else {
