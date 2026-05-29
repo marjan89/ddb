@@ -1208,7 +1208,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             Ok(format!("typed \"{}\"", text))
         }
         "scroll" | "scroll_to" => {
+            eprintln!("  scroll_to handler: target={:?}", action.target.as_ref().map(|t| format!("id={:?} text={:?} fuzzy={:?}", t.id, t.text, t.content_fuzzy)));
             if let Some(ref target) = action.target {
+                eprintln!("  scroll_to: calling scroll_search with target");
                 if let Some((_x, _y, desc)) = scroll_search(target, 15, false) {
                     Ok(desc)
                 } else {
