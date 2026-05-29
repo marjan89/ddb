@@ -1161,15 +1161,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 
         if let Step::Action(a) = step {
             if let Some(ref resources) = a.wait_for {
-                let chain_timeout = a.wait_timeout.unwrap_or(10);
-                let chain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(chain_timeout);
+                let per_resource_timeout = a.wait_timeout.unwrap_or(10);
                 let base = agent_base_url();
                 for resource in resources {
-                    let remaining = chain_deadline.saturating_duration_since(std::time::Instant::now());
-                    if remaining.is_zero() { break; }
                     let body = serde_json::json!({
                         "idle_resources": [resource],
-                        "timeout": remaining.as_secs().max(1),
+                        "timeout": per_resource_timeout,
                     });
                     let _ = runner.curl_with_deadline(
                         &format!("{base}/query-when-idle"),
