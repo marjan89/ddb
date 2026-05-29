@@ -289,6 +289,10 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         Some(d)
     };
 
+    // Utility runner for pre-TC operations (build, install, version check, port forward)
+    let util_deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    let util_runner = StepRunner::new(util_deadline, PhaseBudgets { pre_idle_s: 300, execute_s: 300, post_idle_s: 3 });
+
     // Build + install if --build flag
     if args.build {
         let project_dir = args.project_dir.as_deref()
@@ -623,12 +627,10 @@ fn step_target_desc(step: &Step) -> Option<String> {
     }
 }
 
-fn ensure_input_focus(dev: Option<&Device>) {
-    // Check if any input field is focused; if not, find and tap the first EditText
-    if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
+fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) {
+    if let Ok(out) = runner.adb_shell(dev, &["dumpsys", "input_method"]) {
         if out.contains("mServedView=null") || !out.contains("mServedView=") {
-            // No input field focused — find first EditText via agent
-            if let Ok(yaml) = fetch_agent_yaml(dev) {
+            if let Ok(yaml) = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None) {
                 for chunk in yaml.split("\n- ") {
                     if chunk.contains("type: input") || chunk.contains("type: text_field") || chunk.contains("EditText") {
                         let x = extract_yaml_int(chunk, "x: ");
@@ -638,7 +640,7 @@ fn ensure_input_focus(dev: Option<&Device>) {
                         if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
                             let cx = x + w / 2;
                             let cy = y + h / 2;
-                            let _ = adb::shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+                            let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
                             std::thread::sleep(std::time::Duration::from_millis(300));
                             break;
                         }
@@ -747,40 +749,36 @@ fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &S
     let _ = runner.adb_shell(dev, &[&cmd]);
 }
 
-fn dismiss_permission_dialog(dev: Option<&Device>) {
-    let ui = fetch_ui_dump(dev);
+fn dismiss_permission_dialog(dev: Option<&Device>, runner: &StepRunner) {
+    let ui = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]).unwrap_or_default();
+    let _ = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]);
+    let ui = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]).unwrap_or_default();
     let ui_lower = ui.to_lowercase();
-    // Check for permission dialog keywords
     if ui_lower.contains("permission") || ui_lower.contains("allow") || ui_lower.contains("while using") {
-        // Try common permission button IDs
         let perm_buttons = std::env::var("DDB_PERMISSION_BUTTONS")
             .unwrap_or_else(|_| "permission_allow_foreground_only_button,permission_allow_button".into());
         for btn_id in perm_buttons.split(',') {
             let btn_id = btn_id.trim();
             if ui.contains(btn_id) {
-                let _ = adb::shell(dev, &[
-                    "input", "keyevent", "KEYCODE_TAB",
-                ]);
-                // Find and tap the button via uiautomator coordinates
+                let _ = runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_TAB"]);
                 if let Some(bounds) = extract_ui_bounds(&ui, btn_id) {
-                    let _ = adb::shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
+                    let _ = runner.adb_shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     return;
                 }
             }
         }
-        // Fallback: tap "While using the app" text
         if let Some(bounds) = extract_ui_text_bounds(&ui, "While using") {
-            let _ = adb::shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
+            let _ = runner.adb_shell(dev, &["input", "tap", &bounds.0.to_string(), &bounds.1.to_string()]);
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
 }
 
-fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
-    if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
+fn dismiss_keyboard_if_visible(dev: Option<&Device>, runner: &StepRunner) {
+    if let Ok(out) = runner.adb_shell(dev, &["dumpsys", "input_method"]) {
         if out.contains("mInputShown=true") {
-            let _ = adb::shell(dev, &["input", "keyevent", "111"]); // KEYCODE_ESCAPE dismisses keyboard without BACK navigation
+            let _ = runner.adb_shell(dev, &["input", "keyevent", "111"]);
             std::thread::sleep(std::time::Duration::from_secs(1));
             wait_idle(dev, 3);
         }
@@ -891,7 +889,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             // Agent is alive = app is foreground on its main activity
             // If agent health passed, precondition is met
         } else if let Some(ref activity) = pre.activity {
-            if let Ok(current) = get_current_activity(dev) {
+            if let Ok(current) = get_current_activity(dev, &setup_runner) {
                 if !current.contains(activity) {
                     return (TestResult {
                         id: spec.id.clone(), name: spec.name.clone(),
@@ -1020,9 +1018,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 grant_all_permissions_with_runner(dev, pkg, &runner);
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
-            dismiss_keyboard_if_visible(dev);
+            dismiss_keyboard_if_visible(dev, &runner);
             if tm.check().is_ok() {
-                if let Ok(current) = get_current_activity(dev) {
+                if let Ok(current) = get_current_activity(dev, &runner) {
                     if !current.contains(pkg) {
                         eprintln!("  → app not foreground ({}), relaunching...", current.trim());
                         let _ = runner.adb_shell(dev, &[
@@ -1159,21 +1157,21 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContext, runner: &StepRunner) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
-            dismiss_keyboard_if_visible(dev);
+            dismiss_keyboard_if_visible(dev, &runner);
             let target = action.target.as_ref().ok_or("tap: no target")?;
             let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
             runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
             Ok(desc)
         }
         "type" => {
-            dismiss_keyboard_if_visible(dev);
+            dismiss_keyboard_if_visible(dev, &runner);
             let text = action.text.as_ref().ok_or("type: no text")?;
             if let Some(ref target) = action.target {
                 let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
                 runner.adb_shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
-                ensure_input_focus(dev);
+                ensure_input_focus(dev, runner);
             }
             runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
             runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
@@ -1248,7 +1246,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             Err(format!("{}: use platform: android: steps in TC YAML", action.action))
         }
         "long_press" => {
-            dismiss_keyboard_if_visible(dev);
+            dismiss_keyboard_if_visible(dev, &runner);
             let target = action.target.as_ref().ok_or("long_press: no target")?;
             let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
             runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
@@ -1340,11 +1338,14 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 let _ = crate::catalogue::archive_existing(output_path);
             }
 
-            let png = adb::adb_raw(dev, &["exec-out", "screencap", "-p"])?;
-            std::fs::write(&output, &png).map_err(|e| format!("write screenshot: {e}"))?;
-            let _ = std::process::Command::new("sips")
-                .args(["-Z", "1200", &output])
-                .output();
+            let mut cmd = std::process::Command::new("adb");
+            if let Some(d) = dev { cmd.arg("-s").arg(d.transport_id()); }
+            cmd.args(["exec-out", "screencap", "-p"]);
+            let screencap_output = runner.run_with_deadline(&mut cmd)?;
+            std::fs::write(&output, &screencap_output.stdout).map_err(|e| format!("write screenshot: {e}"))?;
+            let mut sips_cmd = std::process::Command::new("sips");
+            sips_cmd.args(["-Z", "1200", &output]);
+            let _ = runner.run_with_deadline(&mut sips_cmd);
             eprintln!("screenshot → {output}");
 
             if let Some((cat_root, Some(entry_key))) = cat_info {
@@ -1413,7 +1414,7 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
     match assert.assert.as_str() {
         "activity" => {
             let expected = assert.expected.as_ref().ok_or("assert activity: no expected")?;
-            let current = get_current_activity(dev)?;
+            let current = get_current_activity(dev, runner)?;
             if current.contains(expected.as_str()) {
                 Ok(format!("activity matches: {current}"))
             } else {
@@ -1530,8 +1531,8 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
     }
 }
 
-fn get_current_activity(dev: Option<&Device>) -> Result<String, String> {
-    let out = adb::shell(dev, &[
+fn get_current_activity(dev: Option<&Device>, runner: &StepRunner) -> Result<String, String> {
+    let out = runner.adb_shell(dev, &[
         "dumpsys", "activity", "activities",
         "|", "grep", "-E", "mResumedActivity|topResumedActivity",
     ])?;
@@ -1547,30 +1548,16 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
 fn wait_idle(_dev: Option<&Device>, timeout: u64) {
     let base = agent_base_url();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    let idle_runner = StepRunner::new(deadline, PhaseBudgets { pre_idle_s: timeout, execute_s: timeout, post_idle_s: timeout });
     loop {
         if std::time::Instant::now() > deadline { break; }
-        if let Ok(out) = std::process::Command::new("curl")
-            .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/idle")])
-            .output()
-        {
-            let body = String::from_utf8_lossy(&out.stdout);
+        if let Ok(body) = idle_runner.curl_with_deadline(&format!("{base}/idle"), "GET", None) {
             if body.contains("true") || body.contains("idle") {
                 break;
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
-}
-
-
-fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
-    let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "1", "--max-time", "5", &format!("{}/idle", agent_base_url())])
-        .output()
-        .map_err(|e| format!("curl error: {e}"))?;
-
-    let body = String::from_utf8_lossy(&resp.stdout);
-    Ok(body.contains("\"idle\":true") || body.contains("\"idle\": true"))
 }
 
 #[cfg(test)]
