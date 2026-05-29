@@ -9,7 +9,9 @@ pub fn switchboard_notify(msg: &str) {
         .env("SWITCHBOARD_NAME", &handle)
         .env("SWITCHBOARD_CHANNEL", &channel)
         .args(["send", msg])
-        .output();
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 pub fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
