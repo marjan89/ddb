@@ -326,7 +326,7 @@ pub fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32,
                 let y = extract_yaml_int(chunk, "y: ").unwrap_or(0);
                 let w = extract_yaml_int(chunk, "w: ").unwrap_or(0);
                 let h = extract_yaml_int(chunk, "h: ").unwrap_or(0);
-                if w > 100 && h > 200 {
+                if w > 100 && h > 500 {
                     let cx = x + w / 2;
                     let margin = h / 4;
                     return match dir {
