@@ -1448,6 +1448,7 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
                             if line.starts_with("event:") || line.starts_with("data:") {
                                 if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
                                     let _ = child.kill();
+                                    let _ = child.wait();
                                     return Ok(result);
                                 }
                             }
@@ -1455,6 +1456,7 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
                     }
                 }
                 let _ = child.kill();
+                let _ = child.wait();
             }
 
             // Final check after SSE timeout
@@ -1580,11 +1582,13 @@ fn wait_for_event(_dev: Option<&Device>, event_type: &str, timeout: u64) -> bool
                 if let Ok(line) = line {
                     if line.starts_with("event:") && line.contains(event_type) {
                         let _ = child.kill();
+                        let _ = child.wait();
                         return true;
                     }
                 }
             }
             let _ = child.kill();
+            let _ = child.wait();
         }
     }
     false
