@@ -451,8 +451,9 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let started = now_iso();
         let tc_hard_timeout = {
             let step_count = spec.steps.len() as u64;
-            let base = 120u64.max(args.step_timeout * step_count).min(300);
-            std::time::Duration::from_secs(base + 30)
+            let steps_budget = 120u64.max(args.step_timeout * step_count).min(300);
+            let setup_budget = 120u64;
+            std::time::Duration::from_secs(steps_budget + setup_budget)
         };
         let spec_clone = spec.clone();
         let dev_clone = dev.clone();
@@ -996,8 +997,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 
 
 
-    let tc_timeout = 120u64.max(timeout * spec.steps.len() as u64).min(300);
-    let mut tm = TimeoutManager::new(tc_timeout, timeout);
+    let steps_budget = 120u64.max(timeout * spec.steps.len() as u64).min(300);
+    let setup_budget = 120u64;
+    let mut tm = TimeoutManager::new(steps_budget + setup_budget, timeout);
     let tc_start = std::time::Instant::now();
 
     // Heartbeat thread
