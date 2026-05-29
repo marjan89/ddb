@@ -12,6 +12,7 @@ mod test;
 pub mod test_element;
 pub mod test_fixture;
 pub mod test_observability;
+pub mod test_log;
 pub mod test_timeout;
 mod touch;
 mod ui;

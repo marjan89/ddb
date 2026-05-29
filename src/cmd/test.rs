@@ -14,6 +14,7 @@ use super::test_element::{
 };
 use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
 use super::test_observability::{switchboard_notify, capture_failure_screenshot, fetch_debug_log};
+use super::test_log::Logger;
 use super::test_timeout::{TimeoutManager, TimeoutLevel};
 
 #[derive(serde::Serialize)]
@@ -267,6 +268,8 @@ struct TestResult {
     steps_total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure: Option<FailureDetail>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    log: Vec<super::test_log::LogEntry>,
 }
 
 #[derive(serde::Serialize)]
@@ -476,6 +479,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                         step: 0, description: format!("TC hard timeout ({}s)", tc_hard_timeout.as_secs()),
                         screenshot: None,
                     }),
+                    log: vec![],
                 }, Vec::new())
             }
         };
@@ -824,6 +828,7 @@ impl RunContext {
 fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
     let mut ctx = RunContext::new(fixtures.clone());
+    let logger = Logger::new();
 
     let pkg_env = std::env::var("DDB_TEST_PACKAGE").ok();
     let pkg = spec.precondition.as_ref()
@@ -833,15 +838,20 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{pkg}/.ui.MainActivity"));
     let base = agent_base_url();
 
+    let setup_start = std::time::Instant::now();
+
     // Launch app via ADB (single call)
+    let launch_start = std::time::Instant::now();
     let _ = adb::shell(dev, &[
         "am", "start", "-a", "android.intent.action.MAIN",
         "-c", "android.intent.category.LAUNCHER",
         "-n", &main_activity, "--activity-clear-task",
     ]);
+    logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Wait for agent to be ready (HTTP — no ADB subprocess)
+    let health_start = std::time::Instant::now();
     let mut agent_ready = false;
     for _ in 0..10 {
         let health = std::process::Command::new("curl")
@@ -850,18 +860,20 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         if let Ok(out) = health {
             if String::from_utf8_lossy(&out.stdout).contains("semantic-agent") {
                 agent_ready = true;
-                eprintln!("  agent: OK");
+                logger.setup("agent health check", health_start.elapsed().as_millis() as u64);
                 break;
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     if !agent_ready {
-        eprintln!("  warning: agent not ready after 5s, proceeding anyway");
+        logger.error("setup", "agent not ready after 5s, proceeding anyway".into());
     }
 
     // Grant permissions via single batched ADB call
+    let perm_start = std::time::Instant::now();
     grant_all_permissions(dev, pkg);
+    logger.setup("grant permissions", perm_start.elapsed().as_millis() as u64);
 
     // Handle logged_in precondition (HTTP via agent)
     if let Some(ref pre) = spec.precondition {
@@ -897,6 +909,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                             description: format!("precondition failed: expected activity {activity}, got {current}"),
                             screenshot: None,
                         }),
+                        log: logger.entries(),
                     }, step_logs);
                 }
             }
@@ -940,6 +953,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                             description: format!("YAML lint: {} action has no target", a.action),
                             screenshot: None,
                         }),
+                        log: logger.entries(),
                     }, step_logs);
                 }
             }
@@ -948,6 +962,8 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     }
 
 
+
+    logger.setup("TOTAL", setup_start.elapsed().as_millis() as u64);
 
     let steps_budget = 120u64.max(timeout * spec.steps.len() as u64).min(300);
     let setup_budget = 120u64;
@@ -985,8 +1001,16 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 failure: Some(FailureDetail {
                     step: i + 1, description: "TC timeout exceeded".to_string(), screenshot: None,
                 }),
+                log: logger.entries(),
             }, step_logs);
         }
+
+        let step_start = std::time::Instant::now();
+        let step_desc_log = match step {
+            Step::Action(a) => format!("action:{}", a.action),
+            Step::Assert(a) => format!("assert:{}", a.assert),
+        };
+        logger.step_start(i + 1, &step_desc_log);
 
         let result = match step {
             Step::Action(a) => execute_action(dev, a, &mut ctx),
@@ -1034,6 +1058,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                     Step::Action(a) => format!("{}", a.action),
                     Step::Assert(a) => format!("assert {}", a.assert),
                 };
+                logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, true);
                 let elapsed = tc_start.elapsed().as_secs_f32();
                 eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
                 switchboard_notify(&format!("{} step {}/{} PASS: {} ({:.1}s)", spec.id, i + 1, spec.steps.len(), step_desc, elapsed));
@@ -1061,6 +1086,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 });
             }
             Err(err) => {
+                logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, false);
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
                     Step::Assert(a) => (None, Some(a.assert.clone())),
@@ -1103,6 +1129,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                         description: err.clone(),
                         screenshot,
                     }),
+                    log: logger.entries(),
                 }, step_logs);
             }
         }
@@ -1128,6 +1155,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         steps_run: spec.steps.len(),
         steps_total: spec.steps.len(),
         failure: None,
+        log: logger.entries(),
     }, step_logs)
 }
 
@@ -1740,6 +1768,7 @@ oscar:
                 description: "element not found".to_string(),
                 screenshot: None,
             }),
+            log: vec![],
         }];
 
         // Create temp results dir with a previous PASS result
@@ -1769,6 +1798,7 @@ oscar:
                 description: "still broken".to_string(),
                 screenshot: None,
             }),
+            log: vec![],
         }];
 
         let tmp = std::env::temp_dir().join("ddb-test-stable-fail");
