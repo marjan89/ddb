@@ -836,34 +836,47 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 
     let setup_start = std::time::Instant::now();
 
-    // Launch app via ADB (single call)
-    let launch_start = std::time::Instant::now();
-    let _ = adb::shell(dev, &[
-        "am", "start", "-a", "android.intent.action.MAIN",
-        "-c", "android.intent.category.LAUNCHER",
-        "-n", &main_activity, "--activity-clear-task",
-    ]);
-    logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
-    std::thread::sleep(std::time::Duration::from_secs(2));
-
-    // Wait for agent to be ready (HTTP — no ADB subprocess)
-    let health_start = std::time::Instant::now();
+    // Check if agent is already running (skip launch if so)
     let mut agent_ready = false;
-    for _ in 0..10 {
-        let health = std::process::Command::new("curl")
-            .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/health")])
-            .output();
-        if let Ok(out) = health {
-            if String::from_utf8_lossy(&out.stdout).contains("semantic-agent") {
-                agent_ready = true;
-                logger.setup("agent health check", health_start.elapsed().as_millis() as u64);
-                break;
-            }
+    if let Ok(out) = std::process::Command::new("curl")
+        .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/health")])
+        .output()
+    {
+        if String::from_utf8_lossy(&out.stdout).contains("semantic-agent") {
+            agent_ready = true;
+            logger.setup("agent already running (skip launch)", setup_start.elapsed().as_millis() as u64);
         }
-        std::thread::sleep(std::time::Duration::from_millis(500));
     }
+
     if !agent_ready {
-        logger.error("setup", "agent not ready after 5s, proceeding anyway".into());
+        // Launch app via ADB
+        let launch_start = std::time::Instant::now();
+        let _ = adb::shell(dev, &[
+            "am", "start", "-a", "android.intent.action.MAIN",
+            "-c", "android.intent.category.LAUNCHER",
+            "-n", &main_activity, "--activity-clear-task",
+        ]);
+        logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Wait for agent health
+        let health_start = std::time::Instant::now();
+        for _ in 0..10 {
+            let health = std::process::Command::new("curl")
+                .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/health")])
+                .output();
+            if let Ok(out) = health {
+                if String::from_utf8_lossy(&out.stdout).contains("semantic-agent") {
+                    agent_ready = true;
+                    logger.setup("agent health check", health_start.elapsed().as_millis() as u64);
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if !agent_ready {
+            logger.error("setup", "agent not ready after 5s, proceeding anyway".into());
+        }
     }
 
     // Grant permissions via single batched ADB call
