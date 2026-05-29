@@ -13,7 +13,7 @@ use super::test_element::{
     scroll_direction, scroll_search,
 };
 use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
-use super::test_observability::{switchboard_notify, capture_failure_screenshot, fetch_debug_log};
+use super::test_observability::{capture_failure_screenshot, fetch_debug_log};
 use super::test_log::Logger;
 use super::test_timeout::{TimeoutManager, TimeoutLevel};
 
@@ -450,7 +450,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             steps,
         };
 
-        switchboard_notify(&format!("run started {} — {}", spec.id, spec.name));
+
         let started = now_iso();
         let tc_hard_timeout = {
             let step_count = spec.steps.len() as u64;
@@ -471,7 +471,6 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             Ok(r) => r,
             Err(_) => {
                 eprintln!("  TC hard timeout ({}s) — killing", tc_hard_timeout.as_secs());
-                switchboard_notify(&format!("HARD TIMEOUT {} after {}s", spec.id, tc_hard_timeout.as_secs()));
                 (TestResult {
                     id: spec.id.clone(), name: spec.name.clone(),
                     status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
@@ -513,7 +512,6 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         if result.status == "PASS" {
             pass += 1;
             println!("  PASS  {} — {}", result.id, result.name);
-            switchboard_notify(&format!("run finished {} PASS", result.id));
             if args.capture_baseline {
                 if let Ok(yaml) = fetch_agent_yaml(dev.as_ref()) {
                     let baseline_dir = std::path::Path::new(spec_path)
@@ -534,8 +532,6 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 result.failure.as_ref().map(|f| f.step).unwrap_or(0),
                 detail
             );
-            switchboard_notify(&format!("run finished {} FAIL step {}: {}",
-                result.id, result.failure.as_ref().map(|f| f.step).unwrap_or(0), detail));
         }
 
         results.push(result);
@@ -984,9 +980,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             let step = hb_step_clone.load(std::sync::atomic::Ordering::Relaxed);
             let elapsed = hb_start.elapsed().as_secs();
             if elapsed > 120 {
-                switchboard_notify(&format!("TIMEOUT {} step {} elapsed {}s — killing", hb_tc_id, step, elapsed));
-            } else {
-                switchboard_notify(&format!("heartbeat {} step {} elapsed {}s", hb_tc_id, step, elapsed));
+                eprintln!("  heartbeat: TIMEOUT {} step {} elapsed {}s", hb_tc_id, step, elapsed);
             }
         }
     });
@@ -1061,7 +1055,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, true);
                 let elapsed = tc_start.elapsed().as_secs_f32();
                 eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
-                switchboard_notify(&format!("{} step {}/{} PASS: {} ({:.1}s)", spec.id, i + 1, spec.steps.len(), step_desc, elapsed));
+
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
                     Step::Assert(a) => (None, Some(a.assert.clone())),
@@ -1116,7 +1110,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                     Step::Action(a) => a.action.clone(),
                     Step::Assert(a) => format!("assert {}", a.assert),
                 };
-                switchboard_notify(&format!("{} step {}/{} FAIL: {} — {}", spec.id, i + 1, spec.steps.len(), step_desc2, &err[..err.len().min(100)]));
+
                 hb_running.store(false, std::sync::atomic::Ordering::Relaxed);
                 return (TestResult {
                     id: spec.id.clone(),

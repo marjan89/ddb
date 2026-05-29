@@ -1,18 +1,6 @@
 use crate::adb;
 use crate::registry::Device;
 
-pub fn switchboard_notify(msg: &str) {
-    let handle = std::env::var("SWITCHBOARD_NAME").unwrap_or_default();
-    let channel = std::env::var("SWITCHBOARD_CHANNEL").unwrap_or_default();
-    if handle.is_empty() || channel.is_empty() { return; }
-    let _ = std::process::Command::new("switchboard")
-        .env("SWITCHBOARD_NAME", &handle)
-        .env("SWITCHBOARD_CHANNEL", &channel)
-        .args(["send", msg])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-}
 
 pub fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
     let filename = format!("/tmp/ddb-fail-{}-step{}.png", test_id, step);
