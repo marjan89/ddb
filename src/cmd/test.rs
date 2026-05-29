@@ -1215,7 +1215,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                if let Some((_x, _y, desc)) = scroll_search(target, 15, false) {
+                if let Some((_x, _y, desc)) = scroll_search(target, 15, false, Some(runner)) {
                     Ok(desc)
                 } else {
                     Err(format!("scroll_to: element not found via agent scroll search"))
@@ -1537,7 +1537,7 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
         x: None,
         y: None,
     };
-    if scroll_search(&target, 10, false).is_some() {
+    if scroll_search(&target, 10, false, None).is_some() {
         Ok(())
     } else {
         Err(format!("scroll_to_element: not found via agent scroll search: {id_or_text}"))

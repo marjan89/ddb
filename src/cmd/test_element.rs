@@ -419,7 +419,7 @@ pub fn find_element_unified(
     for source in sources {
         match source {
             ElementSource::IdleBarrier { timeout_s, resources } => {
-                if let Some(result) = query_when_idle(target, *timeout_s, resources) {
+                if let Some(result) = query_when_idle(target, *timeout_s, resources, runner) {
                     return Ok(result);
                 }
             }
@@ -593,7 +593,7 @@ fn search_uiautomator(
 
 // --- Idle Barrier (Phase 5C) ---
 
-fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String]) -> Option<(i32, i32, String)> {
+fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String], runner: Option<&StepRunner>) -> Option<(i32, i32, String)> {
     let match_obj = build_match_json(target);
     let body = serde_json::json!({
         "match": match_obj,
@@ -604,20 +604,27 @@ fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String]) -> Opt
     let url = format!("{}/query-when-idle", agent_base_url());
 
     for attempt in 0..3 {
-        let resp = std::process::Command::new("curl")
-            .args([
-                "-s", "--connect-timeout", "2",
-                "--max-time", &(timeout_s + 2).to_string(),
-                "-X", "POST",
-                "-H", "Content-Type: application/json",
-                "-d", &body_str,
-                &url,
-            ])
-            .output()
-            .ok()?;
+        let resp_body = if let Some(r) = runner {
+            match r.curl_with_deadline(&url, "POST", Some(&body_str)) {
+                Ok(s) => s,
+                Err(_) => return None,
+            }
+        } else {
+            let resp = std::process::Command::new("curl")
+                .args([
+                    "-s", "--connect-timeout", "2",
+                    "--max-time", &(timeout_s + 2).to_string(),
+                    "-X", "POST",
+                    "-H", "Content-Type: application/json",
+                    "-d", &body_str,
+                    &url,
+                ])
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&resp.stdout).into_owned()
+        };
 
-        let resp_body = String::from_utf8_lossy(&resp.stdout);
-        if resp_body.is_empty() || resp.status.code() == Some(0) && resp_body.contains("404") {
+        if resp_body.is_empty() || resp_body.contains("404") {
             return None;
         }
 
@@ -643,7 +650,7 @@ fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String]) -> Opt
     None
 }
 
-pub fn scroll_search(target: &Target, max_scroll: u32, restore_scroll: bool) -> Option<(i32, i32, String)> {
+pub fn scroll_search(target: &Target, max_scroll: u32, restore_scroll: bool, runner: Option<&StepRunner>) -> Option<(i32, i32, String)> {
     let match_obj = build_match_json(target);
     let body = serde_json::json!({
         "match": match_obj,
@@ -653,21 +660,24 @@ pub fn scroll_search(target: &Target, max_scroll: u32, restore_scroll: bool) -> 
     });
     let body_str = body.to_string();
     let url = format!("{}/scroll-search", agent_base_url());
-    let max_time = max_scroll as u64 * 2 + 10;
 
-    let resp = std::process::Command::new("curl")
-        .args([
-            "-s", "--connect-timeout", "3",
-            "--max-time", &max_time.to_string(),
-            "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-d", &body_str,
-            &url,
-        ])
-        .output()
-        .ok()?;
-
-    let resp_body = String::from_utf8_lossy(&resp.stdout);
+    let resp_body = if let Some(r) = runner {
+        r.curl_with_deadline(&url, "POST", Some(&body_str)).ok()?
+    } else {
+        let max_time = max_scroll as u64 * 2 + 10;
+        let resp = std::process::Command::new("curl")
+            .args([
+                "-s", "--connect-timeout", "3",
+                "--max-time", &max_time.to_string(),
+                "-X", "POST",
+                "-H", "Content-Type: application/json",
+                "-d", &body_str,
+                &url,
+            ])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&resp.stdout).into_owned()
+    };
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&resp_body) {
         if json.get("found") == Some(&serde_json::Value::Bool(true)) {
             let element = json.get("element");
