@@ -15,50 +15,77 @@ interface IdleResource {
 
 class UIThreadIdleResource : IdleResource {
     override val name = "ui_thread"
-    override fun isIdle(): Boolean {
-        if (Looper.myLooper() == Looper.getMainLooper()) return true
-        val idle = AtomicBoolean(false)
-        val latch = CountDownLatch(1)
-        Handler(Looper.getMainLooper()).post {
+    @Volatile private var lastIdle = false
+    @Volatile private var lastCheck = 0L
+    private val handler = Handler(Looper.getMainLooper())
+
+    init {
+        schedulePoll()
+    }
+
+    private fun schedulePoll() {
+        handler.postDelayed({
             Looper.myQueue().addIdleHandler(object : MessageQueue.IdleHandler {
                 override fun queueIdle(): Boolean {
-                    idle.set(true)
-                    latch.countDown()
+                    lastIdle = true
+                    lastCheck = System.currentTimeMillis()
                     return false
                 }
             })
-        }
-        return latch.await(2, TimeUnit.SECONDS) && idle.get()
+            handler.postDelayed({
+                if (System.currentTimeMillis() - lastCheck > 150) {
+                    lastIdle = false
+                }
+                schedulePoll()
+            }, 200)
+        }, 100)
     }
+
+    override fun isIdle(): Boolean = lastIdle
 }
 
 class LayoutIdleResource(private val activityProvider: () -> android.app.Activity?) : IdleResource {
     override val name = "layout"
-    override fun isIdle(): Boolean {
-        val activity = activityProvider() ?: return true
-        val idle = AtomicBoolean(false)
-        val latch = CountDownLatch(1)
-        Handler(Looper.getMainLooper()).post {
-            val rootView = activity.window.decorView
-            idle.set(!rootView.isLayoutRequested && !rootView.isDirty)
-            latch.countDown()
-        }
-        return latch.await(2, TimeUnit.SECONDS) && idle.get()
+    @Volatile private var stableCount = 0
+    private val handler = Handler(Looper.getMainLooper())
+
+    init {
+        schedulePoll()
     }
+
+    private fun schedulePoll() {
+        handler.postDelayed({
+            val activity = activityProvider()
+            if (activity != null) {
+                val rootView = activity.window.decorView
+                val clean = !rootView.isLayoutRequested && !rootView.isDirty
+                if (clean) stableCount++ else stableCount = 0
+            }
+            schedulePoll()
+        }, 100)
+    }
+
+    override fun isIdle(): Boolean = stableCount >= 3
 }
 
 class ScrollIdleResource(private val activityProvider: () -> android.app.Activity?) : IdleResource {
     override val name = "scroll"
-    override fun isIdle(): Boolean {
-        val activity = activityProvider() ?: return true
-        val idle = AtomicBoolean(true)
-        val latch = CountDownLatch(1)
-        Handler(Looper.getMainLooper()).post {
-            idle.set(isScrollIdle(activity.window.decorView))
-            latch.countDown()
-        }
-        return latch.await(2, TimeUnit.SECONDS) && idle.get()
+    @Volatile private var lastIdle = true
+    private val handler = Handler(Looper.getMainLooper())
+
+    init {
+        schedulePoll()
     }
+
+    private fun schedulePoll() {
+        handler.postDelayed({
+            val activity = activityProvider()
+            lastIdle = if (activity != null) isScrollIdle(activity.window.decorView) else true
+            schedulePoll()
+        }, 100)
+    }
+
+    override fun isIdle(): Boolean = lastIdle
 
     private fun isScrollIdle(view: android.view.View): Boolean {
         if (view.javaClass.name.contains("RecyclerView")) {
@@ -77,14 +104,44 @@ class ScrollIdleResource(private val activityProvider: () -> android.app.Activit
     }
 }
 
-class NetworkIdleResource : IdleResource {
+class NetworkIdleResource(private val appContext: android.content.Context) : IdleResource {
     override val name = "network"
-    private val inFlightCount = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var lastIdle = true
+    private var dispatcher: okhttp3.Dispatcher? = null
+    private var discoveryAttempted = false
 
-    fun onRequestStarted() { inFlightCount.incrementAndGet() }
-    fun onRequestFinished() { inFlightCount.decrementAndGet() }
+    private fun discoverDispatcher(): okhttp3.Dispatcher? {
+        if (discoveryAttempted) return dispatcher
+        discoveryAttempted = true
+        try {
+            val app = appContext.applicationContext
+            val componentMethod = app.javaClass.getMethod("generatedComponent")
+            val component = componentMethod.invoke(app)
+            for (m in component.javaClass.methods) {
+                if (m.parameterCount == 0 && m.returnType.name.contains("RestApi")) {
+                    val restApi = m.invoke(component)
+                    val handler = java.lang.reflect.Proxy.getInvocationHandler(restApi)
+                    val retrofitField = handler.javaClass.getDeclaredField("retrofit")
+                    retrofitField.isAccessible = true
+                    val retrofit = retrofitField.get(handler) as retrofit2.Retrofit
+                    val factoryField = retrofit2.Retrofit::class.java.getDeclaredField("callFactory")
+                    factoryField.isAccessible = true
+                    val client = factoryField.get(retrofit) as okhttp3.OkHttpClient
+                    dispatcher = client.dispatcher
+                    break
+                }
+            }
+        } catch (_: Exception) {}
+        return dispatcher
+    }
 
-    override fun isIdle(): Boolean = inFlightCount.get() == 0
+    override fun isIdle(): Boolean {
+        val d = discoverDispatcher()
+        if (d != null) {
+            lastIdle = d.runningCallsCount() == 0 && d.queuedCallsCount() == 0
+        }
+        return lastIdle
+    }
 }
 
 class IdleResourceRegistry {

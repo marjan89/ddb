@@ -26,9 +26,40 @@ class SemanticServer private constructor(
     private var auth: AgentAuth? = null
     val idleRegistry = IdleResourceRegistry()
 
+    private data class RequestLogEntry(
+        val ts: Long,
+        val method: String,
+        val path: String,
+        val status: Int,
+        val durationMs: Long,
+        val bodySize: Int,
+    )
+
+    private val requestLog = java.util.concurrent.ConcurrentLinkedDeque<RequestLogEntry>()
+    private val maxLogEntries = 100
+
+    private fun logRequest(entry: RequestLogEntry) {
+        requestLog.addLast(entry)
+        while (requestLog.size > maxLogEntries) requestLog.pollFirst()
+    }
+
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri.trimEnd('/')
+        val startMs = System.currentTimeMillis()
+        val method = session.method.name
 
+        val response = serveInner(session, uri)
+
+        val durationMs = System.currentTimeMillis() - startMs
+        val status = response.status.requestStatus
+        val bodySize = response.data?.available() ?: 0
+        logRequest(RequestLogEntry(startMs, method, uri, status, durationMs, bodySize))
+        android.util.Log.d("SemanticAgent", "$method $uri → $status (${durationMs}ms)")
+
+        return response
+    }
+
+    private fun serveInner(session: IHTTPSession, uri: String): Response {
         return when {
             uri == "/semantic" -> {
                 val scrollParam = session.parms?.get("scroll")
@@ -40,6 +71,7 @@ class SemanticServer private constructor(
                 if (session.method == Method.DELETE) handleOverlayOff()
                 else handleOverlayOn(session)
             }
+            uri == "/debug-log" && session.method == Method.DELETE -> { requestLog.clear(); jsonResponse("""{"cleared":true}""") }
             uri == "/debug-log" -> handleDebugLog()
             uri == "/health" -> jsonResponse("""{"status":"ok","agent":"semantic-agent","version":"5.0.0"}""")
             uri == "/version" -> jsonResponse("""{"git_hash":"$gitHash","build_time":"$buildTime"}""")
@@ -55,6 +87,7 @@ class SemanticServer private constructor(
             uri.startsWith("/question/") && session.method == Method.DELETE -> handleDeleteQuestion(uri)
             uri == "/stream" -> handleStream()
             uri == "/query-when-idle" && session.method == Method.POST -> handleQueryWhenIdle(session)
+            uri == "/scroll-search" && session.method == Method.POST -> handleScrollSearch(session)
             uri == "/idle-resources" -> handleIdleResources()
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
         }
@@ -161,8 +194,10 @@ class SemanticServer private constructor(
             ?: return jsonResponse("""{"error":"invalid site id"}""", Response.Status.BAD_REQUEST)
         val activity = currentActivity?.get()
             ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
+        val nav = navigator
+            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "navigator not set")
         mainHandler.post {
-            val intent = navigator.createSiteIntent(activity, siteId)
+            val intent = nav.createSiteIntent(activity, siteId)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
         }
@@ -174,8 +209,10 @@ class SemanticServer private constructor(
             ?: return jsonResponse("""{"error":"invalid user id"}""", Response.Status.BAD_REQUEST)
         val activity = currentActivity?.get()
             ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
+        val nav = navigator
+            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "navigator not set")
         mainHandler.post {
-            val intent = navigator.createUserIntent(activity, userId)
+            val intent = nav.createUserIntent(activity, userId)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
         }
@@ -531,11 +568,11 @@ class SemanticServer private constructor(
     }
 
     private fun handleDebugLog(): Response {
-        return newFixedLengthResponse(
-            Response.Status.OK,
-            "text/plain",
-            ViewTreeWalker.lastDebugLog.ifEmpty { "no walk logged yet" },
-        )
+        val entries = requestLog.map { e ->
+            """{"ts":${e.ts},"method":"${e.method}","path":"${escape(e.path)}","status":${e.status},"duration_ms":${e.durationMs},"body_size":${e.bodySize}}"""
+        }
+        val walkLog = ViewTreeWalker.lastDebugLog.take(500)
+        return jsonResponse("""{"requests":[${entries.joinToString(",")}],"last_walk":"${escape(walkLog)}"}""")
     }
 
     private fun handleQueryWhenIdle(session: IHTTPSession): Response {
@@ -578,6 +615,95 @@ class SemanticServer private constructor(
             """{"name":"$name","idle":$idle}"""
         }
         return jsonResponse("""{"resources":[${items.joinToString(",")}]}""")
+    }
+
+    private fun handleScrollSearch(session: IHTTPSession): Response {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (contentLength > 0) {
+            val buf = ByteArray(contentLength)
+            session.inputStream.read(buf, 0, contentLength)
+            String(buf)
+        } else "{}"
+
+        val resourceNames = extractJsonArray(body, "idle_resources")
+        val maxScroll = extractJsonInt(body, "max_scroll") ?: 10
+        val restoreScroll = extractJsonBool(body, "restore_scroll") ?: false
+        val matchObj = extractJsonString(body, "content_fuzzy")
+            ?: extractNestedJsonString(body, "match", "content_fuzzy")
+            ?: return jsonResponse("""{"found":false,"reason":"missing match.content_fuzzy"}""", Response.Status.BAD_REQUEST)
+
+        idleRegistry.waitForIdle(resourceNames, 5000)
+
+        val activity = currentActivity?.get()
+            ?: return jsonResponse("""{"found":false,"scrolls":0,"reason":"no activity"}""")
+
+        var found: SemanticElement? = null
+        var scrollCount = 0
+        var error: String? = null
+        var scrollRestored = false
+        val latch = java.util.concurrent.CountDownLatch(1)
+
+        mainHandler.post {
+            try {
+                val target = matchObj.lowercase()
+                val scrollable = findScrollable(activity.window.decorView)
+                if (scrollable == null) {
+                    error = "no scrollable view"
+                    latch.countDown()
+                    return@post
+                }
+                val density = activity.resources.displayMetrics.density
+                val viewportH = (activity.resources.displayMetrics.heightPixels / density).toInt()
+                val scrollAmountPx = (viewportH * 0.7 * density).toInt()
+
+                val schema0 = ViewTreeWalker.walk(activity)
+                found = schema0.elements.firstOrNull { it.content?.lowercase()?.contains(target) == true }
+
+                if (found == null) {
+                    for (step in 1..maxScroll) {
+                        scrollable.scrollBy(0, scrollAmountPx)
+                        Thread.sleep(300)
+                        scrollCount = step
+                        val schema = ViewTreeWalker.walk(activity)
+                        found = schema.elements.firstOrNull { it.content?.lowercase()?.contains(target) == true }
+                        if (found != null) break
+                    }
+                }
+
+                if (restoreScroll || found == null) {
+                    scrollable.scrollTo(0, 0)
+                    scrollRestored = true
+                }
+            } catch (e: Exception) {
+                error = e.message
+            }
+            latch.countDown()
+        }
+
+        if (!latch.await(30, java.util.concurrent.TimeUnit.SECONDS)) {
+            return jsonResponse("""{"found":false,"scrolls":$scrollCount,"timeout":true}""", Response.Status.REQUEST_TIMEOUT)
+        }
+        if (error != null) {
+            return jsonResponse("""{"found":false,"scrolls":$scrollCount,"reason":"${escape(error!!)}"}""")
+        }
+
+        return if (found != null) {
+            val e = found!!
+            jsonResponse("""{"found":true,"element":{"id":"${escape(e.id)}","content":"${escape(e.content ?: "")}","bounds":{"x":${e.bounds.x},"y":${e.bounds.y},"w":${e.bounds.w},"h":${e.bounds.h}},"clickable":${e.clickable},"tap_target":${e.tapTarget?.let { """{"x":${it.x},"y":${it.y},"w":${it.w},"h":${it.h}}""" } ?: "null"}},"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
+        } else {
+            jsonResponse("""{"found":false,"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
+        }
+    }
+
+    private fun extractJsonBool(json: String, key: String): Boolean? {
+        val pattern = """"$key"\s*:\s*(true|false)""".toRegex()
+        return pattern.find(json)?.groupValues?.get(1)?.toBooleanStrictOrNull()
+    }
+
+    private fun extractNestedJsonString(json: String, parent: String, key: String): String? {
+        val objPattern = """"$parent"\s*:\s*\{([^}]*)\}""".toRegex()
+        val obj = objPattern.find(json)?.groupValues?.get(1) ?: return null
+        return extractJsonString("{$obj}", key)
     }
 
     private fun extractJsonInt(json: String, key: String): Int? {
@@ -693,6 +819,14 @@ class SemanticServer private constructor(
         private var instance: SemanticServer? = null
 
         @JvmStatic
+        fun setContracts(navigator: AgentNavigator, auth: AgentAuth) {
+            instance?.let {
+                it.navigator = navigator
+                it.auth = auth
+            }
+        }
+
+        @JvmStatic
         @JvmOverloads
         fun install(
             app: Application,
@@ -713,7 +847,7 @@ class SemanticServer private constructor(
             server.idleRegistry.register(UIThreadIdleResource())
             server.idleRegistry.register(LayoutIdleResource { server.currentActivity?.get() })
             server.idleRegistry.register(ScrollIdleResource { server.currentActivity?.get() })
-            server.idleRegistry.register(NetworkIdleResource())
+            server.idleRegistry.register(NetworkIdleResource(app))
 
             app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
                 override fun onActivityResumed(activity: Activity) {
