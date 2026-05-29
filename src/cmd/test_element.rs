@@ -616,12 +616,13 @@ fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String]) -> Opt
     None
 }
 
-pub fn scroll_search(target: &Target, max_scroll: u32) -> Option<(i32, i32, String)> {
+pub fn scroll_search(target: &Target, max_scroll: u32, restore_scroll: bool) -> Option<(i32, i32, String)> {
     let match_obj = build_match_json(target);
     let body = serde_json::json!({
         "match": match_obj,
         "max_scroll": max_scroll,
         "idle_resources": ["network"],
+        "restore_scroll": restore_scroll,
     });
     let body_str = body.to_string();
     let url = format!("{}/scroll-search", agent_base_url());
