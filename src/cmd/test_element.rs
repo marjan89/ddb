@@ -354,14 +354,15 @@ pub fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32,
     }
 }
 
-pub fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
+pub fn scroll_direction(dev: Option<&Device>, dir: &str, runner: Option<&StepRunner>) -> Result<(), String> {
     let (x1, y1, x2, y2) = compute_scroll_bounds(dev, dir);
-    adb::shell(dev, &[
-        "input", "swipe",
-        &x1.to_string(), &y1.to_string(),
-        &x2.to_string(), &y2.to_string(),
-        "500",
-    ])?;
+    let x1s = x1.to_string(); let y1s = y1.to_string();
+    let x2s = x2.to_string(); let y2s = y2.to_string();
+    if let Some(r) = runner {
+        r.adb_shell(dev, &["input", "swipe", &x1s, &y1s, &x2s, &y2s, "500"])?;
+    } else {
+        adb::shell(dev, &["input", "swipe", &x1s, &y1s, &x2s, &y2s, "500"])?;
+    }
     Ok(())
 }
 

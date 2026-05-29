@@ -298,16 +298,16 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let project_dir = args.project_dir.as_deref()
             .ok_or("--build requires --project-dir or DDB_PROJECT_DIR")?;
         eprintln!("building APK from {project_dir}...");
-        let build_status = std::process::Command::new("nosandbox")
-            .args(&[
+        let mut build_cmd = std::process::Command::new("nosandbox");
+        build_cmd.args(&[
                 "./gradlew",
                 &std::env::var("DDB_BUILD_TASK").unwrap_or_else(|_| "assembleStandardDebug".into()),
                 "--no-daemon",
             ])
-            .current_dir(project_dir)
-            .status()
+            .current_dir(project_dir);
+        let build_output = util_runner.run_with_deadline(&mut build_cmd)
             .map_err(|e| format!("build failed: {e}"))?;
-        if !build_status.success() {
+        if !build_output.status.success() {
             return Err("APK build failed".into());
         }
         let apk_src = std::env::var("DDB_APK_SRC").unwrap_or_else(|_|
@@ -316,7 +316,10 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         std::fs::copy(&apk_src, &apk_dst)
             .map_err(|e| format!("copy APK: {e}"))?;
         eprintln!("installing APK...");
-        let install_result = adb::adb(dev.as_ref(), &["install", "-r", &apk_dst]);
+        let mut install_cmd = std::process::Command::new("adb");
+        if let Some(ref d) = dev { install_cmd.arg("-s").arg(d.transport_id()); }
+        install_cmd.args(["install", "-r", &apk_dst]);
+        let install_result = util_runner.run_with_deadline(&mut install_cmd).map(|_| String::new());
         if install_result.is_err() {
             return Err("APK install failed".into());
         }
@@ -331,11 +334,8 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         .ok_or("DDB_EXPECTED_HASH not set. Run: export DDB_EXPECTED_HASH=$(git -C /path/to/app rev-parse --short HEAD)")?;
     {
         let base = agent_base_url();
-        let out = std::process::Command::new("curl")
-            .args(["-s", "--max-time", "5", &format!("{base}/version")])
-            .output();
-        if let Ok(out) = out {
-            let body = String::from_utf8_lossy(&out.stdout);
+        let version_result = util_runner.curl_with_deadline(&format!("{base}/version"), "GET", None);
+        if let Ok(body) = version_result {
             if let Some(hash_start) = body.find("\"git_hash\":\"") {
                 let rest = &body[hash_start + 12..];
                 if let Some(end) = rest.find('"') {
@@ -375,7 +375,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     } else if args.rerun_failed {
         let results_dir = args.results_dir.as_deref().ok_or("--rerun-failed requires --results-dir or DDB_RESULTS_DIR")?;
         let tests_dir = args.tests_dir.as_deref().ok_or("--rerun-failed requires --tests-dir or DDB_TESTS_DIR")?;
-        let failed = get_failed_tc_specs(results_dir, tests_dir)?;
+        let failed = get_failed_tc_specs(results_dir, tests_dir, &util_runner)?;
         if failed.is_empty() {
             println!("All TCs passing — nothing to rerun.");
             return Ok(());
@@ -388,7 +388,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     } else if args.regression_gate {
         let results_dir = args.results_dir.as_deref().ok_or("--regression-gate requires --results-dir or DDB_RESULTS_DIR")?;
         let tests_dir = args.tests_dir.as_deref().ok_or("--regression-gate requires --tests-dir or DDB_TESTS_DIR")?;
-        let affected = get_affected_tcs(&args.base_branch, args.tc_map.as_deref(), tests_dir)?;
+        let affected = get_affected_tcs(&args.base_branch, args.tc_map.as_deref(), tests_dir, &util_runner)?;
         if affected.is_empty() {
             println!("No TCs affected by changes — gate passes.");
             return Ok(());
@@ -407,14 +407,16 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Set up port forwarding for agent (DDB_AGENT_PORT overrides local port)
     let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
     if let Some(ref d) = dev {
-        let _ = adb::adb(Some(d), &["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
+        let mut fwd_cmd = std::process::Command::new("adb");
+        fwd_cmd.arg("-s").arg(d.transport_id()).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
+        let _ = util_runner.run_with_deadline(&mut fwd_cmd);
     }
     if agent_port != "9876" {
         eprintln!("  agent port: {agent_port} (forwarded to device 9876)");
     }
 
     // Disable animations for reliable test execution
-    set_animations(false);
+    set_animations(false, &util_runner);
 
     // Pre-load fixtures for interpolation (used both pre-parse and at runtime)
     let fixtures_map = load_fixtures_map();
@@ -542,7 +544,7 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     }
 
     // Re-enable animations (always, even on failure)
-    set_animations(true);
+    set_animations(true, &util_runner);
 
     println!("\n{} passed, {} failed, {} total", pass, fail, pass + fail);
 
@@ -584,10 +586,8 @@ fn detect_results_dir(spec_path: &str) -> Option<String> {
     p.parent().map(|d| d.join("results").to_string_lossy().to_string())
 }
 
-fn set_animations(enabled: bool) {
-    let _ = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "3", "-X", "POST", &format!("{}/animations?enabled={enabled}", agent_base_url())])
-        .output();
+fn set_animations(enabled: bool, runner: &StepRunner) {
+    let _ = runner.curl_with_deadline(&format!("{}/animations?enabled={enabled}", agent_base_url()), "POST", None);
 }
 
 fn now_iso() -> String {
@@ -651,11 +651,10 @@ fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) {
     }
 }
 
-fn get_failed_tc_specs(results_dir: &str, tests_dir: &str) -> Result<Vec<String>, String> {
-    let output = std::process::Command::new("vdb")
-        .args(["matrix", "--results", results_dir, "--json"])
-        .output()
-        .map_err(|e| format!("vdb matrix: {e}"))?;
+fn get_failed_tc_specs(results_dir: &str, tests_dir: &str, runner: &StepRunner) -> Result<Vec<String>, String> {
+    let mut cmd = std::process::Command::new("vdb");
+    cmd.args(["matrix", "--results", results_dir, "--json"]);
+    let output = runner.run_with_deadline(&mut cmd)?;
 
     let json_str = String::from_utf8_lossy(&output.stdout);
     let entries: Vec<serde_json::Value> = serde_json::from_str(&json_str)
@@ -1088,11 +1087,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                     let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
                     runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]).unwrap_or_default()
                 });
-                let debug_log = fetch_debug_log();
+                let debug_log = fetch_debug_log(&runner);
                 if let Some(ref log) = debug_log {
                     eprintln!("  debug-log: {}", &log[..log.len().min(200)]);
                 }
-                let screenshot = capture_failure_screenshot(dev, &spec.id, i);
+                let screenshot = capture_failure_screenshot(dev, &spec.id, i, &runner);
 
                 step_logs.push(StepLogEntry {
                     step: i + 1,
@@ -1208,7 +1207,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 let dir = action.direction.as_deref().unwrap_or("down");
                 let times = action.times.unwrap_or(1);
                 for _ in 0..times {
-                    scroll_direction(dev, dir)?;
+                    scroll_direction(dev, dir, Some(runner))?;
                     std::thread::sleep(std::time::Duration::from_millis(300));
                 }
                 Ok(String::new())
@@ -1841,11 +1840,10 @@ oscar:
     }
 }
 
-fn get_affected_tcs(base_branch: &str, tc_map_path: Option<&str>, tests_dir: &str) -> Result<Vec<String>, String> {
-    let diff = std::process::Command::new("git")
-        .args(["diff", "--name-only", base_branch])
-        .output()
-        .map_err(|e| format!("git diff: {e}"))?;
+fn get_affected_tcs(base_branch: &str, tc_map_path: Option<&str>, tests_dir: &str, runner: &StepRunner) -> Result<Vec<String>, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["diff", "--name-only", base_branch]);
+    let diff = runner.run_with_deadline(&mut cmd)?;
     let changed_files: Vec<String> = String::from_utf8_lossy(&diff.stdout)
         .lines().map(|l| l.to_string()).collect();
     if changed_files.is_empty() {
