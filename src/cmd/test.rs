@@ -754,18 +754,6 @@ fn ensure_logged_in(dev: Option<&Device>, _pkg: &str) {
 }
 
 fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
-    if let Ok(dump) = adb::shell(dev, &["pm", "dump", pkg]) {
-        for line in dump.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("android.permission.") && trimmed.contains(": granted=false") {
-                let perm = trimmed.split(':').next().unwrap_or("").trim();
-                if !perm.is_empty() {
-                    let _ = adb::shell(dev, &["pm", "grant", pkg, perm]);
-                }
-            }
-        }
-    }
-    // Fallback: always try the common runtime permissions
     for perm in &[
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -955,7 +943,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         }
     }
 
-    wait_idle(dev, timeout);
+    wait_idle(dev, 3);
 
     // Load navigation.yaml config (deprioritize patterns, jaccard threshold)
     let nav_env = std::env::var("DDB_NAVIGATION_YAML").ok();
