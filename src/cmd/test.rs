@@ -1585,17 +1585,21 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
-fn wait_idle(dev: Option<&Device>, timeout: u64) {
-    // Try SSE first — wait for idle event push
-    if wait_for_event(dev, "idle", timeout.min(5)) {
-        return;
-    }
-    // Fallback: poll /idle
+fn wait_idle(_dev: Option<&Device>, timeout: u64) {
+    let base = agent_base_url();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     loop {
         if std::time::Instant::now() > deadline { break; }
-        if let Ok(true) = check_idle(dev) { break; }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        if let Ok(out) = std::process::Command::new("curl")
+            .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/idle")])
+            .output()
+        {
+            let body = String::from_utf8_lossy(&out.stdout);
+            if body.contains("true") || body.contains("idle") {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
 }
 
