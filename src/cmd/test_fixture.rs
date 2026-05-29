@@ -1,21 +1,11 @@
 pub fn load_fixtures_map() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    let paths = [
-        "catalogue/fixtures.yaml",
-        "catalogue/tests/fixtures.yaml",
-        "/Users/Shared/projects/Outdoors/catalogue/fixtures.yaml",
-        "../catalogue/fixtures.yaml",
-        "../../catalogue/fixtures.yaml",
-    ];
-    for fp in &paths {
-        let p = std::path::Path::new(fp);
-        if p.exists() {
-            if let Ok(content) = std::fs::read_to_string(p) {
-                if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
-                    flatten_fixtures("fixtures", &val, &mut map);
-                }
-            }
-            break;
+    let Some(fp) = std::env::var("DDB_FIXTURES_PATH").ok()
+        .filter(|p| !p.is_empty() && std::path::Path::new(p).exists())
+    else { return map };
+    if let Ok(content) = std::fs::read_to_string(&fp) {
+        if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
+            flatten_fixtures("fixtures", &val, &mut map);
         }
     }
     map
