@@ -707,15 +707,10 @@ fn get_failed_tc_specs(results_dir: &str, tests_dir: &str) -> Result<Vec<String>
     Ok(specs)
 }
 
-fn ensure_logged_in(dev: Option<&Device>, _pkg: &str) {
+fn ensure_logged_in_with_runner(_dev: Option<&Device>, _pkg: &str, runner: &StepRunner) {
     let base = agent_base_url();
 
-    // Check auth state via agent
-    let state_out = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "5", &format!("{base}/auth/state")])
-        .output();
-    if let Ok(out) = state_out {
-        let body = String::from_utf8_lossy(&out.stdout);
+    if let Ok(body) = runner.curl_with_deadline(&format!("{base}/auth/state"), "GET", None) {
         if body.contains("\"logged_in\":true") {
             eprintln!("  already logged in");
             return;
@@ -734,29 +729,22 @@ fn ensure_logged_in(dev: Option<&Device>, _pkg: &str) {
 
     let payload = format!(r#"{{"email":"{}","password":"{}"}}"#,
         email.replace('"', "\\\""), password.replace('"', "\\\""));
-    let login_out = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "10", "-X", "POST",
-               "-H", "Content-Type: application/json",
-               "-d", &payload,
-               &format!("{base}/auth/login")])
-        .output();
-    match login_out {
-        Ok(out) => {
-            let body = String::from_utf8_lossy(&out.stdout);
+    match runner.curl_with_deadline(&format!("{base}/auth/login"), "POST", Some(&payload)) {
+        Ok(body) => {
             if body.contains("\"logged_in\":true") {
                 eprintln!("  login complete");
             } else {
                 eprintln!("  login failed: {}", body.trim());
             }
         }
-        Err(e) => eprintln!("  login curl failed: {e}"),
+        Err(e) => eprintln!("  login failed: {e}"),
     }
 }
 
-fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
+fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &StepRunner) {
     let perms = "pm grant PKG android.permission.ACCESS_FINE_LOCATION; pm grant PKG android.permission.ACCESS_COARSE_LOCATION; pm grant PKG android.permission.POST_NOTIFICATIONS";
     let cmd = perms.replace("PKG", pkg);
-    let _ = adb::shell(dev, &[&cmd]);
+    let _ = runner.adb_shell(dev, &[&cmd]);
 }
 
 fn dismiss_permission_dialog(dev: Option<&Device>) {
@@ -835,23 +823,21 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     let base = agent_base_url();
 
     let setup_start = std::time::Instant::now();
+    let setup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let setup_runner = StepRunner::new(setup_deadline, PhaseBudgets { pre_idle_s: 120, execute_s: 120, post_idle_s: 3 });
 
     // Check if agent is already running (skip launch if so)
     let mut agent_ready = false;
-    if let Ok(out) = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/health")])
-        .output()
-    {
-        if String::from_utf8_lossy(&out.stdout).contains("semantic-agent") {
+    if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
+        if body.contains("semantic-agent") {
             agent_ready = true;
             logger.setup("agent already running (skip launch)", setup_start.elapsed().as_millis() as u64);
         }
     }
 
     if !agent_ready {
-        // Launch app via ADB
         let launch_start = std::time::Instant::now();
-        let _ = adb::shell(dev, &[
+        let _ = setup_runner.adb_shell(dev, &[
             "am", "start", "-a", "android.intent.action.MAIN",
             "-c", "android.intent.category.LAUNCHER",
             "-n", &main_activity, "--activity-clear-task",
@@ -859,14 +845,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
         std::thread::sleep(std::time::Duration::from_secs(2));
 
-        // Wait for agent health
         let health_start = std::time::Instant::now();
         for _ in 0..10 {
-            let health = std::process::Command::new("curl")
-                .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/health")])
-                .output();
-            if let Ok(out) = health {
-                if String::from_utf8_lossy(&out.stdout).contains("semantic-agent") {
+            if setup_runner.expired() { break; }
+            if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
+                if body.contains("semantic-agent") {
                     agent_ready = true;
                     logger.setup("agent health check", health_start.elapsed().as_millis() as u64);
                     break;
@@ -881,24 +864,24 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 
     // Grant permissions via single batched ADB call
     let perm_start = std::time::Instant::now();
-    grant_all_permissions(dev, pkg);
+    grant_all_permissions_with_runner(dev, pkg, &setup_runner);
     logger.setup("grant permissions", perm_start.elapsed().as_millis() as u64);
 
     // Handle logged_in precondition (HTTP via agent)
     if let Some(ref pre) = spec.precondition {
         if pre.logged_in == Some(true) {
-            ensure_logged_in(dev, pkg);
+            ensure_logged_in_with_runner(dev, pkg, &setup_runner);
         }
         if pre.logged_in == Some(false) {
-            let _ = adb::shell(dev, &["pm", "clear", pkg]);
+            let _ = setup_runner.adb_shell(dev, &["pm", "clear", pkg]);
             std::thread::sleep(std::time::Duration::from_secs(1));
-            let _ = adb::shell(dev, &[
+            let _ = setup_runner.adb_shell(dev, &[
                 "am", "start", "-a", "android.intent.action.MAIN",
                 "-c", "android.intent.category.LAUNCHER",
                 "-n", &main_activity,
             ]);
             std::thread::sleep(std::time::Duration::from_secs(3));
-            grant_all_permissions(dev, pkg);
+            grant_all_permissions_with_runner(dev, pkg, &setup_runner);
         }
     }
 
@@ -1034,7 +1017,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             let ui_lower = ui.to_lowercase();
             if ui_lower.contains("permission_allow") || ui_lower.contains("while using") {
                 eprintln!("  → permission dialog detected, dismissing...");
-                grant_all_permissions(dev, pkg);
+                grant_all_permissions_with_runner(dev, pkg, &runner);
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
             dismiss_keyboard_if_visible(dev);
@@ -1102,8 +1085,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                     Step::Action(a) => (Some(a.action.clone()), None),
                     Step::Assert(a) => (None, Some(a.assert.clone())),
                 };
-                let agent_yaml = fetch_agent_yaml(dev).ok();
-                let ui_dump = Some(fetch_ui_dump(dev));
+                let agent_yaml = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None).ok();
+                let ui_dump = Some({
+                    let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+                    runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]).unwrap_or_default()
+                });
                 let debug_log = fetch_debug_log();
                 if let Some(ref log) = debug_log {
                     eprintln!("  debug-log: {}", &log[..log.len().min(200)]);
