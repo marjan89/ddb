@@ -1,8 +1,20 @@
 use clap::Args;
-use std::path::Path;
 
 use crate::adb;
 use crate::registry::{Device, Registry};
+
+use super::test_element::{
+    Target, find_element, find_element_unified, idle_barrier_sources,
+    check_element_sources,
+    extract_ui_bounds, extract_ui_text_bounds, extract_ui_bounds_fuzzy,
+    fetch_ui_dump, fetch_agent_yaml,
+    get_semantic_elements, agent_base_url,
+    extract_yaml_int, extract_yaml_int_after, token_jaccard,
+    scroll_direction,
+};
+use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
+use super::test_observability::{switchboard_notify, capture_failure_screenshot, fetch_debug_log};
+use super::test_timeout::{TimeoutManager, TimeoutLevel};
 
 #[derive(serde::Serialize)]
 struct RunLog {
@@ -77,6 +89,22 @@ pub struct TestArgs {
     /// Project directory for --build (default: DDB_PROJECT_DIR env var)
     #[arg(long, env = "DDB_PROJECT_DIR")]
     pub project_dir: Option<String>,
+
+    /// Regression gate: run only TCs affected by git changes, fail if any regress
+    #[arg(long)]
+    pub regression_gate: bool,
+
+    /// Base branch for regression gate diff (default: main)
+    #[arg(long, default_value = "main")]
+    pub base_branch: String,
+
+    /// TC mapping file (maps source files to TC IDs)
+    #[arg(long, env = "DDB_TC_MAP")]
+    pub tc_map: Option<String>,
+
+    /// Capture semantic agent baseline on PASS (writes to baseline/ next to TC)
+    #[arg(long)]
+    pub capture_baseline: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -88,6 +116,7 @@ struct TestSpecRaw {
     steps: Vec<StepRaw>,
 }
 
+#[derive(Clone)]
 struct TestSpec {
     id: String,
     name: String,
@@ -95,7 +124,7 @@ struct TestSpec {
     steps: Vec<Step>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 struct Precondition {
     #[serde(default)]
     activity: Option<String>,
@@ -159,11 +188,13 @@ struct PlatformSteps {
     ios: Option<Vec<StepRaw>>,
 }
 
+#[derive(Clone)]
 enum Step {
     Action(ActionStep),
     Assert(AssertStep),
 }
 
+#[derive(Clone)]
 struct ActionStep {
     action: String,
     target: Option<Target>,
@@ -182,6 +213,7 @@ struct ActionStep {
     save_as: Option<String>,
 }
 
+#[derive(Clone)]
 struct AssertStep {
     assert: String,
     expected: Option<String>,
@@ -224,24 +256,6 @@ impl StepRaw {
             Err("step must have either 'action' or 'assert' field".to_string())
         }
     }
-}
-
-#[derive(serde::Deserialize, Clone)]
-struct Target {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    content_fuzzy: Option<String>,
-    #[serde(default)]
-    clickable_only: Option<bool>,
-    #[serde(default)]
-    exclude_type: Option<String>,
-    #[serde(default)]
-    x: Option<i32>,
-    #[serde(default)]
-    y: Option<i32>,
 }
 
 #[derive(serde::Serialize)]
@@ -303,8 +317,12 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
-    // Version check: verify agent is running expected build
-    if let Some(ref expected) = args.expected_hash {
+    // Version check: mandatory — refuse to run without expected hash
+    let expected_hash = args.expected_hash.clone()
+        .or_else(|| std::env::var("DDB_EXPECTED_HASH").ok())
+        .filter(|h| !h.is_empty())
+        .ok_or("DDB_EXPECTED_HASH not set. Run: export DDB_EXPECTED_HASH=$(git -C /path/to/app rev-parse --short HEAD)")?;
+    {
         let base = agent_base_url();
         let out = std::process::Command::new("curl")
             .args(["-s", "--max-time", "5", &format!("{base}/version")])
@@ -315,12 +333,16 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 let rest = &body[hash_start + 12..];
                 if let Some(end) = rest.find('"') {
                     let installed = &rest[..end];
-                    if installed != expected.as_str() {
-                        return Err(format!("STALE BINARY: installed={installed} expected={expected}. Rebuild APK."));
+                    if installed != expected_hash {
+                        return Err(format!("STALE BINARY: installed={installed} expected={expected_hash}. Rebuild APK."));
                     }
                     eprintln!("  agent version: {installed} ✓");
                 }
+            } else {
+                eprintln!("  WARNING: could not read agent version (agent may not support /version)");
             }
+        } else {
+            eprintln!("  WARNING: agent not reachable for version check");
         }
     }
 
@@ -356,6 +378,17 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             println!("  {}", s);
         }
         failed
+    } else if args.regression_gate {
+        let results_dir = args.results_dir.as_deref().ok_or("--regression-gate requires --results-dir or DDB_RESULTS_DIR")?;
+        let tests_dir = args.tests_dir.as_deref().ok_or("--regression-gate requires --tests-dir or DDB_TESTS_DIR")?;
+        let affected = get_affected_tcs(&args.base_branch, args.tc_map.as_deref(), tests_dir)?;
+        if affected.is_empty() {
+            println!("No TCs affected by changes — gate passes.");
+            return Ok(());
+        }
+        println!("Regression gate: {} affected TCs", affected.len());
+        for s in &affected { println!("  {}", s); }
+        affected
     } else {
         args.specs.clone()
     };
@@ -376,13 +409,17 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Disable animations for reliable test execution
     set_animations(false);
 
+    // Pre-load fixtures for interpolation (used both pre-parse and at runtime)
+    let fixtures_map = load_fixtures_map();
+
     let mut results = Vec::new();
     let mut pass = 0;
     let mut fail = 0;
 
     for spec_path in &specs {
-        let content = std::fs::read_to_string(spec_path)
+        let raw_content = std::fs::read_to_string(spec_path)
             .map_err(|e| format!("read {spec_path}: {e}"))?;
+        let content = interpolate_raw(&raw_content, &fixtures_map);
         let raw: TestSpecRaw = serde_yaml::from_str(&content)
             .map_err(|e| format!("parse {spec_path}: {e}"))?;
         let expanded: Vec<StepRaw> = raw.steps.into_iter()
@@ -412,7 +449,35 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
 
         switchboard_notify(&format!("run started {} — {}", spec.id, spec.name));
         let started = now_iso();
-        let (result, step_logs) = run_spec(&spec, dev.as_ref(), args.step_timeout);
+        let tc_hard_timeout = {
+            let step_count = spec.steps.len() as u64;
+            let base = 120u64.max(args.step_timeout * step_count).min(300);
+            std::time::Duration::from_secs(base + 30)
+        };
+        let spec_clone = spec.clone();
+        let dev_clone = dev.clone();
+        let step_timeout = args.step_timeout;
+        let fixtures_clone = fixtures_map.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone);
+            let _ = tx.send(result);
+        });
+        let (result, step_logs) = match rx.recv_timeout(tc_hard_timeout) {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("  TC hard timeout ({}s) — killing", tc_hard_timeout.as_secs());
+                switchboard_notify(&format!("HARD TIMEOUT {} after {}s", spec.id, tc_hard_timeout.as_secs()));
+                (TestResult {
+                    id: spec.id.clone(), name: spec.name.clone(),
+                    status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+                    failure: Some(FailureDetail {
+                        step: 0, description: format!("TC hard timeout ({}s)", tc_hard_timeout.as_secs()),
+                        screenshot: None,
+                    }),
+                }, Vec::new())
+            }
+        };
         let finished = now_iso();
 
         // Write structured run log
@@ -444,6 +509,17 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             pass += 1;
             println!("  PASS  {} — {}", result.id, result.name);
             switchboard_notify(&format!("run finished {} PASS", result.id));
+            if args.capture_baseline {
+                if let Ok(yaml) = fetch_agent_yaml(dev.as_ref()) {
+                    let baseline_dir = std::path::Path::new(spec_path)
+                        .parent().unwrap_or(std::path::Path::new("."))
+                        .join("baseline");
+                    let _ = std::fs::create_dir_all(&baseline_dir);
+                    let baseline_path = baseline_dir.join(format!("{}.yaml", result.id));
+                    let _ = std::fs::write(&baseline_path, &yaml);
+                    eprintln!("  baseline → {}", baseline_path.display());
+                }
+            }
         } else {
             fail += 1;
             let empty = String::new();
@@ -473,7 +549,16 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         eprintln!("report: {}", report_path);
     }
 
-    if fail > 0 {
+    if args.regression_gate {
+        let results_dir = args.results_dir.as_deref().unwrap_or(".");
+        let regressions = check_regressions(&results, results_dir);
+        if !regressions.is_empty() {
+            eprintln!("\nREGRESSION GATE FAILED — {} TCs regressed (PASS → FAIL):", regressions.len());
+            for r in &regressions { eprintln!("  {}", r); }
+            std::process::exit(2);
+        }
+        println!("Regression gate: PASSED (no regressions)");
+    } else if fail > 0 {
         std::process::exit(1);
     }
 
@@ -492,11 +577,6 @@ fn detect_results_dir(spec_path: &str) -> Option<String> {
     }
     // Fallback: put results next to the spec file
     p.parent().map(|d| d.join("results").to_string_lossy().to_string())
-}
-
-fn agent_base_url() -> String {
-    let port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
-    format!("http://localhost:{port}")
 }
 
 fn set_animations(enabled: bool) {
@@ -724,92 +804,6 @@ fn dismiss_permission_dialog(dev: Option<&Device>) {
     }
 }
 
-fn extract_ui_bounds(xml: &str, resource_id: &str) -> Option<(i32, i32)> {
-    let id_pattern = format!("id/{}", resource_id);
-    if let Some(idx) = xml.find(&id_pattern) {
-        let chunk = &xml[idx..xml.len().min(idx + 200)];
-        if let Some(b_start) = chunk.find("bounds=\"[") {
-            let bounds_str = &chunk[b_start + 9..];
-            if let Some(b_end) = bounds_str.find(']') {
-                let coords: Vec<&str> = bounds_str[..b_end].split(',').collect();
-                if coords.len() == 2 {
-                    let x1: i32 = coords[0].parse().unwrap_or(0);
-                    let y1: i32 = coords[1].parse().unwrap_or(0);
-                    // Get second bracket for x2,y2
-                    if let Some(b2) = bounds_str[b_end+2..].find(']') {
-                        let c2: Vec<&str> = bounds_str[b_end+2..b_end+2+b2].split(',').collect();
-                        if c2.len() == 2 {
-                            let x2: i32 = c2[0].parse().unwrap_or(0);
-                            let y2: i32 = c2[1].parse().unwrap_or(0);
-                            return Some(((x1 + x2) / 2, (y1 + y2) / 2));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn extract_ui_text_bounds(xml: &str, text: &str) -> Option<(i32, i32)> {
-    let pattern = format!("text=\"{}", text);
-    if let Some(idx) = xml.find(&pattern) {
-        let chunk = &xml[idx..xml.len().min(idx + 300)];
-        return extract_ui_bounds(chunk, "");
-    }
-    None
-}
-
-fn extract_ui_bounds_fuzzy(xml: &str, fuzzy: &str) -> Option<(i32, i32)> {
-    let lower = xml.to_lowercase();
-    let needle = fuzzy.to_lowercase();
-    if let Some(idx) = lower.find(&needle) {
-        let chunk = &xml[idx..xml.len().min(idx + 300)];
-        if let Some(b_start) = chunk.find("bounds=\"[") {
-            let bounds_str = &chunk[b_start + 9..];
-            if let Some(b_end) = bounds_str.find(']') {
-                let coords: Vec<&str> = bounds_str[..b_end].split(',').collect();
-                if coords.len() == 2 {
-                    let x1: i32 = coords[0].parse().unwrap_or(0);
-                    let y1: i32 = coords[1].parse().unwrap_or(0);
-                    if let Some(b2) = bounds_str[b_end+2..].find(']') {
-                        let c2: Vec<&str> = bounds_str[b_end+2..b_end+2+b2].split(',').collect();
-                        if c2.len() == 2 {
-                            let x2: i32 = c2[0].parse().unwrap_or(0);
-                            let y2: i32 = c2[1].parse().unwrap_or(0);
-                            return Some(((x1 + x2) / 2, (y1 + y2) / 2));
-                        }
-                    }
-                }
-            }
-        }
-        // bounds may be before the match — search backwards
-        let before = &xml[..idx + needle.len()];
-        if let Some(node_start) = before.rfind('<') {
-            let node = &xml[node_start..xml.len().min(idx + 500)];
-            if let Some(b_start) = node.find("bounds=\"[") {
-                let bounds_str = &node[b_start + 9..];
-                if let Some(b_end) = bounds_str.find(']') {
-                    let coords: Vec<&str> = bounds_str[..b_end].split(',').collect();
-                    if coords.len() == 2 {
-                        let x1: i32 = coords[0].parse().unwrap_or(0);
-                        let y1: i32 = coords[1].parse().unwrap_or(0);
-                        if let Some(b2) = bounds_str[b_end+2..].find(']') {
-                            let c2: Vec<&str> = bounds_str[b_end+2..b_end+2+b2].split(',').collect();
-                            if c2.len() == 2 {
-                                let x2: i32 = c2[0].parse().unwrap_or(0);
-                                let y2: i32 = c2[1].parse().unwrap_or(0);
-                                return Some(((x1 + x2) / 2, (y1 + y2) / 2));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
     if let Ok(out) = adb::shell(dev, &["dumpsys", "input_method"]) {
         if out.contains("mInputShown=true") {
@@ -820,44 +814,31 @@ fn dismiss_keyboard_if_visible(dev: Option<&Device>) {
     }
 }
 
-fn fetch_ui_dump(dev: Option<&Device>) -> String {
-    let _ = adb::shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
-    match adb::shell(dev, &["cat", "/sdcard/ui.xml"]) {
-        Ok(out) => out,
-        Err(_) => "(ui dump failed)".to_string(),
-    }
-}
-
 struct RunContext {
-    vars: std::collections::HashMap<String, serde_json::Value>,
+    resolver: FixtureResolver,
 }
 
 impl RunContext {
-    fn new() -> Self { Self { vars: std::collections::HashMap::new() } }
-
-    fn interpolate(&self, s: &str) -> String {
-        let mut result = s.to_string();
-        for (key, val) in &self.vars {
-            self.apply_patterns(&mut result, key, val);
-        }
-        result
+    fn new(fixtures: std::collections::HashMap<String, String>) -> Self {
+        Self { resolver: FixtureResolver::new(fixtures) }
     }
 
-    fn apply_patterns(&self, result: &mut String, prefix: &str, val: &serde_json::Value) {
-        match val {
-            serde_json::Value::Object(map) => {
-                for (k, v) in map { self.apply_patterns(result, &format!("{prefix}.{k}"), v); }
-            }
-            serde_json::Value::String(s) => { *result = result.replace(&format!("{{{{{prefix}}}}}"), s); }
-            serde_json::Value::Number(n) => { *result = result.replace(&format!("{{{{{prefix}}}}}"), &n.to_string()); }
-            _ => {}
-        }
+    fn interpolate(&self, s: &str) -> String {
+        self.resolver.resolve(s)
+    }
+
+    fn add_api_response(&mut self, key: &str, val: serde_json::Value) {
+        self.resolver.add_api_response(key, val);
+    }
+
+    fn get_var(&self, key: &str) -> Option<&serde_json::Value> {
+        self.resolver.get_var(key)
     }
 }
 
-fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult, Vec<StepLogEntry>) {
+fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
-    let mut ctx = RunContext::new();
+    let mut ctx = RunContext::new(fixtures.clone());
 
     // Reset to MainActivity: use monkey (same as ddb app launch) after clearing task
     let pkg_env = std::env::var("DDB_TEST_PACKAGE").ok();
@@ -975,29 +956,19 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     wait_idle(dev, timeout);
 
-    // Load fixtures from navigation.yaml if present
+    // Load navigation.yaml config (deprioritize patterns, jaccard threshold)
     let nav_env = std::env::var("DDB_NAVIGATION_YAML").ok();
     let nav_path_str = nav_env.as_deref().unwrap_or("catalogue/android/navigation.yaml");
     let nav_path = std::path::Path::new(nav_path_str);
     if nav_path.exists() {
         if let Ok(nav_content) = std::fs::read_to_string(nav_path) {
-            // Extract fixture values: sites.*.name, users.*.email, etc.
-            let mut in_fixtures = false;
-            let mut current_key = String::new();
             for line in nav_content.lines() {
                 let trimmed = line.trim();
-                if trimmed == "fixtures:" { in_fixtures = true; continue; }
-                if !in_fixtures { continue; }
-                if !line.starts_with(' ') && !trimmed.is_empty() { break; }
-                if trimmed.ends_with(':') && !trimmed.contains('{') {
-                    current_key = trimmed.trim_end_matches(':').to_string();
-                } else if trimmed.contains(": ") && !current_key.is_empty() {
-                    let parts: Vec<&str> = trimmed.splitn(2, ": ").collect();
-                    if parts.len() == 2 {
-                        let k = format!("fixture.{}.{}", current_key, parts[0].trim());
-                        let v = parts[1].trim().trim_matches('"').trim_matches('\'');
-                        ctx.vars.insert(k, serde_json::Value::String(v.to_string()));
-                    }
+                if let Some(rest) = trimmed.strip_prefix("deprioritize_patterns:") {
+                    unsafe { std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", rest.trim().trim_matches('"')); }
+                }
+                if let Some(rest) = trimmed.strip_prefix("jaccard_threshold:") {
+                    unsafe { std::env::set_var("DDB_JACCARD_THRESHOLD", rest.trim()); }
                 }
             }
         }
@@ -1023,38 +994,10 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
         }
     }
 
-    // Load standalone fixtures.yaml if present
-    let fixtures_paths = [
-        "catalogue/fixtures.yaml",
-        "catalogue/tests/fixtures.yaml",
-        "/Users/Shared/projects/Outdoors/catalogue/fixtures.yaml",
-        "../catalogue/fixtures.yaml",
-        "../../catalogue/fixtures.yaml",
-    ];
-    for fp in &fixtures_paths {
-        let fp = std::path::Path::new(fp);
-        if fp.exists() {
-            if let Ok(content) = std::fs::read_to_string(fp) {
-                if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
-                    ctx.vars.insert("fixtures".into(), val);
-                }
-            }
-            break;
-        }
-    }
 
-    if let Some(serde_json::Value::String(v)) = ctx.vars.get("config.deprioritize_patterns") {
-        if std::env::var("DDB_DEPRIORITIZE_PATTERNS").is_err() {
-            unsafe { std::env::set_var("DDB_DEPRIORITIZE_PATTERNS", v); }
-        }
-    }
-    if let Some(serde_json::Value::String(v)) = ctx.vars.get("config.jaccard_threshold") {
-        if std::env::var("DDB_JACCARD_THRESHOLD").is_err() {
-            unsafe { std::env::set_var("DDB_JACCARD_THRESHOLD", v); }
-        }
-    }
 
-    let tc_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120.max(timeout * spec.steps.len() as u64).min(300));
+    let tc_timeout = 120u64.max(timeout * spec.steps.len() as u64).min(300);
+    let mut tm = TimeoutManager::new(tc_timeout, timeout);
     let tc_start = std::time::Instant::now();
 
     // Heartbeat thread
@@ -1080,8 +1023,8 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
     for (i, step) in spec.steps.iter().enumerate() {
         hb_step.store(i + 1, std::sync::atomic::Ordering::Relaxed);
-        // TC-level timeout
-        if std::time::Instant::now() > tc_deadline {
+        tm.reset_step();
+        if let Err(TimeoutLevel::Tc) = tm.check() {
             return (TestResult {
                 id: spec.id.clone(), name: spec.name.clone(),
                 status: "FAIL".to_string(), steps_run: i, steps_total: spec.steps.len(),
@@ -1093,12 +1036,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
 
         let result = match step {
             Step::Action(a) => execute_action(dev, a, &mut ctx),
-            Step::Assert(a) => execute_assert(dev, a, timeout, &ctx),
+            Step::Assert(a) => execute_assert(dev, a, tm.step_remaining_secs().max(5), &ctx),
         };
-        // Retry once on failure with precondition check
-        let result = if result.is_err() {
+        // Retry once on failure with precondition check (skip if TC expired)
+        let result = if result.is_err() && tm.check().is_ok() {
             eprintln!("  step {} failed, checking preconditions...", i + 1);
-            // Check for permission dialog
             let ui = fetch_ui_dump(dev);
             let ui_lower = ui.to_lowercase();
             if ui_lower.contains("permission_allow") || ui_lower.contains("while using") {
@@ -1106,25 +1048,27 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64) -> (TestResult,
                 grant_all_permissions(dev, pkg);
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
-            // Check for keyboard covering elements
             dismiss_keyboard_if_visible(dev);
-            // Check if app crashed (on launcher/home)
-            if let Ok(current) = get_current_activity(dev) {
-                if !current.contains(pkg) {
-                    eprintln!("  → app not foreground ({}), relaunching...", current.trim());
-                    let _ = adb::shell(dev, &[
-                        "am", "start", "-a", "android.intent.action.MAIN",
-                        "-c", "android.intent.category.LAUNCHER",
-                        "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
-                    ]);
-                    std::thread::sleep(std::time::Duration::from_secs(3));
+            if tm.check().is_ok() {
+                if let Ok(current) = get_current_activity(dev) {
+                    if !current.contains(pkg) {
+                        eprintln!("  → app not foreground ({}), relaunching...", current.trim());
+                        let _ = adb::shell(dev, &[
+                            "am", "start", "-a", "android.intent.action.MAIN",
+                            "-c", "android.intent.category.LAUNCHER",
+                            "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
+                        ]);
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                    }
                 }
             }
-            eprintln!("  step {} retrying...", i + 1);
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            match step {
-                Step::Action(a) => execute_action(dev, a, &mut ctx),
-                Step::Assert(a) => execute_assert(dev, a, timeout, &ctx),
+            if tm.check().is_err() { result } else {
+                eprintln!("  step {} retrying...", i + 1);
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                match step {
+                    Step::Action(a) => execute_action(dev, a, &mut ctx),
+                    Step::Assert(a) => execute_assert(dev, a, tm.step_remaining_secs().max(5), &ctx),
+                }
             }
         } else {
             result
@@ -1238,7 +1182,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "tap" => {
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("tap: no target")?;
-            let (x, y, desc) = poll_for_element(dev, target, 10_000)?;
+            let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
             adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
             Ok(desc)
         }
@@ -1247,7 +1191,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             let text = action.text.as_ref().ok_or("type: no text")?;
             // Auto-focus: if a target is specified, tap it first; otherwise find focused field
             if let Some(ref target) = action.target {
-                let (x, y, _) = find_element(dev, target)?;
+                let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
                 adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
@@ -1265,7 +1209,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 // Long press to trigger paste menu
                 let (x, y) = if let Some(ref target) = action.target {
-                    let (x, y, _) = find_element(dev, target)?;
+                    let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
                     (x, y)
                 } else {
                     (540, 300) // fallback center-ish
@@ -1283,22 +1227,19 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                // Page-stable preflight: informational only (async content may not be in dump yet)
-                // Scroll until element is in viewport
-                let scroll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-                for attempt in 0..20 {
+                let scroll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                for attempt in 0..15 {
                     if std::time::Instant::now() > scroll_deadline {
-                        return Err("scroll_to: timeout (60s)".into());
+                        return Err("scroll_to: timeout (30s)".into());
                     }
-                    if find_element(dev, target).is_ok() {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    if find_element_unified(dev, target, &idle_barrier_sources(3)).is_ok() {
                         break;
                     }
-                    if attempt == 19 {
-                        return Err(format!("scroll_to: element not found in viewport after 20 scrolls"));
+                    if attempt == 14 {
+                        return Err(format!("scroll_to: element not found after 15 scrolls"));
                     }
                     scroll_direction(dev, "down")?;
-                    wait_idle(dev, 3);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
                 }
             } else {
                 let dir = action.direction.as_deref().unwrap_or("down");
@@ -1313,7 +1254,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "navigate_to_site" => {
             let site_id = action.site_id
                 .map(|id| id.to_string())
-                .or_else(|| ctx.vars.get("site_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.vars.get("site_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
+                .or_else(|| ctx.get_var("site_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.get_var("site_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
                 .ok_or("navigate_to_site: no site_id")?;
             let base = agent_base_url();
             let out = std::process::Command::new("curl")
@@ -1331,7 +1272,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "navigate_to_user" => {
             let user_id = action.user_id
                 .map(|id| id.to_string())
-                .or_else(|| ctx.vars.get("user_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.vars.get("user_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
+                .or_else(|| ctx.get_var("user_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.get_var("user_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
                 .ok_or("navigate_to_user: no user_id")?;
             let base = agent_base_url();
             let out = std::process::Command::new("curl")
@@ -1352,7 +1293,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "long_press" => {
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("long_press: no target")?;
-            let (x, y, desc) = find_element(dev, target)?;
+            let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
             adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
             Ok(desc)
         }
@@ -1504,7 +1445,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
 
             if let Some(ref save_key) = action.save_as {
                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(body_str) {
-                    ctx.vars.insert(save_key.clone(), json_val);
+                    ctx.add_api_response(save_key, json_val);
                 }
             }
 
@@ -1530,51 +1471,52 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
             let expected_text = assert.text.as_deref();
             let expected_hint = assert.hint.as_deref();
 
-            // Interpolate fixture refs in targets
             let fuzzy_raw = target.and_then(|t| t.content_fuzzy.as_deref());
             let fuzzy_resolved = fuzzy_raw.map(|f| ctx.interpolate(f));
             let fuzzy = fuzzy_resolved.as_deref();
             let id = target.and_then(|t| t.id.as_deref());
-            let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout.min(30));
-            for poll in 0..10 {
-                if std::time::Instant::now() > poll_deadline { break; }
-                // Check uiautomator (fast, catches system dialogs)
-                let ui_xml = fetch_ui_dump(dev);
-                let ui_lower = ui_xml.to_lowercase();
-                let found_ui = fuzzy.map(|f| ui_lower.contains(&f.to_lowercase())).unwrap_or(false)
-                    || id.map(|i| ui_xml.contains(i)).unwrap_or(false)
-                    || expected_text.map(|t| ui_lower.contains(&t.to_lowercase())).unwrap_or(false);
-                if found_ui {
-                    return Ok(format!("found in uiautomator (poll {})", poll));
-                }
-                // Check accessibility dump (catches AlertDialog content that uiautomator dump misses)
-                if let Ok(a11y_dump) = adb::shell(dev, &["dumpsys", "activity", "top"]) {
-                    let a11y_lower = a11y_dump.to_lowercase();
-                    let found_a11y = fuzzy.map(|f| a11y_lower.contains(&f.to_lowercase())).unwrap_or(false);
-                    if found_a11y {
-                        return Ok(format!("found in activity dump (poll {})", poll));
-                    }
-                }
-                // Check semantic agent (full dump, catches app content)
-                if let Ok(elements) = get_semantic_elements(dev) {
-                    let found_agent = elements.iter().any(|e| {
-                        let e_lower = e.to_lowercase();
-                        fuzzy.map(|f| e_lower.contains(&f.to_lowercase())).unwrap_or(false)
-                            || id.map(|i| e.contains(i)).unwrap_or(false)
-                    });
-                    if found_agent {
-                        let content = elements.iter()
-                            .find(|e| fuzzy.map(|f| e.to_lowercase().contains(&f.to_lowercase())).unwrap_or(false))
-                            .and_then(|e| e.lines().find(|l| l.trim().starts_with("content:")).map(|l| l.trim().to_string()))
-                            .unwrap_or_default();
-                        return Ok(format!("found: {content}"));
-                    }
-                }
-                if poll < 9 {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
+
+            // Idle barrier: ask agent to wait for idle, then query
+            if let Some(target) = target {
+                if let Ok((_, _, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5)) {
+                    return Ok(desc);
                 }
             }
-            return Err(format!("element not found after 10 polls: {:?}", fuzzy.or(id)));
+
+            // Quick check: one pass through all sources
+            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
+                return Ok(result);
+            }
+
+            // SSE-driven wait: subscribe to /stream, re-check on each event
+            let base = agent_base_url();
+            let sse_timeout = timeout.min(10);
+            let child = std::process::Command::new("curl")
+                .args(["-sN", "--max-time", &sse_timeout.to_string(), &format!("{base}/stream")])
+                .stdout(std::process::Stdio::piped())
+                .spawn();
+            if let Ok(mut child) = child {
+                if let Some(stdout) = child.stdout.take() {
+                    let reader = std::io::BufRead::lines(std::io::BufReader::new(stdout));
+                    for line in reader {
+                        if let Ok(line) = line {
+                            if line.starts_with("event:") || line.starts_with("data:") {
+                                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
+                                    let _ = child.kill();
+                                    return Ok(result);
+                                }
+                            }
+                        }
+                    }
+                }
+                let _ = child.kill();
+            }
+
+            // Final check after SSE timeout
+            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
+                return Ok(result);
+            }
+            return Err(format!("element not found (SSE {}s): {:?}", sse_timeout, fuzzy.or(id)));
         }
 
         "element_not_exists" => {
@@ -1634,136 +1576,18 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
     }
 }
 
-fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, String), String> {
-    if let (Some(x), Some(y)) = (target.x, target.y) {
-        return Ok((x, y, format!("position ({x}, {y})")));
-    }
-
-    let yaml = fetch_agent_yaml(dev)?;
-
-    let search_id = target.id.as_deref().unwrap_or("");
-    let search_text = target.text.as_deref().unwrap_or("");
-    let search_fuzzy = target.content_fuzzy.as_deref().unwrap_or("");
-
-    let mut fuzzy_candidate: Option<(i32, i32, String)> = None;
-    let mut fuzzy_clickable = false;
-
-    for chunk in yaml.split("\n- ") {
-        let id_match = !search_id.is_empty() && (
-            chunk.contains(&format!("platform_id: \"{}\"", search_id))
-            || chunk.contains(&format!("id: \"{}\"", search_id))
-            || chunk.contains(&format!("platform_id: {}", search_id))
-            || chunk.contains(&format!("id: {}", search_id))
-        );
-        let text_match = !search_text.is_empty() && (
-            chunk.contains(&format!("content: \"{}\"", search_text))
-            || chunk.contains(&format!("content: {}", search_text))
-            || chunk.contains(search_text)
-        );
-        let fuzzy_match = !search_fuzzy.is_empty() && {
-            let needle = search_fuzzy.to_lowercase();
-            chunk.lines().any(|line| {
-                let t = line.trim();
-                if let Some(rest) = t.strip_prefix("content:").or_else(|| t.strip_prefix("a11y_label:")) {
-                    let hay = rest.to_lowercase();
-                    let threshold: f64 = std::env::var("DDB_JACCARD_THRESHOLD")
-                        .ok().and_then(|v| v.parse().ok()).unwrap_or(0.6);
-                    hay.contains(&needle) || token_jaccard(&needle, &hay) >= threshold
-                } else {
-                    false
-                }
-            })
-        };
-
-        let exact_match = id_match || text_match;
-
-        if exact_match || fuzzy_match {
-            if target.clickable_only == Some(true) && !chunk.contains("clickable: true") {
-                continue;
-            }
-            if let Some(ref exc) = target.exclude_type {
-                let type_line = format!("type: {}", exc);
-                if chunk.contains(&type_line) {
-                    continue;
-                }
-            }
-            let x = extract_yaml_int(chunk, "x: ");
-            let y = extract_yaml_int(chunk, "y: ");
-            let w = extract_yaml_int(chunk, "w: ");
-            let h = extract_yaml_int(chunk, "h: ");
-
-            if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                let (cx, cy) = if chunk.contains("tap_target:") {
-                    let tx = extract_yaml_int_after(chunk, "tap_target:", "x: ");
-                    let ty = extract_yaml_int_after(chunk, "tap_target:", "y: ");
-                    let tw = extract_yaml_int_after(chunk, "tap_target:", "w: ");
-                    let th = extract_yaml_int_after(chunk, "tap_target:", "h: ");
-                    if let (Some(tx), Some(ty), Some(tw), Some(th)) = (tx, ty, tw, th) {
-                        (tx + tw / 2, ty + th / 2)
-                    } else {
-                        (x + w / 2, y + h / 2)
-                    }
-                } else {
-                    (x + w / 2, y + h / 2)
-                };
-
-                let content_line = chunk.lines()
-                    .find(|l| l.trim().starts_with("content:"))
-                    .map(|l| l.trim().to_string())
-                    .unwrap_or_default();
-                let desc = format!("{} at ({}, {})", content_line, cx, cy);
-
-                if exact_match {
-                    return Ok((cx, cy, desc));
-                }
-                let is_clickable = chunk.contains("clickable: true");
-                let chunk_lower = chunk.to_lowercase();
-                let deprioritize = std::env::var("DDB_DEPRIORITIZE_PATTERNS")
-                    .unwrap_or_else(|_| "see all,inspiration".into());
-                let is_nav_link = deprioritize.split(',')
-                    .any(|p| chunk_lower.contains(p.trim()));
-                let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
-                    (None, _, _) => true,
-                    (_, true, false) => true,
-                    _ if !is_nav_link => true,
-                    _ => false,
-                };
-                if is_better {
-                    fuzzy_candidate = Some((cx, cy, desc));
-                    fuzzy_clickable = is_clickable;
-                }
-            }
-        }
-    }
-
-    if let Some(candidate) = fuzzy_candidate {
-        return Ok(candidate);
-    }
-
-    // Fallback: check uiautomator dump for dialog elements
-    let ui_xml = fetch_ui_dump(dev);
-    if !search_fuzzy.is_empty() && ui_xml.to_lowercase().contains(&search_fuzzy.to_lowercase()) {
-        if let Some(bounds) = extract_ui_bounds_fuzzy(&ui_xml, search_fuzzy) {
-            return Ok((bounds.0, bounds.1, format!("uiautomator: {search_fuzzy}")));
-        }
-    }
-    if !search_id.is_empty() && ui_xml.contains(search_id) {
-        if let Some(bounds) = extract_ui_bounds(&ui_xml, search_id) {
-            return Ok((bounds.0, bounds.1, format!("uiautomator: {search_id}")));
-        }
-    }
-
-    let desc = if !search_id.is_empty() { search_id }
-        else if !search_text.is_empty() { search_text }
-        else { search_fuzzy };
-    Err(format!("element not found: {desc}"))
-}
-
 fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     for _ in 0..10 {
+        if std::time::Instant::now() > deadline {
+            return Err(format!("scroll_to_element: timeout (60s): {id_or_text}"));
+        }
         let yaml = fetch_agent_yaml(dev)?;
         if yaml.contains(id_or_text) {
             return Ok(());
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!("scroll_to_element: timeout (60s): {id_or_text}"));
         }
         scroll_direction(dev, "down")?;
         wait_idle(dev, 5);
@@ -1771,76 +1595,12 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
     Err(format!("could not scroll to: {id_or_text}"))
 }
 
-fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
-    let (x1, y1, x2, y2) = compute_scroll_bounds(dev, dir);
-    adb::shell(dev, &[
-        "input", "swipe",
-        &x1.to_string(), &y1.to_string(),
-        &x2.to_string(), &y2.to_string(),
-        "500",
-    ])?;
-    Ok(())
-}
-
-fn is_page_stable(dev: Option<&Device>) -> Option<bool> {
-    let count1 = fetch_agent_yaml_full(dev).ok()
-        .map(|y| y.matches("\n- ").count());
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    let count2 = fetch_agent_yaml_full(dev).ok()
-        .map(|y| y.matches("\n- ").count());
-    match (count1, count2) {
-        (Some(c1), Some(c2)) if c1 > 0 => Some(c1 == c2),
-        _ => None,
-    }
-}
-
-fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32, i32) {
-    // Try to find scrollable container bounds from semantic dump
-    if let Ok(yaml) = fetch_agent_yaml(dev) {
-        for chunk in yaml.split("\n- ") {
-            let is_scrollable = chunk.contains("type: container") && (
-                chunk.to_lowercase().contains("recyclerview")
-                || chunk.to_lowercase().contains("nestedscrollview")
-                || chunk.to_lowercase().contains("scrollview")
-            );
-            if is_scrollable {
-                let x = extract_yaml_int(chunk, "x: ").unwrap_or(0);
-                let y = extract_yaml_int(chunk, "y: ").unwrap_or(0);
-                let w = extract_yaml_int(chunk, "w: ").unwrap_or(0);
-                let h = extract_yaml_int(chunk, "h: ").unwrap_or(0);
-                if w > 100 && h > 200 {
-                    let cx = x + w / 2;
-                    let top = y + h / 4;
-                    let bot = y + h * 3 / 4;
-                    return match dir {
-                        "down" => (cx, bot, cx, top),
-                        "up" => (cx, top, cx, bot),
-                        "left" => (bot, cx, top, cx),
-                        "right" => (top, cx, bot, cx),
-                        _ => (540, 1800, 540, 900),
-                    };
-                }
-            }
-        }
-    }
-    // Fallback: screen center
-    match dir {
-        "down" => (540, 1800, 540, 900),
-        "up" => (540, 900, 540, 1800),
-        "left" => (800, 1100, 200, 1100),
-        "right" => (200, 1100, 800, 1100),
-        _ => (540, 1800, 540, 900),
-    }
-}
-
 fn get_current_activity(dev: Option<&Device>) -> Result<String, String> {
-    let out = adb::shell(dev, &["dumpsys", "activity", "activities"])?;
-    for line in out.lines() {
-        if line.contains("mResumedActivity") || line.contains("topResumedActivity") {
-            return Ok(line.trim().to_string());
-        }
-    }
-    Ok(String::new())
+    let out = adb::shell(dev, &[
+        "dumpsys", "activity", "activities",
+        "|", "grep", "-E", "mResumedActivity|topResumedActivity",
+    ])?;
+    Ok(out.lines().next().unwrap_or("").trim().to_string())
 }
 
 fn wait_for_idle_after_navigate(dev: Option<&Device>) {
@@ -1897,134 +1657,6 @@ fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
     Ok(body.contains("\"idle\":true") || body.contains("\"idle\": true"))
 }
 
-fn fetch_agent_yaml_full_with_retry(dev: Option<&Device>) -> Result<String, String> {
-    for _ in 0..3 {
-        if let Ok(yaml) = fetch_agent_yaml_full(dev) {
-            return Ok(yaml);
-        }
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
-    fetch_agent_yaml(dev)
-}
-
-fn fetch_agent_yaml_full(_dev: Option<&Device>) -> Result<String, String> {
-    let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "5", "--max-time", "15", &format!("{}/semantic?scroll=0", agent_base_url())])
-        .output()
-        .map_err(|e| format!("curl error: {e}"))?;
-    if !resp.status.success() {
-        return Err("agent not responding (full dump)".to_string());
-    }
-    let body = String::from_utf8_lossy(&resp.stdout).into_owned();
-    if body.contains("elements:") { Ok(body) } else { Err("invalid agent response (full)".to_string()) }
-}
-
-fn fetch_agent_yaml(dev: Option<&Device>) -> Result<String, String> {
-    let resp = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "2", "--max-time", "10", &format!("{}/semantic", agent_base_url())])
-        .output()
-        .map_err(|e| format!("curl error: {e}"))?;
-
-    if !resp.status.success() {
-        return Err("agent not responding".to_string());
-    }
-
-    let body = String::from_utf8_lossy(&resp.stdout).into_owned();
-    if body.contains("elements:") {
-        Ok(body)
-    } else {
-        Err("invalid agent response".to_string())
-    }
-}
-
-fn get_semantic_elements(dev: Option<&Device>) -> Result<Vec<String>, String> {
-    let yaml = fetch_agent_yaml_full_with_retry(dev)?;
-    let elements: Vec<String> = yaml.split("\n- ")
-        .skip(1)
-        .map(|s| s.to_string())
-        .collect();
-    Ok(elements)
-}
-
-fn get_density(dev: Option<&Device>) -> Option<f64> {
-    let out = adb::shell(dev, &["wm", "density"]).ok()?;
-    for line in out.lines() {
-        if let Some(rest) = line.strip_prefix("Physical density:") {
-            return rest.trim().parse::<f64>().ok().map(|d| d / 160.0);
-        }
-    }
-    None
-}
-
-fn extract_yaml_int(chunk: &str, key: &str) -> Option<i32> {
-    for line in chunk.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(key) {
-            return rest.trim().parse().ok();
-        }
-    }
-    None
-}
-
-fn extract_yaml_int_after(chunk: &str, section: &str, key: &str) -> Option<i32> {
-    let section_pos = chunk.find(section)?;
-    let after = &chunk[section_pos..];
-    for line in after.lines().skip(1) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || (!trimmed.starts_with(key) && !trimmed.contains(": ")) {
-            break;
-        }
-        if let Some(rest) = trimmed.strip_prefix(key) {
-            return rest.trim().parse().ok();
-        }
-    }
-    None
-}
-
-fn token_jaccard(a: &str, b: &str) -> f64 {
-    use std::collections::HashSet;
-    let a_tokens: HashSet<&str> = a.split_whitespace().collect();
-    let b_tokens: HashSet<&str> = b.split_whitespace().collect();
-    let intersection = a_tokens.intersection(&b_tokens).count() as f64;
-    let union = a_tokens.union(&b_tokens).count() as f64;
-    if union == 0.0 { return 0.0; }
-    intersection / union
-}
-
-fn poll_for_element(dev: Option<&Device>, target: &Target, timeout_ms: u64) -> Result<(i32, i32, String), String> {
-    let start = std::time::Instant::now();
-    let interval = std::time::Duration::from_millis(500);
-    let timeout = std::time::Duration::from_millis(timeout_ms);
-
-    wait_idle(dev, 5);
-
-    loop {
-        match find_element(dev, target) {
-            Ok(result) => return Ok(result),
-            Err(_) if start.elapsed() < timeout => {
-                std::thread::sleep(interval);
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-fn fetch_debug_log() -> Option<String> {
-    let output = std::process::Command::new("curl")
-        .args(["-s", "--connect-timeout", "2", &format!("{}/debug-log", agent_base_url())])
-        .output()
-        .ok()?;
-    let body = String::from_utf8_lossy(&output.stdout).to_string();
-    if body.is_empty() { None } else { Some(body) }
-}
-
-fn capture_failure_screenshot(dev: Option<&Device>, test_id: &str, step: usize) -> Option<String> {
-    let path = format!("/tmp/ddb-test-fail-{}-step{}.png", test_id, step);
-    let _ = adb::shell(dev, &["screencap", "-p", "/sdcard/fail.png"]);
-    let _ = adb::adb(dev, &["pull", "/sdcard/fail.png", &path]);
-    Some(path)
-}
-
 #[cfg(test)]
 mod platform_tests {
     use super::*;
@@ -2075,19 +1707,311 @@ steps:
                 vec![s]
             })
             .collect();
-        assert_eq!(expanded.len(), 3, "expanded should have 3 steps (2 android + 1 scroll)");
-        assert_eq!(expanded[0].action.as_deref(), Some("tap"));
-        assert_eq!(expanded[2].action.as_deref(), Some("scroll_to"));
+        // navigate_to_site skips platform expansion, so 1 navigate + 1 scroll = 2
+        assert_eq!(expanded.len(), 2, "expanded should have 2 steps (navigate skips fork + 1 scroll)");
+        assert_eq!(expanded[0].action.as_deref(), Some("navigate_to_site"));
+        assert_eq!(expanded[1].action.as_deref(), Some("scroll_to"));
+    }
+
+    #[test]
+    fn test_fixture_interpolation_integer_fields() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("{{fixtures.test_user.id}}".to_string(), "158926".to_string());
+        map.insert("{{fixtures.test_site.id}}".to_string(), "31255".to_string());
+
+        let yaml = r#"
+id: TEST-1
+name: "test fixture interpolation"
+steps:
+  - action: navigate_to_user
+    user_id: "{{fixtures.test_user.id}}"
+  - action: navigate_to_site
+    site_id: "{{fixtures.test_site.id}}"
+"#;
+        let interpolated = interpolate_raw(yaml, &map);
+        assert!(interpolated.contains("user_id: 158926"), "user_id should be interpolated as bare int");
+        assert!(interpolated.contains("site_id: 31255"), "site_id should be interpolated as bare int");
+
+        // Verify it parses after interpolation
+        let raw: TestSpecRaw = serde_yaml::from_str(&interpolated).unwrap();
+        assert_eq!(raw.steps.len(), 2);
+    }
+
+    #[test]
+    fn test_fixture_interpolation_string_fields() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("{{fixtures.test_user.name}}".to_string(), "sinisa".to_string());
+        map.insert("{{fixtures.oscar.name}}".to_string(), "Oscar Kockum".to_string());
+
+        let yaml = r#"
+id: TEST-2
+name: "test string interpolation"
+steps:
+  - assert: element_exists
+    target: {content_fuzzy: "{{fixtures.test_user.name}}"}
+"#;
+        let interpolated = interpolate_raw(yaml, &map);
+        assert!(interpolated.contains("sinisa"), "name should be interpolated");
+    }
+
+    #[test]
+    fn test_flatten_fixtures() {
+        let yaml = r#"
+test_user:
+  id: 158926
+  name: "sinisa"
+oscar:
+  id: 14
+  name: "Oscar Kockum"
+"#;
+        let val: serde_json::Value = serde_yaml::from_str(yaml).unwrap();
+        let mut map = std::collections::HashMap::new();
+        flatten_fixtures("fixtures", &val, &mut map);
+
+        assert_eq!(map.get("{{fixtures.test_user.id}}"), Some(&"158926".to_string()));
+        assert_eq!(map.get("{{fixtures.test_user.name}}"), Some(&"sinisa".to_string()));
+        assert_eq!(map.get("{{fixtures.oscar.id}}"), Some(&"14".to_string()));
+    }
+
+    #[test]
+    fn test_token_jaccard() {
+        assert!(token_jaccard("questions & answers", "questions & answers") >= 0.99);
+        assert!(token_jaccard("questions", "questions & answers") > 0.3);
+        assert!(token_jaccard("xyz", "questions & answers") < 0.1);
+    }
+
+    #[test]
+    fn test_check_regressions_detects_pass_to_fail() {
+        let results = vec![TestResult {
+            id: "TC-REGRESS".to_string(),
+            name: "regression test".to_string(),
+            status: "FAIL".to_string(),
+            steps_run: 1,
+            steps_total: 2,
+            failure: Some(FailureDetail {
+                step: 2,
+                description: "element not found".to_string(),
+                screenshot: None,
+            }),
+        }];
+
+        // Create temp results dir with a previous PASS result
+        let tmp = std::env::temp_dir().join("ddb-test-regression");
+        let _ = std::fs::create_dir_all(&tmp);
+        let prev = tmp.join("TC-REGRESS-android-prev.yaml");
+        std::fs::write(&prev, "status: PASS\n").unwrap();
+
+        let regressions = check_regressions(&results, tmp.to_str().unwrap());
+        assert!(!regressions.is_empty(), "should detect PASS→FAIL regression");
+        assert!(regressions[0].contains("TC-REGRESS"));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_check_regressions_ignores_fail_to_fail() {
+        let results = vec![TestResult {
+            id: "TC-STABLE".to_string(),
+            name: "stable fail".to_string(),
+            status: "FAIL".to_string(),
+            steps_run: 1,
+            steps_total: 2,
+            failure: Some(FailureDetail {
+                step: 2,
+                description: "still broken".to_string(),
+                screenshot: None,
+            }),
+        }];
+
+        let tmp = std::env::temp_dir().join("ddb-test-stable-fail");
+        let _ = std::fs::create_dir_all(&tmp);
+        let prev = tmp.join("TC-STABLE-android-prev.yaml");
+        std::fs::write(&prev, "status: FAIL\n").unwrap();
+
+        let regressions = check_regressions(&results, tmp.to_str().unwrap());
+        assert!(regressions.is_empty(), "FAIL→FAIL should not be a regression");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_interpolate_raw_no_fixtures() {
+        let map = std::collections::HashMap::new();
+        let input = "user_id: 31255\nname: literal";
+        let result = interpolate_raw(input, &map);
+        assert_eq!(result, input, "no-op when no fixtures match");
+    }
+
+    #[test]
+    fn test_extract_yaml_int_after_stops_at_nonmatching_line() {
+        // Bug: AND logic means non-key lines with ": " don't break the loop
+        // Expected: after "tap_target:", only read indented lines until section ends
+        let chunk = "tap_target:\n  x: 100\n  y: 200\nother_section:\n  x: 999";
+        let x = extract_yaml_int_after(chunk, "tap_target:", "x: ");
+        assert_eq!(x, Some(100));
+        let y = extract_yaml_int_after(chunk, "tap_target:", "y: ");
+        assert_eq!(y, Some(200));
+        // This tests the bug: should NOT find x: 999 from other_section
+        // when searching in tap_target
+        let chunk2 = "tap_target:\n  w: 50\nz: 300\nx: 999";
+        let x2 = extract_yaml_int_after(chunk2, "tap_target:", "x: ");
+        assert_eq!(x2, None, "should not find x from outside tap_target section");
+    }
+
+    #[test]
+    fn test_extract_ui_bounds_invalid_xml_returns_none() {
+        let xml = r#"<node bounds="garbage"/>"#;
+        let result = extract_ui_bounds(xml, "someId");
+        assert_eq!(result, None, "invalid bounds should return None");
+
+        let xml2 = r#"<node resource-id="id/someId" bounds="[abc,def][ghi,jkl]"/>"#;
+        let result2 = extract_ui_bounds(xml2, "someId");
+        assert_eq!(result2, None, "invalid numeric bounds should return None");
+    }
+
+    #[test]
+    fn test_extract_ui_bounds_valid_xml_returns_center() {
+        let xml = r#"<node resource-id="id/submitButton" bounds="[0,0][100,200]" text="Submit"/>"#;
+        let result = extract_ui_bounds(xml, "submitButton");
+        assert_eq!(result, Some((50, 100)), "center of [0,0][100,200] should be (50,100)");
+    }
+
+    #[test]
+    fn test_extract_ui_bounds_fuzzy_case_insensitive() {
+        let xml = r#"<node text="Questions &amp; Answers" bounds="[100,200][300,400]"/>"#;
+        let result = extract_ui_bounds_fuzzy(xml, "questions");
+        assert_eq!(result, Some((200, 300)), "center of [100,200][300,400]");
+    }
+
+    #[test]
+    fn test_adb_subprocess_killed_at_30s() {
+        // Test that adb.rs process-level kill works
+        // We can't easily test ADB directly, but we can test the timing pattern
+        let start = std::time::Instant::now();
+        let result = crate::adb::adb(None, &["shell", "sleep", "60"]);
+        let elapsed = start.elapsed();
+        // Should fail (device not connected) OR timeout at ~30s
+        // Either way, it should not take 60s
+        assert!(elapsed.as_secs() < 45, "ADB call should not exceed 45s (30s timeout + margin)");
+        assert!(result.is_err(), "should fail (no device or timeout)");
+    }
+
+    #[test]
+    fn test_jaccard_threshold_boundary() {
+        // "questions answers" vs "questions & answers" — 2/3 overlap
+        let score = token_jaccard("questions answers", "questions & answers");
+        assert!(score > 0.5 && score < 0.8, "partial overlap score: {score}");
+
+        // At threshold 0.59 — should match
+        assert!(score >= 0.59, "should match at 0.59 threshold");
+        // At threshold 0.61 — depends on exact score
+        let exact = token_jaccard("questions answers", "questions & answers");
+        // 2 shared (questions, answers) / 3 union (questions, &, answers) = 0.667
+        assert!((exact - 0.667).abs() < 0.01, "expected ~0.667, got {exact}");
+    }
+
+    #[test]
+    fn test_fixture_interpolation_missing_key_passthrough() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("{{fixtures.test_user.name}}".to_string(), "sinisa".to_string());
+
+        let input = "name: {{fixtures.nonexistent.field}}";
+        let result = interpolate_raw(input, &map);
+        assert_eq!(result, input, "missing key should pass through unchanged");
+    }
+
+    #[test]
+    fn test_fixture_precedence_api_over_file() {
+        let mut file_fixtures = std::collections::HashMap::new();
+        file_fixtures.insert("{{fixtures.key}}".to_string(), "file_value".to_string());
+        let mut ctx = RunContext::new(file_fixtures);
+        ctx.add_api_response("api_result", serde_json::json!({"key": "api_value"}));
+
+        let file_result = ctx.interpolate("{{fixtures.key}}");
+        assert_eq!(file_result, "file_value");
+
+        let api_result = ctx.interpolate("{{api_result.key}}");
+        assert_eq!(api_result, "api_value");
     }
 }
 
-fn switchboard_notify(msg: &str) {
-    let handle = std::env::var("SWITCHBOARD_NAME").unwrap_or_default();
-    let channel = std::env::var("SWITCHBOARD_CHANNEL").unwrap_or_default();
-    if handle.is_empty() || channel.is_empty() { return; }
-    let _ = std::process::Command::new("switchboard")
-        .env("SWITCHBOARD_NAME", &handle)
-        .env("SWITCHBOARD_CHANNEL", &channel)
-        .args(["send", msg])
-        .output();
+fn get_affected_tcs(base_branch: &str, tc_map_path: Option<&str>, tests_dir: &str) -> Result<Vec<String>, String> {
+    let diff = std::process::Command::new("git")
+        .args(["diff", "--name-only", base_branch])
+        .output()
+        .map_err(|e| format!("git diff: {e}"))?;
+    let changed_files: Vec<String> = String::from_utf8_lossy(&diff.stdout)
+        .lines().map(|l| l.to_string()).collect();
+    if changed_files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // If a TC map file exists, use it to find affected TCs
+    if let Some(map_path) = tc_map_path {
+        if let Ok(content) = std::fs::read_to_string(map_path) {
+            if let Ok(map) = serde_yaml::from_str::<std::collections::HashMap<String, Vec<String>>>(&content) {
+                let mut affected = std::collections::HashSet::new();
+                for file in &changed_files {
+                    for (pattern, tcs) in &map {
+                        if file.contains(pattern) {
+                            for tc in tcs {
+                                let tc_path = format!("{}/{}", tests_dir, tc);
+                                if std::path::Path::new(&tc_path).exists() {
+                                    affected.insert(tc_path);
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(affected.into_iter().collect());
+            }
+        }
+    }
+
+    // Fallback: if any app source changed, run all TCs in tests_dir
+    let has_app_changes = changed_files.iter().any(|f|
+        f.ends_with(".kt") || f.ends_with(".java") || f.ends_with(".xml") || f.ends_with(".swift")
+    );
+    if has_app_changes {
+        let mut tcs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(tests_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "yaml").unwrap_or(false) {
+                    if let Some(s) = path.to_str() {
+                        tcs.push(s.to_string());
+                    }
+                }
+            }
+        }
+        return Ok(tcs);
+    }
+
+    Ok(Vec::new())
 }
+
+fn check_regressions(results: &[TestResult], results_dir: &str) -> Vec<String> {
+    let mut regressions = Vec::new();
+    for result in results {
+        if result.status != "FAIL" { continue; }
+        // Check if this TC previously passed by looking for result files
+        let pattern = format!("{}/{}-", results_dir, result.id);
+        if let Ok(entries) = std::fs::read_dir(results_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&format!("{}-", result.id)) && name.ends_with(".yaml") {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if content.contains("status: PASS") || content.contains("\"status\":\"PASS\"") {
+                            regressions.push(format!("{}: was PASS, now FAIL", result.id));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    regressions
+}
+
+
