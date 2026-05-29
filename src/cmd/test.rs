@@ -754,13 +754,9 @@ fn ensure_logged_in(dev: Option<&Device>, _pkg: &str) {
 }
 
 fn grant_all_permissions(dev: Option<&Device>, pkg: &str) {
-    for perm in &[
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.POST_NOTIFICATIONS",
-    ] {
-        let _ = adb::shell(dev, &["pm", "grant", pkg, perm]);
-    }
+    let perms = "pm grant PKG android.permission.ACCESS_FINE_LOCATION; pm grant PKG android.permission.ACCESS_COARSE_LOCATION; pm grant PKG android.permission.POST_NOTIFICATIONS";
+    let cmd = perms.replace("PKG", pkg);
+    let _ = adb::shell(dev, &[&cmd]);
 }
 
 fn dismiss_permission_dialog(dev: Option<&Device>) {
@@ -909,33 +905,28 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     if let Some(ref pre) = spec.precondition {
         if let Some(ref activity) = pre.activity {
             let mut precondition_ok = false;
-            for retry in 0..3 {
-                if let Ok(current) = get_current_activity(dev) {
-                    if current.contains(activity) {
-                        precondition_ok = true;
-                        break;
-                    }
-                    if current.contains("GrantPermissions") || current.contains("Permission") {
-                        dismiss_permission_dialog(dev);
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        continue;
-                    }
-                    if retry == 2 {
-                        return (TestResult {
-                            id: spec.id.clone(),
-                            name: spec.name.clone(),
-                            status: "FAIL".to_string(),
-                            steps_run: 0,
-                            steps_total: spec.steps.len(),
-                            failure: Some(FailureDetail {
-                                step: 0,
-                                description: format!("precondition failed: expected activity {activity}, got {current}"),
-                                screenshot: None,
-                            }),
-                        }, step_logs);
-                    }
+            if let Ok(current) = get_current_activity(dev) {
+                if current.contains(activity) {
+                    precondition_ok = true;
+                } else if current.contains("GrantPermissions") || current.contains("Permission") {
+                    dismiss_permission_dialog(dev);
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    precondition_ok = get_current_activity(dev).map(|c| c.contains(activity)).unwrap_or(false);
                 }
-                std::thread::sleep(std::time::Duration::from_secs(2));
+                if !precondition_ok {
+                    return (TestResult {
+                        id: spec.id.clone(),
+                        name: spec.name.clone(),
+                        status: "FAIL".to_string(),
+                        steps_run: 0,
+                        steps_total: spec.steps.len(),
+                        failure: Some(FailureDetail {
+                            step: 0,
+                            description: format!("precondition failed: expected activity {activity}, got {current}"),
+                            screenshot: None,
+                        }),
+                    }, step_logs);
+                }
             }
         }
         if let Some(ref scroll_target) = pre.scroll_to {
