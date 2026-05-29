@@ -1175,7 +1175,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "tap" => {
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("tap: no target")?;
-            let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
+            let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
             runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
             Ok(desc)
         }
@@ -1183,7 +1183,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             dismiss_keyboard_if_visible(dev);
             let text = action.text.as_ref().ok_or("type: no text")?;
             if let Some(ref target) = action.target {
-                let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
+                let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
                 runner.adb_shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
@@ -1198,7 +1198,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 runner.adb_shell(dev, &["am", "broadcast", "-a", "clipper.set", "-e", "text", text])?;
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 let (x, y) = if let Some(ref target) = action.target {
-                    let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
+                    let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
                     (x, y)
                 } else {
                     (540, 300)
@@ -1264,7 +1264,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "long_press" => {
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("long_press: no target")?;
-            let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
+            let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
             runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
             Ok(desc)
         }
@@ -1446,13 +1446,13 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
 
             // Idle barrier: ask agent to wait for idle, then query
             if let Some(target) = target {
-                if let Ok((_, _, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5)) {
+                if let Ok((_, _, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner)) {
                     return Ok(desc);
                 }
             }
 
             // Quick check: one pass through all sources
-            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
+            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text, Some(runner)) {
                 return Ok(result);
             }
 
@@ -1460,7 +1460,7 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
             let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout.min(15));
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
-                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
+                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text, Some(runner)) {
                     return Ok(result);
                 }
                 if std::time::Instant::now() > poll_deadline {

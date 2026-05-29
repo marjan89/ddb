@@ -1,5 +1,6 @@
 use crate::adb;
 use crate::registry::Device;
+use super::test_timeout::StepRunner;
 
 #[derive(serde::Deserialize, Clone)]
 pub struct Target {
@@ -144,8 +145,13 @@ pub fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, 
     Err(format!("element not found: {desc}"))
 }
 
-pub fn check_element_sources(dev: Option<&Device>, fuzzy: Option<&str>, id: Option<&str>, expected_text: Option<&str>) -> Option<String> {
-    let ui_xml = fetch_ui_dump(dev);
+pub fn check_element_sources(dev: Option<&Device>, fuzzy: Option<&str>, id: Option<&str>, expected_text: Option<&str>, runner: Option<&StepRunner>) -> Option<String> {
+    let ui_xml = if let Some(r) = runner {
+        let _ = r.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+        r.adb_shell(dev, &["cat", "/sdcard/ui.xml"]).unwrap_or_default()
+    } else {
+        fetch_ui_dump(dev)
+    };
     let ui_lower = ui_xml.to_lowercase();
     let found_ui = fuzzy.map(|f| ui_lower.contains(&f.to_lowercase())).unwrap_or(false)
         || id.map(|i| ui_xml.contains(i)).unwrap_or(false)
@@ -153,7 +159,12 @@ pub fn check_element_sources(dev: Option<&Device>, fuzzy: Option<&str>, id: Opti
     if found_ui {
         return Some("found in uiautomator".into());
     }
-    if let Ok(a11y_dump) = adb::shell(dev, &["dumpsys", "activity", "top"]) {
+    let a11y_result = if let Some(r) = runner {
+        r.adb_shell(dev, &["dumpsys", "activity", "top"])
+    } else {
+        adb::shell(dev, &["dumpsys", "activity", "top"])
+    };
+    if let Ok(a11y_dump) = a11y_result {
         let a11y_lower = a11y_dump.to_lowercase();
         if fuzzy.map(|f| a11y_lower.contains(&f.to_lowercase())).unwrap_or(false) {
             return Some("found in activity dump".into());
@@ -395,6 +406,7 @@ pub fn find_element_unified(
     dev: Option<&Device>,
     target: &Target,
     sources: &[ElementSource],
+    runner: Option<&StepRunner>,
 ) -> Result<(i32, i32, String), String> {
     if let (Some(x), Some(y)) = (target.x, target.y) {
         return Ok((x, y, format!("position ({x}, {y})")));
@@ -412,7 +424,12 @@ pub fn find_element_unified(
                 }
             }
             ElementSource::Semantic => {
-                if let Ok(yaml) = fetch_agent_yaml(dev) {
+                let yaml_result = if let Some(r) = runner {
+                    r.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None)
+                } else {
+                    fetch_agent_yaml(dev)
+                };
+                if let Ok(yaml) = yaml_result {
                     if let Some(result) = search_semantic_yaml(
                         &yaml, target, search_id, search_text, search_fuzzy,
                     ) {
@@ -421,7 +438,12 @@ pub fn find_element_unified(
                 }
             }
             ElementSource::UIAutomator => {
-                let ui_xml = fetch_ui_dump(dev);
+                let ui_xml = if let Some(r) = runner {
+                    let _ = r.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+                    r.adb_shell(dev, &["cat", "/sdcard/ui.xml"]).unwrap_or_default()
+                } else {
+                    fetch_ui_dump(dev)
+                };
                 if let Some(result) = search_uiautomator(
                     &ui_xml, search_id, search_text, search_fuzzy,
                 ) {
@@ -429,7 +451,12 @@ pub fn find_element_unified(
                 }
             }
             ElementSource::Activity => {
-                if let Ok(dump) = adb::shell(dev, &["dumpsys", "activity", "top"]) {
+                let dump_result = if let Some(r) = runner {
+                    r.adb_shell(dev, &["dumpsys", "activity", "top"])
+                } else {
+                    adb::shell(dev, &["dumpsys", "activity", "top"])
+                };
+                if let Ok(dump) = dump_result {
                     let lower = dump.to_lowercase();
                     if !search_fuzzy.is_empty() && lower.contains(&search_fuzzy.to_lowercase()) {
                         return Ok((540, 1200, format!("activity dump: {search_fuzzy}")));
