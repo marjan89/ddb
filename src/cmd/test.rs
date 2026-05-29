@@ -586,8 +586,12 @@ fn detect_results_dir(spec_path: &str) -> Option<String> {
     p.parent().map(|d| d.join("results").to_string_lossy().to_string())
 }
 
-fn set_animations(enabled: bool, runner: &StepRunner) {
-    let _ = runner.curl_with_deadline(&format!("{}/animations?enabled={enabled}", agent_base_url()), "POST", None);
+fn set_animations(enabled: bool, _runner: &StepRunner) {
+    let short = StepRunner::new(
+        std::time::Instant::now() + std::time::Duration::from_secs(5),
+        PhaseBudgets { pre_idle_s: 5, execute_s: 5, post_idle_s: 5 },
+    );
+    let _ = short.curl_with_deadline(&format!("{}/animations?enabled={enabled}", agent_base_url()), "POST", None);
 }
 
 fn now_iso() -> String {
