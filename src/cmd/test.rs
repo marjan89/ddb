@@ -15,7 +15,7 @@ use super::test_element::{
 use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
 use super::test_observability::{capture_failure_screenshot, fetch_debug_log};
 use super::test_log::Logger;
-use super::test_timeout::{TimeoutManager, TimeoutLevel};
+use super::test_timeout::{TimeoutManager, TimeoutLevel, StepRunner, PhaseBudgets, StepPhase};
 
 #[derive(serde::Serialize)]
 struct RunLog {
@@ -1019,9 +1019,13 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         };
         logger.step_start(i + 1, &step_desc_log);
 
+        let step_deadline = std::time::Instant::now() + tm.step_remaining();
+        let mut runner = StepRunner::new(step_deadline, PhaseBudgets::default());
+        runner.advance(StepPhase::Execute);
+
         let result = match step {
-            Step::Action(a) => execute_action(dev, a, &mut ctx),
-            Step::Assert(a) => execute_assert(dev, a, tm.step_remaining_secs().max(5), &ctx),
+            Step::Action(a) => execute_action(dev, a, &mut ctx, &runner),
+            Step::Assert(a) => execute_assert(dev, a, tm.step_remaining_secs().max(5), &ctx, &runner),
         };
         // Retry once on failure with precondition check (skip if TC expired)
         let result = if result.is_err() && tm.check().is_ok() {
@@ -1038,7 +1042,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 if let Ok(current) = get_current_activity(dev) {
                     if !current.contains(pkg) {
                         eprintln!("  → app not foreground ({}), relaunching...", current.trim());
-                        let _ = adb::shell(dev, &[
+                        let _ = runner.adb_shell(dev, &[
                             "am", "start", "-a", "android.intent.action.MAIN",
                             "-c", "android.intent.category.LAUNCHER",
                             "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
@@ -1051,8 +1055,8 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 eprintln!("  step {} retrying...", i + 1);
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 match step {
-                    Step::Action(a) => execute_action(dev, a, &mut ctx),
-                    Step::Assert(a) => execute_assert(dev, a, tm.step_remaining_secs().max(5), &ctx),
+                    Step::Action(a) => execute_action(dev, a, &mut ctx, &runner),
+                    Step::Assert(a) => execute_assert(dev, a, tm.step_remaining_secs().max(5), &ctx, &runner),
                 }
             }
         } else {
@@ -1166,51 +1170,46 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     }, step_logs)
 }
 
-fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContext) -> Result<String, String> {
+fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContext, runner: &StepRunner) -> Result<String, String> {
     match action.action.as_str() {
         "tap" => {
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("tap: no target")?;
             let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
-            adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
+            runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
             Ok(desc)
         }
         "type" => {
             dismiss_keyboard_if_visible(dev);
             let text = action.text.as_ref().ok_or("type: no text")?;
-            // Auto-focus: if a target is specified, tap it first; otherwise find focused field
             if let Some(ref target) = action.target {
                 let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
-                adb::shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
+                runner.adb_shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
                 ensure_input_focus(dev);
             }
-            // Clear existing field content: Ctrl+A (select all) + Delete
-            adb::shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
-            adb::shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
-            adb::shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
+            runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
+            runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
+            runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
             std::thread::sleep(std::time::Duration::from_millis(100));
             let has_non_ascii = text.chars().any(|c| !c.is_ascii());
             if has_non_ascii {
-                // Clipboard paste for non-ASCII text (ö, å, ä, etc.)
-                adb::shell(dev, &["am", "broadcast", "-a", "clipper.set", "-e", "text", text])?;
+                runner.adb_shell(dev, &["am", "broadcast", "-a", "clipper.set", "-e", "text", text])?;
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                // Long press to trigger paste menu
                 let (x, y) = if let Some(ref target) = action.target {
                     let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
                     (x, y)
                 } else {
-                    (540, 300) // fallback center-ish
+                    (540, 300)
                 };
-                adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
+                runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
                 std::thread::sleep(std::time::Duration::from_millis(500));
-                // Tap paste button
-                adb::shell(dev, &["input", "keyevent", "279"])?; // KEYCODE_PASTE
+                runner.adb_shell(dev, &["input", "keyevent", "279"])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
                 let escaped = text.replace(' ', "%s");
-                adb::shell(dev, &["input", "text", &escaped])?;
+                runner.adb_shell(dev, &["input", "text", &escaped])?;
             }
             Ok(format!("typed \"{}\"", text))
         }
@@ -1237,11 +1236,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 .or_else(|| ctx.get_var("site_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.get_var("site_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
                 .ok_or("navigate_to_site: no site_id")?;
             let base = agent_base_url();
-            let out = std::process::Command::new("curl")
-                .args(["-s", "--max-time", "10", "-X", "POST", &format!("{base}/navigate/site/{site_id}")])
-                .output()
-                .map_err(|e| format!("navigate_to_site curl: {e}"))?;
-            let body = String::from_utf8_lossy(&out.stdout);
+            let body = runner.curl_with_deadline(&format!("{base}/navigate/site/{site_id}"), "POST", None)?;
             if body.contains("\"navigated\"") {
                 wait_for_idle_after_navigate(dev);
                 Ok(format!("navigated to site {site_id}"))
@@ -1255,11 +1250,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 .or_else(|| ctx.get_var("user_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.get_var("user_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
                 .ok_or("navigate_to_user: no user_id")?;
             let base = agent_base_url();
-            let out = std::process::Command::new("curl")
-                .args(["-s", "--max-time", "10", "-X", "POST", &format!("{base}/navigate/user/{user_id}")])
-                .output()
-                .map_err(|e| format!("navigate_to_user curl: {e}"))?;
-            let body = String::from_utf8_lossy(&out.stdout);
+            let body = runner.curl_with_deadline(&format!("{base}/navigate/user/{user_id}"), "POST", None)?;
             if body.contains("\"navigated\"") {
                 wait_for_idle_after_navigate(dev);
                 Ok(format!("navigated to user {user_id}"))
@@ -1274,15 +1265,15 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             dismiss_keyboard_if_visible(dev);
             let target = action.target.as_ref().ok_or("long_press: no target")?;
             let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5))?;
-            adb::shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
+            runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
             Ok(desc)
         }
         "back" => {
-            adb::shell(dev, &["input", "keyevent", "4"])?;
+            runner.adb_shell(dev, &["input", "keyevent", "4"])?;
             Ok(String::new())
         }
         "home" => {
-            adb::shell(dev, &["input", "keyevent", "3"])?;
+            runner.adb_shell(dev, &["input", "keyevent", "3"])?;
             Ok(String::new())
         }
         "wait" => {
@@ -1404,12 +1395,13 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 curl_args.push(body_str);
             }
 
+            curl_args.push("--max-time".to_string());
+            curl_args.push(runner.time_remaining_secs().to_string());
             curl_args.push(full_url.clone());
 
-            let output = std::process::Command::new("curl")
-                .args(&curl_args)
-                .output()
-                .map_err(|e| format!("api_call curl: {e}"))?;
+            let mut cmd = std::process::Command::new("curl");
+            cmd.args(&curl_args);
+            let output = runner.run_with_deadline(&mut cmd)?;
 
             let raw = String::from_utf8_lossy(&output.stdout).to_string();
             let (body_str, status_str) = raw.rsplit_once('\n').unwrap_or((&raw, "0"));
@@ -1431,7 +1423,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
     }
 }
 
-fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: &RunContext) -> Result<String, String> {
+fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: &RunContext, runner: &StepRunner) -> Result<String, String> {
     match assert.assert.as_str() {
         "activity" => {
             let expected = assert.expected.as_ref().ok_or("assert activity: no expected")?;

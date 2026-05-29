@@ -99,6 +99,9 @@ impl Drop for SubprocessGuard {
     }
 }
 
+use crate::adb;
+use crate::registry::Device;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StepPhase {
     PreIdle,
@@ -183,6 +186,27 @@ impl StepRunner {
             }
         }
         Ok(output)
+    }
+
+    pub fn adb_shell(&self, dev: Option<&Device>, args: &[&str]) -> Result<String, String> {
+        if self.expired() {
+            return Err("step deadline exceeded before adb".into());
+        }
+        let timeout = self.time_remaining();
+        let mut full_args = vec!["shell"];
+        full_args.extend_from_slice(args);
+        let mut cmd = Command::new("adb");
+        if let Some(d) = dev {
+            cmd.arg("-s").arg(d.transport_id());
+        }
+        cmd.args(&full_args);
+        let output = self.run_with_deadline(&mut cmd)?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("adb shell failed: {stderr}"));
+        }
+        Ok(stdout)
     }
 
     pub fn curl_with_deadline(&self, url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
