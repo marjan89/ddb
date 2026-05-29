@@ -385,7 +385,7 @@ pub fn idle_barrier_sources(timeout_s: u64) -> Vec<ElementSource> {
     vec![
         ElementSource::IdleBarrier {
             timeout_s,
-            resources: vec!["ui_thread".into(), "network".into(), "scroll".into(), "layout".into(), "dialog".into()],
+            resources: vec!["ui_thread".into(), "network".into(), "scroll".into(), "layout".into()],
         },
         ElementSource::Semantic,
         ElementSource::UIAutomator,
