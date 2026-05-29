@@ -179,6 +179,10 @@ struct StepRaw {
     headers: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
     save_as: Option<String>,
+    #[serde(default)]
+    wait_for: Option<Vec<String>>,
+    #[serde(default)]
+    wait_timeout: Option<u64>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -212,6 +216,8 @@ struct ActionStep {
     body: Option<serde_json::Value>,
     headers: Option<std::collections::HashMap<String, String>>,
     save_as: Option<String>,
+    wait_for: Option<Vec<String>>,
+    wait_timeout: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -243,6 +249,8 @@ impl StepRaw {
                 body: self.body,
                 headers: self.headers,
                 save_as: self.save_as,
+                wait_for: self.wait_for,
+                wait_timeout: self.wait_timeout,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -1151,10 +1159,27 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             }
         }
 
-        if matches!(step, Step::Action(_)) {
-            eprintln!("  >>> inter-step wait_idle entering");
-            wait_idle(dev, 3);
-            eprintln!("  >>> inter-step wait_idle done");
+        if let Step::Action(a) = step {
+            if let Some(ref resources) = a.wait_for {
+                let chain_timeout = a.wait_timeout.unwrap_or(10);
+                let chain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(chain_timeout);
+                let base = agent_base_url();
+                for resource in resources {
+                    let remaining = chain_deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() { break; }
+                    let body = serde_json::json!({
+                        "idle_resources": [resource],
+                        "timeout": remaining.as_secs().max(1),
+                    });
+                    let _ = runner.curl_with_deadline(
+                        &format!("{base}/query-when-idle"),
+                        "POST",
+                        Some(&body.to_string()),
+                    );
+                }
+            } else {
+                wait_idle(dev, 3);
+            }
         }
     }
 
