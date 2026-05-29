@@ -426,11 +426,23 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     let mut fail = 0;
 
     for spec_path in &specs {
-        let raw_content = std::fs::read_to_string(spec_path)
-            .map_err(|e| format!("read {spec_path}: {e}"))?;
+        let raw_content = match std::fs::read_to_string(spec_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("  SKIP  {} — read error: {}", spec_path, e);
+                fail += 1;
+                continue;
+            }
+        };
         let content = interpolate_raw(&raw_content, &fixtures_map);
-        let raw: TestSpecRaw = serde_yaml::from_str(&content)
-            .map_err(|e| format!("parse {spec_path}: {e}"))?;
+        let raw: TestSpecRaw = match serde_yaml::from_str(&content) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("  SKIP  {} — parse error: {}", spec_path, e);
+                fail += 1;
+                continue;
+            }
+        };
         let expanded: Vec<StepRaw> = raw.steps.into_iter()
             .flat_map(|s| {
                 let action_name = s.action.as_deref().unwrap_or("");
@@ -445,10 +457,17 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 vec![s]
             })
             .collect();
-        let steps: Vec<Step> = expanded.into_iter()
+        let steps: Vec<Step> = match expanded.into_iter()
             .map(|s| s.into_step())
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("invalid step in {spec_path}: {e}"))?;
+        {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("  SKIP  {} — invalid step: {}", spec_path, e);
+                fail += 1;
+                continue;
+            }
+        };
         let spec = TestSpec {
             id: raw.id,
             name: raw.name,
