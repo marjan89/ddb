@@ -1135,7 +1135,8 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         }
 
         if matches!(step, Step::Action(_)) {
-            wait_idle(dev, timeout);
+            eprintln!("  inter-step idle wait (3s cap)...");
+            wait_idle(dev, 3);
         }
     }
 
