@@ -1055,6 +1055,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, true);
                 let elapsed = tc_start.elapsed().as_secs_f32();
                 eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
+                let _ = std::io::Write::flush(&mut std::io::stderr());
 
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
@@ -1130,7 +1131,10 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 
         if matches!(step, Step::Action(_)) {
             eprintln!("  inter-step idle wait (3s cap)...");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
             wait_idle(dev, 3);
+            eprintln!("  inter-step idle done");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
         }
     }
 
