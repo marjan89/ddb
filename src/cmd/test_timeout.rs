@@ -1,3 +1,4 @@
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 pub enum TimeoutLevel {
@@ -98,6 +99,108 @@ impl Drop for SubprocessGuard {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StepPhase {
+    PreIdle,
+    Execute,
+    PostIdle,
+}
+
+pub struct PhaseBudgets {
+    pub pre_idle_s: u64,
+    pub execute_s: u64,
+    pub post_idle_s: u64,
+}
+
+impl Default for PhaseBudgets {
+    fn default() -> Self {
+        Self { pre_idle_s: 3, execute_s: 30, post_idle_s: 3 }
+    }
+}
+
+pub struct StepRunner {
+    deadline: Instant,
+    phase: StepPhase,
+    budgets: PhaseBudgets,
+    phase_deadline: Instant,
+}
+
+impl StepRunner {
+    pub fn new(step_deadline: Instant, budgets: PhaseBudgets) -> Self {
+        let now = Instant::now();
+        let phase_end = now + Duration::from_secs(budgets.pre_idle_s);
+        Self {
+            deadline: step_deadline,
+            phase: StepPhase::PreIdle,
+            budgets,
+            phase_deadline: phase_end.min(step_deadline),
+        }
+    }
+
+    pub fn advance(&mut self, phase: StepPhase) {
+        self.phase = phase;
+        let budget = match phase {
+            StepPhase::PreIdle => self.budgets.pre_idle_s,
+            StepPhase::Execute => self.budgets.execute_s,
+            StepPhase::PostIdle => self.budgets.post_idle_s,
+        };
+        let phase_end = Instant::now() + Duration::from_secs(budget);
+        self.phase_deadline = phase_end.min(self.deadline);
+    }
+
+    pub fn expired(&self) -> bool {
+        Instant::now() > self.deadline
+    }
+
+    pub fn time_remaining(&self) -> Duration {
+        let step_rem = self.deadline.saturating_duration_since(Instant::now());
+        let phase_rem = self.phase_deadline.saturating_duration_since(Instant::now());
+        step_rem.min(phase_rem)
+    }
+
+    pub fn time_remaining_secs(&self) -> u64 {
+        self.time_remaining().as_secs().max(1)
+    }
+
+    pub fn phase(&self) -> StepPhase {
+        self.phase
+    }
+
+    pub fn run_with_deadline(&self, cmd: &mut Command) -> Result<Output, String> {
+        let timeout = self.time_remaining();
+        if timeout.is_zero() {
+            return Err("step deadline exceeded before subprocess".into());
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let _guard = SubprocessGuard::arm(child.id(), timeout);
+        let output = child.wait_with_output().map_err(|e| format!("wait failed: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if output.status.signal() == Some(9) {
+                return Err(format!("subprocess killed (deadline {}s)", timeout.as_secs()));
+            }
+        }
+        Ok(output)
+    }
+
+    pub fn curl_with_deadline(&self, url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
+        let timeout_s = self.time_remaining_secs();
+        let mut cmd = Command::new("curl");
+        cmd.args(["-s", "--connect-timeout", "2", "--max-time", &timeout_s.to_string()]);
+        if method == "POST" {
+            cmd.args(["-X", "POST", "-H", "Content-Type: application/json"]);
+            if let Some(b) = body {
+                cmd.args(["-d", b]);
+            }
+        }
+        cmd.arg(url);
+        let output = self.run_with_deadline(&mut cmd)?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +225,53 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         tm.reset_step();
         assert!(tm.step_remaining().as_secs() >= 4);
+    }
+
+    #[test]
+    fn test_step_runner_phases() {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut runner = StepRunner::new(deadline, PhaseBudgets::default());
+        assert_eq!(runner.phase(), StepPhase::PreIdle);
+        assert!(!runner.expired());
+        assert!(runner.time_remaining_secs() <= 3);
+
+        runner.advance(StepPhase::Execute);
+        assert_eq!(runner.phase(), StepPhase::Execute);
+        assert!(runner.time_remaining_secs() <= 30);
+
+        runner.advance(StepPhase::PostIdle);
+        assert_eq!(runner.phase(), StepPhase::PostIdle);
+        assert!(runner.time_remaining_secs() <= 3);
+    }
+
+    #[test]
+    fn test_step_runner_deadline_caps_phase() {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut runner = StepRunner::new(deadline, PhaseBudgets { pre_idle_s: 3, execute_s: 30, post_idle_s: 3 });
+        assert!(runner.time_remaining_secs() <= 2);
+        runner.advance(StepPhase::Execute);
+        assert!(runner.time_remaining_secs() <= 2);
+    }
+
+    #[test]
+    fn test_step_runner_run_with_deadline() {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let runner = StepRunner::new(deadline, PhaseBudgets::default());
+        let mut cmd = Command::new("echo");
+        cmd.arg("hello");
+        let output = runner.run_with_deadline(&mut cmd).unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("hello"));
+    }
+
+    #[test]
+    fn test_step_runner_kills_on_deadline() {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let runner = StepRunner::new(deadline, PhaseBudgets { pre_idle_s: 1, execute_s: 1, post_idle_s: 1 });
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let result = runner.run_with_deadline(&mut cmd);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("killed"));
     }
 
     #[test]
