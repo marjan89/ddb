@@ -1286,13 +1286,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             Ok("idle".into())
         }
         "wait_event" => {
-            let event_type = action.text.as_deref().unwrap_or("activity");
             let timeout = action.seconds.unwrap_or(10);
-            if wait_for_event(dev, event_type, timeout) {
-                Ok(format!("event: {event_type}"))
-            } else {
-                Err(format!("timeout waiting for event: {event_type}"))
-            }
+            wait_idle(dev, timeout);
+            Ok("idle".into())
         }
         "capture" => {
             let output_raw = action.output.as_ref().ok_or("capture: no output path")?;
@@ -1458,37 +1454,18 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
                 return Ok(result);
             }
 
-            // SSE-driven wait: subscribe to /stream, re-check on each event
-            let base = agent_base_url();
-            let sse_timeout = timeout.min(10);
-            let child = std::process::Command::new("curl")
-                .args(["-sN", "--max-time", &sse_timeout.to_string(), &format!("{base}/stream")])
-                .stdout(std::process::Stdio::piped())
-                .spawn();
-            if let Ok(mut child) = child {
-                if let Some(stdout) = child.stdout.take() {
-                    let reader = std::io::BufRead::lines(std::io::BufReader::new(stdout));
-                    for line in reader {
-                        if let Ok(line) = line {
-                            if line.starts_with("event:") || line.starts_with("data:") {
-                                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
-                                    let _ = child.kill();
-                                    let _ = child.wait();
-                                    return Ok(result);
-                                }
-                            }
-                        }
-                    }
+            // Poll-based wait: check element sources every 500ms until timeout
+            let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout.min(15));
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
+                    return Ok(result);
                 }
-                let _ = child.kill();
-                let _ = child.wait();
+                if std::time::Instant::now() > poll_deadline {
+                    break;
+                }
             }
-
-            // Final check after SSE timeout
-            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text) {
-                return Ok(result);
-            }
-            return Err(format!("element not found (SSE {}s): {:?}", sse_timeout, fuzzy.or(id)));
+            return Err(format!("element not found ({}s): {:?}", timeout, fuzzy.or(id)));
         }
 
         "element_not_exists" => {
@@ -1597,31 +1574,6 @@ fn wait_idle(_dev: Option<&Device>, timeout: u64) {
     }
 }
 
-fn wait_for_event(_dev: Option<&Device>, event_type: &str, timeout: u64) -> bool {
-    let base = agent_base_url();
-    let timeout_str = timeout.to_string();
-    let child = std::process::Command::new("curl")
-        .args(["-sN", "--max-time", &timeout_str, &format!("{base}/stream")])
-        .stdout(std::process::Stdio::piped())
-        .spawn();
-    if let Ok(mut child) = child {
-        if let Some(stdout) = child.stdout.take() {
-            let reader = std::io::BufRead::lines(std::io::BufReader::new(stdout));
-            for line in reader {
-                if let Ok(line) = line {
-                    if line.starts_with("event:") && line.contains(event_type) {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return true;
-                    }
-                }
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-    false
-}
 
 fn check_idle(dev: Option<&Device>) -> Result<bool, String> {
     let resp = std::process::Command::new("curl")
