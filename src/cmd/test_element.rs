@@ -358,7 +358,7 @@ pub fn scroll_direction(dev: Option<&Device>, dir: &str) -> Result<(), String> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ElementSource {
-    IdleBarrier { timeout_s: u64 },
+    IdleBarrier { timeout_s: u64, resources: Vec<String> },
     Semantic,
     UIAutomator,
     Activity,
@@ -371,7 +371,21 @@ pub const DEFAULT_SOURCES: &[ElementSource] = &[
 
 pub fn idle_barrier_sources(timeout_s: u64) -> Vec<ElementSource> {
     vec![
-        ElementSource::IdleBarrier { timeout_s },
+        ElementSource::IdleBarrier {
+            timeout_s,
+            resources: vec!["ui_thread".into(), "network".into(), "scroll".into(), "layout".into()],
+        },
+        ElementSource::Semantic,
+        ElementSource::UIAutomator,
+    ]
+}
+
+pub fn idle_barrier_network_only(timeout_s: u64) -> Vec<ElementSource> {
+    vec![
+        ElementSource::IdleBarrier {
+            timeout_s,
+            resources: vec!["network".into()],
+        },
         ElementSource::Semantic,
         ElementSource::UIAutomator,
     ]
@@ -392,8 +406,8 @@ pub fn find_element_unified(
 
     for source in sources {
         match source {
-            ElementSource::IdleBarrier { timeout_s } => {
-                if let Some(result) = query_when_idle(target, *timeout_s) {
+            ElementSource::IdleBarrier { timeout_s, resources } => {
+                if let Some(result) = query_when_idle(target, *timeout_s, resources) {
                     return Ok(result);
                 }
             }
@@ -552,11 +566,11 @@ fn search_uiautomator(
 
 // --- Idle Barrier (Phase 5C) ---
 
-fn query_when_idle(target: &Target, timeout_s: u64) -> Option<(i32, i32, String)> {
+fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String]) -> Option<(i32, i32, String)> {
     let match_obj = build_match_json(target);
     let body = serde_json::json!({
         "match": match_obj,
-        "idle_resources": ["ui_thread", "network", "scroll", "layout"],
+        "idle_resources": resources,
         "timeout": timeout_s,
     });
     let body_str = body.to_string();

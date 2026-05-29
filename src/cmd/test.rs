@@ -4,7 +4,7 @@ use crate::adb;
 use crate::registry::{Device, Registry};
 
 use super::test_element::{
-    Target, find_element, find_element_unified, idle_barrier_sources,
+    Target, find_element, find_element_unified, idle_barrier_sources, idle_barrier_network_only,
     check_element_sources,
     extract_ui_bounds, extract_ui_text_bounds, extract_ui_bounds_fuzzy,
     fetch_ui_dump, fetch_agent_yaml,
@@ -1186,7 +1186,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                     if std::time::Instant::now() > scroll_deadline {
                         return Err("scroll_to: timeout (30s)".into());
                     }
-                    if find_element_unified(dev, target, &idle_barrier_sources(3)).is_ok() {
+                    if find_element_unified(dev, target, &idle_barrier_network_only(3)).is_ok() {
                         break;
                     }
                     if attempt == 14 {
