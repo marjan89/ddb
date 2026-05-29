@@ -4,13 +4,13 @@ use crate::adb;
 use crate::registry::{Device, Registry};
 
 use super::test_element::{
-    Target, find_element, find_element_unified, idle_barrier_sources, idle_barrier_network_only,
+    Target, find_element, find_element_unified, idle_barrier_sources,
     check_element_sources,
     extract_ui_bounds, extract_ui_text_bounds, extract_ui_bounds_fuzzy,
     fetch_ui_dump, fetch_agent_yaml,
     get_semantic_elements, agent_base_url,
     extract_yaml_int, extract_yaml_int_after, token_jaccard,
-    scroll_direction,
+    scroll_direction, query_when_idle_scroll,
 };
 use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
 use super::test_observability::{switchboard_notify, capture_failure_screenshot, fetch_debug_log};
@@ -1181,19 +1181,10 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                let scroll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                for attempt in 0..15 {
-                    if std::time::Instant::now() > scroll_deadline {
-                        return Err("scroll_to: timeout (30s)".into());
-                    }
-                    if find_element_unified(dev, target, &idle_barrier_network_only(3)).is_ok() {
-                        break;
-                    }
-                    if attempt == 14 {
-                        return Err(format!("scroll_to: element not found after 15 scrolls"));
-                    }
-                    scroll_direction(dev, "down")?;
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                if let Some((_x, _y, desc)) = query_when_idle_scroll(target, 5, 15) {
+                    Ok(desc)
+                } else {
+                    Err(format!("scroll_to: element not found via agent scroll search"))
                 }
             } else {
                 let dir = action.direction.as_deref().unwrap_or("down");
@@ -1202,8 +1193,8 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                     scroll_direction(dev, dir)?;
                     std::thread::sleep(std::time::Duration::from_millis(300));
                 }
+                Ok(String::new())
             }
-            Ok(String::new())
         }
         "navigate_to_site" => {
             let site_id = action.site_id
@@ -1531,22 +1522,20 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
 }
 
 fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    for _ in 0..10 {
-        if std::time::Instant::now() > deadline {
-            return Err(format!("scroll_to_element: timeout (60s): {id_or_text}"));
-        }
-        let yaml = fetch_agent_yaml(dev)?;
-        if yaml.contains(id_or_text) {
-            return Ok(());
-        }
-        if std::time::Instant::now() > deadline {
-            return Err(format!("scroll_to_element: timeout (60s): {id_or_text}"));
-        }
-        scroll_direction(dev, "down")?;
-        wait_idle(dev, 5);
+    let target = Target {
+        id: None,
+        text: None,
+        content_fuzzy: Some(id_or_text.to_string()),
+        clickable_only: None,
+        exclude_type: None,
+        x: None,
+        y: None,
+    };
+    if query_when_idle_scroll(&target, 5, 10).is_some() {
+        Ok(())
+    } else {
+        Err(format!("scroll_to_element: not found via agent scroll search: {id_or_text}"))
     }
-    Err(format!("could not scroll to: {id_or_text}"))
 }
 
 fn get_current_activity(dev: Option<&Device>) -> Result<String, String> {
