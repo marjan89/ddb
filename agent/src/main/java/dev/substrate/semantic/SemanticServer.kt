@@ -24,6 +24,7 @@ class SemanticServer private constructor(
     private var overlayView: android.view.View? = null
     private var navigator: AgentNavigator? = null
     private var auth: AgentAuth? = null
+    val idleRegistry = IdleResourceRegistry()
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri.trimEnd('/')
@@ -53,6 +54,8 @@ class SemanticServer private constructor(
             uri == "/keyboard/dismiss" && session.method == Method.POST -> handleKeyboardDismiss()
             uri.startsWith("/question/") && session.method == Method.DELETE -> handleDeleteQuestion(uri)
             uri == "/stream" -> handleStream()
+            uri == "/query-when-idle" && session.method == Method.POST -> handleQueryWhenIdle(session)
+            uri == "/idle-resources" -> handleIdleResources()
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
         }
     }
@@ -535,6 +538,61 @@ class SemanticServer private constructor(
         )
     }
 
+    private fun handleQueryWhenIdle(session: IHTTPSession): Response {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (contentLength > 0) {
+            val buf = ByteArray(contentLength)
+            session.inputStream.read(buf, 0, contentLength)
+            String(buf)
+        } else "{}"
+
+        val timeout = extractJsonInt(body, "timeout")?.toLong()?.times(1000) ?: 5000
+        val resourceNames = extractJsonArray(body, "idle_resources")
+
+        val idled = idleRegistry.waitForIdle(resourceNames, timeout)
+        if (!idled) {
+            val busy = idleRegistry.registeredNames().filter { name ->
+                val r = idleRegistry.let { reg ->
+                    try { !reg.isIdle(listOf(name)) } catch (_: Exception) { false }
+                }
+                r
+            }
+            return jsonResponse(
+                """{"idle":false,"busy":${busy.map { "\"$it\"" }},"timeout_ms":$timeout}""",
+                Response.Status.REQUEST_TIMEOUT,
+            )
+        }
+
+        val match = extractJsonString(body, "match")
+        return if (match != null) {
+            handleSemantic()
+        } else {
+            jsonResponse("""{"idle":true}""")
+        }
+    }
+
+    private fun handleIdleResources(): Response {
+        val names = idleRegistry.registeredNames()
+        val items = names.map { name ->
+            val idle = try { idleRegistry.isIdle(listOf(name)) } catch (_: Exception) { false }
+            """{"name":"$name","idle":$idle}"""
+        }
+        return jsonResponse("""{"resources":[${items.joinToString(",")}]}""")
+    }
+
+    private fun extractJsonInt(json: String, key: String): Int? {
+        val pattern = "\"$key\"\\s*:\\s*(\\d+)".toRegex()
+        return pattern.find(json)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    private fun extractJsonArray(json: String, key: String): List<String>? {
+        val pattern = "\"$key\"\\s*:\\s*\\[([^\\]]*)\\]".toRegex()
+        val match = pattern.find(json) ?: return null
+        return match.groupValues[1].split(",")
+            .map { it.trim().trim('"') }
+            .filter { it.isNotEmpty() }
+    }
+
     private fun toYaml(schema: SemanticSchema): String {
         val sb = StringBuilder()
         sb.appendLine("screen: \"${escape(schema.screen)}\"")
@@ -651,6 +709,11 @@ class SemanticServer private constructor(
             server.auth = auth
             server.appRef = WeakReference(app)
             instance = server
+
+            server.idleRegistry.register(UIThreadIdleResource())
+            server.idleRegistry.register(LayoutIdleResource { server.currentActivity?.get() })
+            server.idleRegistry.register(ScrollIdleResource { server.currentActivity?.get() })
+            server.idleRegistry.register(NetworkIdleResource())
 
             app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
                 override fun onActivityResumed(activity: Activity) {
