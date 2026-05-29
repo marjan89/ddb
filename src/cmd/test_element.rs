@@ -616,18 +616,16 @@ fn query_when_idle(target: &Target, timeout_s: u64, resources: &[String]) -> Opt
     None
 }
 
-pub fn query_when_idle_scroll(target: &Target, timeout_s: u64, max_scroll: u32) -> Option<(i32, i32, String)> {
+pub fn scroll_search(target: &Target, max_scroll: u32) -> Option<(i32, i32, String)> {
     let match_obj = build_match_json(target);
     let body = serde_json::json!({
         "match": match_obj,
-        "idle_resources": ["network"],
-        "timeout": timeout_s,
-        "scroll_search": true,
         "max_scroll": max_scroll,
+        "idle_resources": ["network"],
     });
     let body_str = body.to_string();
-    let url = format!("{}/query-when-idle", agent_base_url());
-    let max_time = timeout_s + max_scroll as u64 * 2 + 5;
+    let url = format!("{}/scroll-search", agent_base_url());
+    let max_time = max_scroll as u64 * 2 + 10;
 
     let resp = std::process::Command::new("curl")
         .args([
@@ -648,7 +646,7 @@ pub fn query_when_idle_scroll(target: &Target, timeout_s: u64, max_scroll: u32) 
             let x = element.and_then(|e| e.get("x")).and_then(|v| v.as_i64()).unwrap_or(540) as i32;
             let y = element.and_then(|e| e.get("y")).and_then(|v| v.as_i64()).unwrap_or(1200) as i32;
             let content = element.and_then(|e| e.get("content")).and_then(|v| v.as_str()).unwrap_or("");
-            let scrolls = json.get("scrolls_performed").and_then(|v| v.as_u64()).unwrap_or(0);
+            let scrolls = json.get("scrolls").and_then(|v| v.as_u64()).unwrap_or(0);
             return Some((x, y, format!("scroll-search: {} at ({},{}) scrolls={}", content, x, y, scrolls)));
         }
     }

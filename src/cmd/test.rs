@@ -10,7 +10,7 @@ use super::test_element::{
     fetch_ui_dump, fetch_agent_yaml,
     get_semantic_elements, agent_base_url,
     extract_yaml_int, extract_yaml_int_after, token_jaccard,
-    scroll_direction, query_when_idle_scroll,
+    scroll_direction, scroll_search,
 };
 use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
 use super::test_observability::{switchboard_notify, capture_failure_screenshot, fetch_debug_log};
@@ -1181,7 +1181,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                if let Some((_x, _y, desc)) = query_when_idle_scroll(target, 5, 15) {
+                if let Some((_x, _y, desc)) = scroll_search(target, 15) {
                     Ok(desc)
                 } else {
                     Err(format!("scroll_to: element not found via agent scroll search"))
@@ -1531,7 +1531,7 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
         x: None,
         y: None,
     };
-    if query_when_idle_scroll(&target, 5, 10).is_some() {
+    if scroll_search(&target, 10).is_some() {
         Ok(())
     } else {
         Err(format!("scroll_to_element: not found via agent scroll search: {id_or_text}"))
