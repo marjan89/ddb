@@ -739,12 +739,14 @@ fn get_failed_tc_specs(results_dir: &str, tests_dir: &str, runner: &StepRunner) 
     Ok(specs)
 }
 
-fn ensure_logged_in_with_runner(_dev: Option<&Device>, _pkg: &str, runner: &StepRunner) {
+fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepRunner) {
     let base = agent_base_url();
 
-    if let Ok(body) = runner.curl_with_deadline(&format!("{base}/auth/state"), "GET", None) {
-        if body.contains("\"logged_in\":true") {
-            eprintln!("  already logged in");
+    // Check if already logged in via semantic dump
+    if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
+        let body_lower = body.to_lowercase();
+        if body_lower.contains("log out") || body_lower.contains("sign out") || body_lower.contains("logout") {
+            eprintln!("  already logged in (found logout text in semantic)");
             return;
         }
     }
@@ -757,20 +759,71 @@ fn ensure_logged_in_with_runner(_dev: Option<&Device>, _pkg: &str, runner: &Step
         Ok(p) => p,
         Err(_) => { eprintln!("  ERROR: DDB_TEST_PASSWORD not set — cannot login"); return; }
     };
-    eprintln!("  logging in as {} via agent...", email);
+    eprintln!("  UI login as {}...", email);
 
-    let payload = format!(r#"{{"email":"{}","password":"{}"}}"#,
-        email.replace('"', "\\\""), password.replace('"', "\\\""));
-    match runner.curl_with_deadline(&format!("{base}/auth/login"), "POST", Some(&payload)) {
-        Ok(body) => {
-            if body.contains("\"logged_in\":true") {
-                eprintln!("  login complete");
-            } else {
-                eprintln!("  login failed: {}", body.trim());
-            }
-        }
-        Err(e) => eprintln!("  login failed: {e}"),
+    let tap_target = |text: &str| -> Result<(), String> {
+        let target = Target {
+            content_fuzzy: Some(text.to_string()),
+            id: None, text: None, clickable_only: None, exclude_type: None, x: None, y: None,
+        };
+        let (x, y, _) = find_element_unified(dev, &target, &idle_barrier_sources(5), Some(runner))?;
+        runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
+        wait_idle(dev, 3);
+        Ok(())
+    };
+
+    let type_text = |text: &str| -> Result<(), String> {
+        dismiss_keyboard_if_visible(dev, runner);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        runner.adb_shell(dev, &["input", "text", text])?;
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        Ok(())
+    };
+
+    // Tap "My page" tab
+    if let Err(e) = tap_target("My page") {
+        eprintln!("  login: couldn't find 'My page': {e}");
+        return;
     }
+
+    // Tap "Log in" button
+    if let Err(e) = tap_target("Log in") {
+        eprintln!("  login: couldn't find 'Log in': {e}");
+        return;
+    }
+
+    // Type email
+    if let Err(e) = type_text(&email) {
+        eprintln!("  login: couldn't type email: {e}");
+        return;
+    }
+    dismiss_keyboard_if_visible(dev, runner);
+
+    // Tap password field (next input) and type password
+    let _ = runner.adb_shell(dev, &["input", "keyevent", "61"]); // TAB to next field
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    if let Err(e) = type_text(&password) {
+        eprintln!("  login: couldn't type password: {e}");
+        return;
+    }
+    dismiss_keyboard_if_visible(dev, runner);
+
+    // Tap "Log in" submit button
+    if let Err(e) = tap_target("Log in") {
+        eprintln!("  login: couldn't find submit 'Log in': {e}");
+        return;
+    }
+
+    // Wait for network + navigation settle
+    let body = serde_json::json!({
+        "idle_resources": ["network", "ui_thread"],
+        "timeout": 10,
+    });
+    let _ = runner.curl_with_deadline(
+        &format!("{base}/query-when-idle"), "POST", Some(&body.to_string())
+    );
+
+    eprintln!("  login complete (UI flow)");
 }
 
 fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &StepRunner) {
