@@ -429,6 +429,32 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     // Pre-load fixtures for interpolation (used both pre-parse and at runtime)
     let fixtures_map = load_fixtures_map();
 
+    // Load mock config (applied per-TC after agent restart)
+    let mock_body: Option<String> = std::env::var("DDB_MOCK_CONFIG").ok().and_then(|config_path| {
+        let config_content = std::fs::read_to_string(&config_path).ok()?;
+        let config: serde_json::Value = serde_yaml::from_str(&config_content).ok()?;
+        let mocks = config.get("mocks")?.as_array()?;
+        let config_dir = std::path::Path::new(&config_path).parent().unwrap_or(std::path::Path::new("."));
+        let mut mock_entries = Vec::new();
+        for m in mocks {
+            let mut entry = m.clone();
+            if let Some(resp) = entry.get("response").and_then(|r| r.get("file")).and_then(|f| f.as_str()) {
+                let resp_path = config_dir.join(resp);
+                if let Ok(resp_content) = std::fs::read_to_string(&resp_path) {
+                    if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&resp_content) {
+                        if let Some(obj) = entry.as_object_mut() {
+                            let status = obj.get("response").and_then(|r| r.get("status")).cloned().unwrap_or(serde_json::json!(200));
+                            obj.insert("response".into(), serde_json::json!({"status": status, "body": resp_json}));
+                        }
+                    }
+                }
+            }
+            mock_entries.push(entry);
+        }
+        eprintln!("  loaded {} mocks from {}", mock_entries.len(), config_path);
+        Some(serde_json::json!({"mocks": mock_entries}).to_string())
+    });
+
     let mut results = Vec::new();
     let mut pass = 0;
     let mut fail = 0;
@@ -495,9 +521,10 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let dev_clone = dev.clone();
         let step_timeout = args.step_timeout;
         let fixtures_clone = fixtures_map.clone();
+        let mock_clone = mock_body.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone);
+            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone, mock_clone.as_deref());
             let _ = tx.send(result);
         });
         let (result, step_logs) = match rx.recv_timeout(tc_hard_timeout) {
@@ -764,7 +791,7 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     let tap_target = |text: &str| -> Result<(), String> {
         let target = Target {
             content_fuzzy: Some(text.to_string()),
-            id: None, text: None, clickable_only: None, exclude_type: None, x: None, y: None,
+            id: None, text: None, clickable_only: None, exclude_type: None, x: None, y: None, type_filter: None,
         };
         let (x, y, _) = find_element_unified(dev, &target, &idle_barrier_sources(5), Some(runner))?;
         runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
@@ -773,9 +800,15 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     };
 
     let type_text = |text: &str| -> Result<(), String> {
-        dismiss_keyboard_if_visible(dev, runner);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        runner.adb_shell(dev, &["input", "text", text])?;
+        let agent = agent_base_url();
+        let type_body = serde_json::json!({"text": text, "clear": true}).to_string();
+        let type_url = format!("{agent}/type");
+        match runner.curl_with_deadline(&type_url, "POST", Some(&type_body)) {
+            Ok(resp) if resp.contains("\"ok\"") || resp.contains("\"typed\"") => {},
+            _ => {
+                runner.adb_shell(dev, &["input", "text", text])?;
+            }
+        }
         std::thread::sleep(std::time::Duration::from_millis(300));
         Ok(())
     };
@@ -890,7 +923,7 @@ impl RunContext {
     }
 }
 
-fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>) -> (TestResult, Vec<StepLogEntry>) {
+fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>, mock_body: Option<&str>) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
     let mut ctx = RunContext::new(fixtures.clone());
     let logger = Logger::new();
@@ -907,25 +940,29 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     let setup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let setup_runner = StepRunner::new(setup_deadline, PhaseBudgets { pre_idle_s: 120, execute_s: 120, post_idle_s: 3 });
 
-    // Check if agent is already running (skip launch if so)
+    // Check if agent is already running
     let mut agent_ready = false;
     if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
         if body.contains("semantic-agent") {
             agent_ready = true;
-            logger.setup("agent already running (skip launch)", setup_start.elapsed().as_millis() as u64);
+            logger.setup("agent already running", setup_start.elapsed().as_millis() as u64);
         }
     }
 
-    if !agent_ready {
-        let launch_start = std::time::Instant::now();
-        let _ = setup_runner.adb_shell(dev, &[
-            "am", "start", "-a", "android.intent.action.MAIN",
-            "-c", "android.intent.category.LAUNCHER",
-            "-n", &main_activity, "--activity-clear-task",
-        ]);
-        logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
-        std::thread::sleep(std::time::Duration::from_secs(2));
+    // Force-stop then relaunch — kills process + agent, need to re-check health
+    agent_ready = false;
+    let launch_start = std::time::Instant::now();
+    let _ = setup_runner.adb_shell(dev, &["am", "force-stop", pkg]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = setup_runner.adb_shell(dev, &[
+        "am", "start", "-a", "android.intent.action.MAIN",
+        "-c", "android.intent.category.LAUNCHER",
+        "-n", &main_activity,
+    ]);
+    logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
+    if !agent_ready {
         let health_start = std::time::Instant::now();
         for _ in 0..10 {
             if setup_runner.expired() { break; }
@@ -947,6 +984,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     let perm_start = std::time::Instant::now();
     grant_all_permissions_with_runner(dev, pkg, &setup_runner);
     logger.setup("grant permissions", perm_start.elapsed().as_millis() as u64);
+
+    // Apply mocks after agent is ready (registry cleared by force-stop)
+    if let Some(body) = mock_body {
+        let mock_url = format!("{base}/mock");
+        let _ = setup_runner.curl_with_deadline(&mock_url, "POST", Some(body));
+    }
 
     // Handle logged_in precondition (HTTP via agent)
     if let Some(ref pre) = spec.precondition {
@@ -1263,46 +1306,75 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             Ok(desc)
         }
         "type" => {
-            dismiss_keyboard_if_visible(dev, &runner);
-            let text = action.text.as_ref().ok_or("type: no text")?;
+            let raw_text = action.text.as_ref().ok_or("type: no text")?;
+            let text = &ctx.interpolate(raw_text);
             if let Some(ref target) = action.target {
+                dismiss_keyboard_if_visible(dev, &runner);
                 let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
                 runner.adb_shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
                 ensure_input_focus(dev, runner);
             }
-            runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
-            runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
-            runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            let has_non_ascii = text.chars().any(|c| !c.is_ascii());
-            if has_non_ascii {
-                runner.adb_shell(dev, &["am", "broadcast", "-a", "clipper.set", "-e", "text", text])?;
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                let (x, y) = if let Some(ref target) = action.target {
-                    let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
-                    (x, y)
-                } else {
-                    (540, 300)
-                };
-                runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                runner.adb_shell(dev, &["input", "keyevent", "279"])?;
-                std::thread::sleep(std::time::Duration::from_millis(300));
-            } else {
-                let escaped = text.replace(' ', "%s");
-                runner.adb_shell(dev, &["input", "text", &escaped])?;
+            // Use agent /type endpoint: atomic setText on focused EditText, bypasses IME
+            let type_body = serde_json::json!({"text": text, "clear": true}).to_string();
+            let type_url = format!("{}/type", agent_base_url());
+            match runner.curl_with_deadline(&type_url, "POST", Some(&type_body)) {
+                Ok(resp) if resp.contains("\"ok\"") || resp.contains("\"typed\"") => {},
+                _ => {
+                    // Fallback: adb input text (may garble on Samsung IME)
+                    runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
+                    runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
+                    runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let escaped = text.replace(' ', "%s");
+                    runner.adb_shell(dev, &["input", "text", &escaped])?;
+                }
             }
             Ok(format!("typed \"{}\"", text))
         }
+        "wait_until" => {
+            let target = action.target.as_ref().ok_or("wait_until: no target")?;
+            let timeout = action.wait_timeout.unwrap_or(30);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+            loop {
+                // Fresh /semantic query each iteration — no caching, no idle barrier
+                let url = format!("{}/semantic", agent_base_url());
+                if let Ok(yaml) = runner.curl_with_deadline(&url, "GET", None) {
+                    let search_fuzzy = target.content_fuzzy.as_deref().unwrap_or("");
+                    if !search_fuzzy.is_empty() {
+                        let needle = search_fuzzy.to_lowercase();
+                        if yaml.to_lowercase().contains(&needle) {
+                            break;
+                        }
+                    }
+                }
+                if std::time::Instant::now() > deadline {
+                    return Err(format!("wait_until: '{}' not visible after {}s",
+                        target.content_fuzzy.as_deref().unwrap_or("?"), timeout));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            Ok(format!("wait_until: found '{}'", target.content_fuzzy.as_deref().unwrap_or("?")))
+        }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
-                if let Some((_x, _y, desc)) = scroll_search(target, 15, false, Some(runner)) {
-                    Ok(desc)
-                } else {
-                    Err(format!("scroll_to: element not found via agent scroll search"))
+                let mut result = None;
+                for attempt in 0..3 {
+                    // Check if element is already visible before scrolling
+                    if let Ok((x, y, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner)) {
+                        result = Some(format!("already visible: {} at ({},{})", desc, x, y));
+                        break;
+                    }
+                    if let Some((_x, _y, desc)) = scroll_search(target, 15, false, Some(runner)) {
+                        result = Some(desc);
+                        break;
+                    }
+                    if attempt < 2 {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
                 }
+                result.ok_or_else(|| "scroll_to: element not found after 3 attempts".to_string())
             } else {
                 let dir = action.direction.as_deref().unwrap_or("down");
                 let times = action.times.unwrap_or(1);
@@ -1351,7 +1423,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
             Ok(desc)
         }
-        "back" => {
+        "keyboard_dismiss" => {
+            dismiss_keyboard_if_visible(dev, &runner);
+            Ok("keyboard dismissed".into())
+        }
+        "back" | "press_back" => {
             runner.adb_shell(dev, &["input", "keyevent", "4"])?;
             Ok(String::new())
         }
@@ -1622,6 +1698,7 @@ fn scroll_to_element(dev: Option<&Device>, id_or_text: &str) -> Result<(), Strin
         exclude_type: None,
         x: None,
         y: None,
+        type_filter: None,
     };
     if scroll_search(&target, 10, false, None).is_some() {
         Ok(())

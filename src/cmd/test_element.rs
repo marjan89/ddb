@@ -18,6 +18,8 @@ pub struct Target {
     pub x: Option<i32>,
     #[serde(default)]
     pub y: Option<i32>,
+    #[serde(default, rename = "type")]
+    pub type_filter: Option<String>,
 }
 
 pub fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, String), String> {
@@ -72,6 +74,18 @@ pub fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, 
                 if chunk.contains(&type_line) {
                     continue;
                 }
+            }
+            if let Some(ref tf) = target.type_filter {
+                let tf_lower = tf.to_lowercase();
+                let has_type = chunk.lines().any(|l| {
+                    let t = l.trim();
+                    if let Some(rest) = t.strip_prefix("type:") {
+                        rest.trim().to_lowercase().contains(&tf_lower)
+                    } else {
+                        false
+                    }
+                });
+                if !has_type { continue; }
             }
             let x = extract_yaml_int(chunk, "x: ");
             let y = extract_yaml_int(chunk, "y: ");
@@ -707,6 +721,9 @@ fn build_match_json(target: &Target) -> serde_json::Value {
     }
     if let Some(ref fuzzy) = target.content_fuzzy {
         obj.insert("content_fuzzy".into(), serde_json::Value::String(fuzzy.clone()));
+    }
+    if let Some(ref t) = target.type_filter {
+        obj.insert("type".into(), serde_json::Value::String(t.clone()));
     }
     serde_json::Value::Object(obj)
 }

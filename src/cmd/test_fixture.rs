@@ -61,6 +61,14 @@ impl FixtureResolver {
 
     pub fn resolve(&self, template: &str) -> String {
         let mut result = template.to_string();
+        // Built-in dynamic values
+        if result.contains("{{timestamp}}") {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            result = result.replace("{{timestamp}}", &ts.to_string());
+        }
         // API responses take precedence (highest layer)
         for (key, val) in &self.api_responses {
             Self::apply_patterns(&mut result, key, val);
