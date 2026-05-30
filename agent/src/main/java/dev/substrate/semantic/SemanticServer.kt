@@ -2,13 +2,10 @@ package dev.substrate.semantic
 
 import android.app.Activity
 import android.app.Application
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import fi.iki.elonen.NanoHTTPD
-import kotlinx.coroutines.runBlocking
 import java.lang.ref.WeakReference
 
 class SemanticServer private constructor(
@@ -22,8 +19,6 @@ class SemanticServer private constructor(
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var cachedSchema: SemanticSchema? = null
     private var overlayView: android.view.View? = null
-    private var navigator: AgentNavigator? = null
-    private var auth: AgentAuth? = null
     val idleRegistry = IdleResourceRegistry()
 
     private data class RequestLogEntry(
@@ -76,15 +71,7 @@ class SemanticServer private constructor(
             uri == "/health" -> jsonResponse("""{"status":"ok","agent":"semantic-agent","version":"5.0.0"}""")
             uri == "/version" -> jsonResponse("""{"git_hash":"$gitHash","build_time":"$buildTime"}""")
             uri == "/idle" -> handleIdle()
-            uri == "/auth/login" && session.method == Method.POST -> handleAuthLogin(session)
-            uri == "/auth/logout" && session.method == Method.POST -> handleAuthLogout()
-            uri == "/auth/state" -> handleAuthState()
-            uri == "/state/reset" && session.method == Method.POST -> handleStateReset()
-            uri == "/permissions" -> handlePermissions()
-            uri.startsWith("/navigate/site/") -> handleNavigateSite(uri)
-            uri.startsWith("/navigate/user/") -> handleNavigateUser(uri)
             uri == "/keyboard/dismiss" && session.method == Method.POST -> handleKeyboardDismiss()
-            uri.startsWith("/question/") && session.method == Method.DELETE -> handleDeleteQuestion(uri)
             uri == "/stream" -> handleStream()
             uri == "/query-when-idle" && session.method == Method.POST -> handleQueryWhenIdle(session)
             uri == "/scroll-search" && session.method == Method.POST -> handleScrollSearch(session)
@@ -127,98 +114,6 @@ class SemanticServer private constructor(
         return true
     }
 
-    private fun handleAuthLogin(session: IHTTPSession): Response {
-        val agentAuth = auth ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "app not ready")
-        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = ByteArray(contentLength)
-        session.inputStream.read(body, 0, contentLength)
-        val json = String(body)
-        val email = extractJsonString(json, "email")
-        val password = extractJsonString(json, "password")
-        if (email == null || password == null) {
-            return jsonResponse("""{"error":"missing email or password"}""", Response.Status.BAD_REQUEST)
-        }
-        return runBlocking {
-            val result = agentAuth.login(email, password)
-            if (result.isSuccess) {
-                jsonResponse("""{"logged_in":true}""")
-            } else {
-                jsonResponse("""{"logged_in":false,"error":"invalid credentials"}""", Response.Status.UNAUTHORIZED)
-            }
-        }
-    }
-
-    private fun handleAuthLogout(): Response {
-        val agentAuth = auth ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "app not ready")
-        return runBlocking {
-            agentAuth.logout()
-            jsonResponse("""{"logged_in":false}""")
-        }
-    }
-
-    private fun handleAuthState(): Response {
-        val agentAuth = auth ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "app not ready")
-        return runBlocking {
-            val authenticated = agentAuth.isAuthenticated()
-            val userId = agentAuth.getUserId()
-            jsonResponse("""{"logged_in":$authenticated,"user_id":$userId}""")
-        }
-    }
-
-    private fun handleStateReset(): Response {
-        val agentAuth = auth ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "app not ready")
-        return runBlocking {
-            agentAuth.resetState()
-            jsonResponse("""{"reset":true}""")
-        }
-    }
-
-    private fun handlePermissions(): Response {
-        val app = appRef?.get() ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "app not ready")
-        val pm = app.packageManager
-        val pkgInfo = pm.getPackageInfo(app.packageName, PackageManager.GET_PERMISSIONS)
-        val requested = pkgInfo.requestedPermissions ?: emptyArray()
-        val flags = pkgInfo.requestedPermissionsFlags
-        val granted = if (flags != null) {
-            requested.filterIndexed { i, _ -> i < flags.size && flags[i] and PackageManager.PERMISSION_GRANTED != 0 }
-        } else emptyList()
-        val items = requested.map { perm ->
-            val isGranted = granted.contains(perm)
-            """{"permission":"$perm","granted":$isGranted}"""
-        }
-        return jsonResponse("""{"package":"${app.packageName}","permissions":[${items.joinToString(",")}]}""")
-    }
-
-    private fun handleNavigateSite(uri: String): Response {
-        val siteId = uri.removePrefix("/navigate/site/").toIntOrNull()
-            ?: return jsonResponse("""{"error":"invalid site id"}""", Response.Status.BAD_REQUEST)
-        val activity = currentActivity?.get()
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
-        val nav = navigator
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "navigator not set")
-        mainHandler.post {
-            val intent = nav.createSiteIntent(activity, siteId)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            activity.startActivity(intent)
-        }
-        return jsonResponse("""{"navigated":"site","id":$siteId}""")
-    }
-
-    private fun handleNavigateUser(uri: String): Response {
-        val userId = uri.removePrefix("/navigate/user/").toIntOrNull()
-            ?: return jsonResponse("""{"error":"invalid user id"}""", Response.Status.BAD_REQUEST)
-        val activity = currentActivity?.get()
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
-        val nav = navigator
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "navigator not set")
-        mainHandler.post {
-            val intent = nav.createUserIntent(activity, userId)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            activity.startActivity(intent)
-        }
-        return jsonResponse("""{"navigated":"user","id":$userId}""")
-    }
-
     private fun handleKeyboardDismiss(): Response {
         val activity = currentActivity?.get()
             ?: return jsonResponse("""{"dismissed":false}""")
@@ -258,23 +153,6 @@ class SemanticServer private constructor(
         return newChunkedResponse(Response.Status.OK, "text/event-stream", stream).apply {
             addHeader("Cache-Control", "no-cache")
             addHeader("Connection", "keep-alive")
-        }
-    }
-
-    private fun handleDeleteQuestion(uri: String): Response {
-        val questionId = uri.removePrefix("/question/").trimEnd('/')
-        val qId = questionId.toIntOrNull()
-        if (qId == null) {
-            return jsonResponse("""{"error":"invalid question id"}""", Response.Status.BAD_REQUEST)
-        }
-        val agentAuth = auth ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "app not ready")
-        return runBlocking {
-            val success = agentAuth.deleteQuestion(qId)
-            if (success) {
-                jsonResponse("""{"deleted":true,"id":$qId}""")
-            } else {
-                jsonResponse("""{"deleted":false,"error":"delete failed"}""", Response.Status.INTERNAL_ERROR)
-            }
         }
     }
 
@@ -631,6 +509,8 @@ class SemanticServer private constructor(
         val matchObj = extractJsonString(body, "content_fuzzy")
             ?: extractNestedJsonString(body, "match", "content_fuzzy")
             ?: return jsonResponse("""{"found":false,"reason":"missing match.content_fuzzy"}""", Response.Status.BAD_REQUEST)
+        val typeFilter = extractJsonString(body, "type")
+            ?: extractNestedJsonString(body, "match", "type")
 
         idleRegistry.waitForIdle(resourceNames, 5000)
 
@@ -643,9 +523,14 @@ class SemanticServer private constructor(
         var scrollRestored = false
         val latch = java.util.concurrent.CountDownLatch(1)
 
+        val matchElement = fun(e: SemanticElement): Boolean {
+            val contentMatch = e.content?.lowercase()?.contains(matchObj.lowercase()) == true
+            val typeMatch = typeFilter == null || e.type.equals(typeFilter, ignoreCase = true)
+            return contentMatch && typeMatch
+        }
+
         mainHandler.post {
             try {
-                val target = matchObj.lowercase()
                 val scrollable = findScrollable(activity.window.decorView)
                 if (scrollable == null) {
                     error = "no scrollable view"
@@ -657,7 +542,7 @@ class SemanticServer private constructor(
                 val scrollAmountPx = (viewportH * 0.7 * density).toInt()
 
                 val schema0 = ViewTreeWalker.walk(activity)
-                found = schema0.elements.firstOrNull { it.content?.lowercase()?.contains(target) == true }
+                found = schema0.elements.firstOrNull(matchElement)
 
                 if (found == null) {
                     for (step in 1..maxScroll) {
@@ -665,7 +550,7 @@ class SemanticServer private constructor(
                         Thread.sleep(300)
                         scrollCount = step
                         val schema = ViewTreeWalker.walk(activity)
-                        found = schema.elements.firstOrNull { it.content?.lowercase()?.contains(target) == true }
+                        found = schema.elements.firstOrNull(matchElement)
                         if (found != null) break
                     }
                 }
@@ -689,7 +574,7 @@ class SemanticServer private constructor(
 
         return if (found != null) {
             val e = found!!
-            jsonResponse("""{"found":true,"element":{"id":"${escape(e.id)}","content":"${escape(e.content ?: "")}","bounds":{"x":${e.bounds.x},"y":${e.bounds.y},"w":${e.bounds.w},"h":${e.bounds.h}},"clickable":${e.clickable},"tap_target":${e.tapTarget?.let { """{"x":${it.x},"y":${it.y},"w":${it.w},"h":${it.h}}""" } ?: "null"}},"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
+            jsonResponse("""{"found":true,"element":{"id":"${escape(e.id)}","content":"${escape(e.content ?: "")}","type":"${e.type}","bounds":{"x":${e.bounds.x},"y":${e.bounds.y},"w":${e.bounds.w},"h":${e.bounds.h}},"clickable":${e.clickable},"tap_target":${e.tapTarget?.let { """{"x":${it.x},"y":${it.y},"w":${it.w},"h":${it.h}}""" } ?: "null"}},"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
         } else {
             jsonResponse("""{"found":false,"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
         }
@@ -819,28 +704,16 @@ class SemanticServer private constructor(
         private var instance: SemanticServer? = null
 
         @JvmStatic
-        fun setContracts(navigator: AgentNavigator, auth: AgentAuth) {
-            instance?.let {
-                it.navigator = navigator
-                it.auth = auth
-            }
-        }
-
-        @JvmStatic
         @JvmOverloads
         fun install(
             app: Application,
             port: Int = 9876,
             gitHash: String = "",
             buildTime: String = "",
-            navigator: AgentNavigator? = null,
-            auth: AgentAuth? = null,
         ) {
             if (instance != null) return
 
             val server = SemanticServer(port, gitHash, buildTime)
-            server.navigator = navigator
-            server.auth = auth
             server.appRef = WeakReference(app)
             instance = server
 
