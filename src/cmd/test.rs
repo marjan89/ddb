@@ -1423,6 +1423,19 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "1500"])?;
             Ok(desc)
         }
+        "click" => {
+            let target = action.target.as_ref().ok_or("click: no target")?;
+            let click_body = if let Some(ref fuzzy) = target.content_fuzzy {
+                serde_json::json!({"content_fuzzy": fuzzy})
+            } else if let Some(ref id) = target.id {
+                serde_json::json!({"resource_id": id})
+            } else {
+                return Err("click: need content_fuzzy or id".into());
+            };
+            let url = format!("{}/click", agent_base_url());
+            let resp = runner.curl_with_deadline(&url, "POST", Some(&click_body.to_string()))?;
+            Ok(format!("click: {}", resp.trim()))
+        }
         "keyboard_dismiss" => {
             dismiss_keyboard_if_visible(dev, &runner);
             Ok("keyboard dismissed".into())
