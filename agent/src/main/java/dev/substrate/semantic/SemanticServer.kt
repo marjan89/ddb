@@ -20,6 +20,7 @@ class SemanticServer private constructor(
     @Volatile private var cachedSchema: SemanticSchema? = null
     private var overlayView: android.view.View? = null
     val idleRegistry = IdleResourceRegistry()
+    val mockRegistry = MockRegistry()
 
     private data class RequestLogEntry(
         val ts: Long,
@@ -72,10 +73,14 @@ class SemanticServer private constructor(
             uri == "/version" -> jsonResponse("""{"git_hash":"$gitHash","build_time":"$buildTime"}""")
             uri == "/idle" -> handleIdle()
             uri == "/keyboard/dismiss" && session.method == Method.POST -> handleKeyboardDismiss()
+            uri == "/type" && session.method == Method.POST -> handleType(session)
             uri == "/stream" -> handleStream()
             uri == "/query-when-idle" && session.method == Method.POST -> handleQueryWhenIdle(session)
             uri == "/scroll-search" && session.method == Method.POST -> handleScrollSearch(session)
             uri == "/idle-resources" -> handleIdleResources()
+            uri == "/click" && session.method == Method.POST -> handleClick(session)
+            uri == "/mock" && session.method == Method.POST -> handleMock(session)
+            uri == "/unmock" && session.method == Method.POST -> handleUnmock(session)
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
         }
     }
@@ -127,6 +132,208 @@ class SemanticServer private constructor(
         }
         latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
         return jsonResponse("""{"dismissed":$dismissed}""")
+    }
+
+    private fun handleType(session: IHTTPSession): Response {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (contentLength > 0) {
+            val buf = ByteArray(contentLength)
+            session.inputStream.read(buf, 0, contentLength)
+            String(buf)
+        } else "{}"
+        val text = extractJsonString(body, "text")
+            ?: return jsonResponse("""{"error":"missing text"}""", Response.Status.BAD_REQUEST)
+        val clear = extractJsonBool(body, "clear") ?: true
+        val dismissKeyboard = extractJsonBool(body, "dismiss_keyboard") ?: false
+
+        val activity = currentActivity?.get()
+            ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
+
+        var success = false
+        var error: String? = null
+        val latch = java.util.concurrent.CountDownLatch(1)
+
+        mainHandler.post {
+            try {
+                val focused = activity.currentFocus
+                if (focused is android.widget.EditText) {
+                    if (clear) {
+                        focused.text.clear()
+                        focused.text.append(text)
+                    } else {
+                        focused.text.append(text)
+                    }
+                    focused.setSelection(focused.text.length)
+                    if (dismissKeyboard) {
+                        val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        imm.hideSoftInputFromWindow(focused.windowToken, 0)
+                    }
+                    success = true
+                } else {
+                    error = "no focused EditText"
+                }
+            } catch (e: Exception) {
+                error = e.message
+            }
+            latch.countDown()
+        }
+
+        if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+            return jsonResponse("""{"typed":false,"error":"timeout"}""", Response.Status.REQUEST_TIMEOUT)
+        }
+        return if (success) {
+            jsonResponse("""{"typed":true,"text":"${escape(text)}"}""")
+        } else {
+            jsonResponse("""{"typed":false,"error":"${escape(error ?: "")}"}""", Response.Status.BAD_REQUEST)
+        }
+    }
+
+    private fun handleClick(session: IHTTPSession): Response {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (contentLength > 0) {
+            val buf = ByteArray(contentLength)
+            session.inputStream.read(buf, 0, contentLength)
+            String(buf)
+        } else "{}"
+        val resourceId = extractJsonString(body, "resource_id")
+        val contentFuzzy = extractJsonString(body, "content_fuzzy")
+        if (resourceId == null && contentFuzzy == null) {
+            return jsonResponse("""{"error":"provide resource_id or content_fuzzy"}""", Response.Status.BAD_REQUEST)
+        }
+
+        val activity = currentActivity?.get()
+            ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
+
+        var clicked = false
+        var error: String? = null
+        val latch = java.util.concurrent.CountDownLatch(1)
+
+        mainHandler.post {
+            try {
+                val rootView = activity.window.decorView
+                val target = findClickTarget(rootView, resourceId, contentFuzzy)
+                if (target != null) {
+                    clicked = target.performClick()
+                } else {
+                    error = "view not found"
+                }
+            } catch (e: Exception) {
+                error = e.message
+            }
+            latch.countDown()
+        }
+
+        if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            return jsonResponse("""{"clicked":false,"error":"timeout"}""", Response.Status.REQUEST_TIMEOUT)
+        }
+        return if (clicked) {
+            jsonResponse("""{"clicked":true}""")
+        } else {
+            jsonResponse("""{"clicked":false,"error":"${escape(error ?: "performClick returned false")}"}""", Response.Status.BAD_REQUEST)
+        }
+    }
+
+    private fun findClickTarget(view: android.view.View, resourceId: String?, contentFuzzy: String?): android.view.View? {
+        if (resourceId != null) {
+            val resId = view.resources.getIdentifier(resourceId, "id", view.context.packageName)
+            if (resId != 0) {
+                val found = view.rootView.findViewById<android.view.View>(resId)
+                if (found != null) return found
+            }
+        }
+        if (contentFuzzy != null) {
+            val target = contentFuzzy.lowercase()
+            if (view is android.widget.TextView && view.text?.toString()?.lowercase()?.contains(target) == true && view.isClickable) {
+                return view
+            }
+            if (view is android.view.ViewGroup) {
+                for (i in 0 until view.childCount) {
+                    val found = findClickTarget(view.getChildAt(i), null, contentFuzzy)
+                    if (found != null) return found
+                }
+            }
+        }
+        return null
+    }
+
+    private fun handleMock(session: IHTTPSession): Response {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (contentLength > 0) {
+            val buf = ByteArray(contentLength)
+            session.inputStream.read(buf, 0, contentLength)
+            String(buf)
+        } else "{}"
+        try {
+            val json = org.json.JSONObject(body)
+            val mocks = mutableListOf<MockRule>()
+            val arr = json.optJSONArray("mocks") ?: return jsonResponse("""{"error":"missing mocks array"}""", Response.Status.BAD_REQUEST)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val urlPattern = obj.getString("url_pattern")
+                val method = obj.optString("method", "GET")
+                val respObj = obj.getJSONObject("response")
+                val status = respObj.optInt("status", 200)
+                val respBody = respObj.optString("body", "{}")
+                val headers = mutableMapOf<String, String>()
+                respObj.optJSONObject("headers")?.let { h ->
+                    h.keys().forEach { k -> headers[k] = h.getString(k) }
+                }
+                mocks.add(MockRule(urlPattern, method, MockResponse(status, respBody, headers)))
+            }
+            mockRegistry.register(mocks)
+            installMockInterceptor()
+            return jsonResponse("""{"mocked":true,"count":${mocks.size}}""")
+        } catch (e: Exception) {
+            return jsonResponse("""{"error":"${escape(e.message ?: "")}"}""", Response.Status.BAD_REQUEST)
+        }
+    }
+
+    private fun handleUnmock(session: IHTTPSession): Response {
+        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (contentLength > 0) {
+            val buf = ByteArray(contentLength)
+            session.inputStream.read(buf, 0, contentLength)
+            String(buf)
+        } else "{}"
+        val urlPattern = try { org.json.JSONObject(body).optString("url_pattern", "") } catch (_: Exception) { "" }
+        if (urlPattern.isNotEmpty()) {
+            mockRegistry.clear(urlPattern)
+        } else {
+            mockRegistry.clear()
+        }
+        return jsonResponse("""{"mocked":false}""")
+    }
+
+    private var mockInterceptorInstalled = false
+
+    private fun installMockInterceptor() {
+        if (mockInterceptorInstalled) return
+        val app = appRef?.get() ?: return
+        try {
+            val componentMethod = app.javaClass.getMethod("generatedComponent")
+            val component = componentMethod.invoke(app)
+            for (m in component.javaClass.methods) {
+                if (m.parameterCount == 0 && m.returnType.name.contains("RestApi")) {
+                    val restApi = m.invoke(component)
+                    val handler = java.lang.reflect.Proxy.getInvocationHandler(restApi)
+                    val retrofitField = handler.javaClass.getDeclaredField("retrofit")
+                    retrofitField.isAccessible = true
+                    val retrofit = retrofitField.get(handler) as retrofit2.Retrofit
+                    val factoryField = retrofit2.Retrofit::class.java.getDeclaredField("callFactory")
+                    factoryField.isAccessible = true
+                    val client = factoryField.get(retrofit) as okhttp3.OkHttpClient
+                    val newClient = client.newBuilder()
+                        .addInterceptor(MockInterceptor(mockRegistry))
+                        .build()
+                    factoryField.set(retrofit, newClient)
+                    mockInterceptorInstalled = true
+                    android.util.Log.i("SemanticAgent", "MockInterceptor installed")
+                    break
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SemanticAgent", "Failed to install MockInterceptor: ${e.message}")
+        }
     }
 
     private val eventQueue = java.util.concurrent.LinkedBlockingQueue<String>()
@@ -321,9 +528,9 @@ class SemanticServer private constructor(
 
     private fun findScrollable(view: android.view.View): android.view.View? {
         val className = view.javaClass.name
-        if (className.contains("RecyclerView") && view.canScrollVertically(1)) return view
+        if (className.contains("RecyclerView") && (view.canScrollVertically(1) || view.canScrollVertically(-1))) return view
         if (view is android.widget.ScrollView) return view
-        if (className.contains("NestedScrollView") && view.canScrollVertically(1)) return view
+        if (className.contains("NestedScrollView")) return view
         if (view is android.widget.HorizontalScrollView) return null
         if (view is android.view.ViewGroup) {
             for (i in 0 until view.childCount) {
@@ -512,6 +719,7 @@ class SemanticServer private constructor(
         val typeFilter = extractJsonString(body, "type")
             ?: extractNestedJsonString(body, "match", "type")
 
+        idleRegistry.waitForIdle(listOf("activity_transition"), 5000)
         idleRegistry.waitForIdle(resourceNames, 5000)
 
         val activity = currentActivity?.get()
