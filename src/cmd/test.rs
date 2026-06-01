@@ -1006,7 +1006,16 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
         if !agent_ready {
-            logger.error("setup", "agent not ready after 5s, proceeding anyway".into());
+            return (TestResult {
+                id: spec.id.clone(), name: spec.name.clone(),
+                status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+                failure: Some(FailureDetail {
+                    step: 0,
+                    description: "agent not ready after 5s — cannot proceed without agent".into(),
+                    screenshot: None,
+                }),
+                log: logger.entries(),
+            }, step_logs);
         }
     }
 
@@ -1014,12 +1023,6 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     let perm_start = std::time::Instant::now();
     grant_all_permissions_with_runner(dev, pkg, &setup_runner);
     logger.setup("grant permissions", perm_start.elapsed().as_millis() as u64);
-
-    // Apply mocks after agent is ready (registry cleared by force-stop)
-    if let Some(body) = mock_body {
-        let mock_url = format!("{base}/mock");
-        let _ = setup_runner.curl_with_deadline(&mock_url, "POST", Some(body));
-    }
 
     // Handle logged_in precondition (HTTP via agent)
     if let Some(ref pre) = spec.precondition {
@@ -1035,7 +1038,35 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 "-n", &main_activity,
             ]);
             std::thread::sleep(std::time::Duration::from_secs(3));
+            // Re-check agent health after pm clear + relaunch
+            for _ in 0..10 {
+                if setup_runner.expired() { break; }
+                if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
+                    if body.contains("semantic-agent") { break; }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
             grant_all_permissions_with_runner(dev, pkg, &setup_runner);
+        }
+    }
+
+    // Apply mocks AFTER precondition handling (pm clear destroys in-memory mock state)
+    if let Some(body) = mock_body {
+        let mock_url = format!("{base}/mock");
+        match setup_runner.curl_with_deadline(&mock_url, "POST", Some(body)) {
+            Ok(_) => logger.setup("mock registration", 0),
+            Err(e) => {
+                return (TestResult {
+                    id: spec.id.clone(), name: spec.name.clone(),
+                    status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+                    failure: Some(FailureDetail {
+                        step: 0,
+                        description: format!("mock registration failed: {e}"),
+                        screenshot: None,
+                    }),
+                    log: logger.entries(),
+                }, step_logs);
+            }
         }
     }
 
@@ -1355,7 +1386,8 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 }
                 let type_body = type_json.to_string();
                 let type_url = format!("{}/type", agent_base_url());
-                let _ = runner.curl_with_deadline(&type_url, "POST", Some(&type_body));
+                runner.curl_with_deadline(&type_url, "POST", Some(&type_body))
+                    .map_err(|e| format!("type via agent failed: {e}"))?;
             } else {
                 // Search/general: use adb input text (triggers TextWatcher naturally)
                 runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
