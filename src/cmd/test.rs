@@ -848,13 +848,12 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     }
     dismiss_keyboard_if_visible(dev, runner);
 
-    // Click "Log in" submit via agent /click (bypasses touch pipeline)
-    let click_body = serde_json::json!({"content_fuzzy": "Log in"}).to_string();
+    // Click login submit via resource_id (disambiguates from title/tab)
+    let click_body = serde_json::json!({"resource_id": "signButton"}).to_string();
     let click_url = format!("{base}/click");
     match runner.curl_with_deadline(&click_url, "POST", Some(&click_body)) {
         Ok(resp) if resp.contains("clicked") => {},
         _ => {
-            // Fallback: tap via coordinates
             if let Err(e) = tap_target("Log in") {
                 eprintln!("  login: couldn't find submit 'Log in': {e}");
                 return;
@@ -877,6 +876,12 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
         "idle_resources": ["network"],
         "timeout": 10,
     });
+    let _ = runner.curl_with_deadline(
+        &format!("{base}/query-when-idle"), "POST", Some(&sync_body.to_string())
+    );
+
+    // Second network idle cycle to ensure syncUserInfo Room insert completes
+    std::thread::sleep(std::time::Duration::from_secs(3));
     let _ = runner.curl_with_deadline(
         &format!("{base}/query-when-idle"), "POST", Some(&sync_body.to_string())
     );
