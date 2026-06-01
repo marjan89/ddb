@@ -516,10 +516,16 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
 
         let started = now_iso();
         let tc_hard_timeout = {
-            let step_count = spec.steps.len() as u64;
-            let steps_budget = 120u64.max(args.step_timeout * step_count).min(300);
-            let setup_budget = 120u64;
-            std::time::Duration::from_secs(steps_budget + setup_budget)
+            let env_timeout = std::env::var("DDB_TC_TIMEOUT").ok()
+                .and_then(|v| v.parse::<u64>().ok());
+            if let Some(t) = env_timeout {
+                std::time::Duration::from_secs(t)
+            } else {
+                let step_count = spec.steps.len() as u64;
+                let steps_budget = 120u64.max(args.step_timeout * step_count).min(600);
+                let setup_budget = 120u64;
+                std::time::Duration::from_secs(steps_budget + setup_budget)
+            }
         };
         let spec_clone = spec.clone();
         let dev_clone = dev.clone();
