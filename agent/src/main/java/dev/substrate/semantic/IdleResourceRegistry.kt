@@ -10,12 +10,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 interface IdleResource {
     val name: String
+
     fun isIdle(): Boolean
 }
 
 class UIThreadIdleResource : IdleResource {
     override val name = "ui_thread"
+
     @Volatile private var lastIdle = false
+
     @Volatile private var lastCheck = 0L
     private val handler = Handler(Looper.getMainLooper())
 
@@ -25,13 +28,15 @@ class UIThreadIdleResource : IdleResource {
 
     private fun schedulePoll() {
         handler.postDelayed({
-            Looper.myQueue().addIdleHandler(object : MessageQueue.IdleHandler {
-                override fun queueIdle(): Boolean {
-                    lastIdle = true
-                    lastCheck = System.currentTimeMillis()
-                    return false
-                }
-            })
+            Looper.myQueue().addIdleHandler(
+                object : MessageQueue.IdleHandler {
+                    override fun queueIdle(): Boolean {
+                        lastIdle = true
+                        lastCheck = System.currentTimeMillis()
+                        return false
+                    }
+                },
+            )
             handler.postDelayed({
                 if (System.currentTimeMillis() - lastCheck > 150) {
                     lastIdle = false
@@ -44,8 +49,11 @@ class UIThreadIdleResource : IdleResource {
     override fun isIdle(): Boolean = lastIdle
 }
 
-class LayoutIdleResource(private val activityProvider: () -> android.app.Activity?) : IdleResource {
+class LayoutIdleResource(
+    private val activityProvider: () -> android.app.Activity?,
+) : IdleResource {
     override val name = "layout"
+
     @Volatile private var stableCount = 0
     private val handler = Handler(Looper.getMainLooper())
 
@@ -68,8 +76,11 @@ class LayoutIdleResource(private val activityProvider: () -> android.app.Activit
     override fun isIdle(): Boolean = stableCount >= 3
 }
 
-class ScrollIdleResource(private val activityProvider: () -> android.app.Activity?) : IdleResource {
+class ScrollIdleResource(
+    private val activityProvider: () -> android.app.Activity?,
+) : IdleResource {
     override val name = "scroll"
+
     @Volatile private var lastIdle = true
     private val handler = Handler(Looper.getMainLooper())
 
@@ -93,7 +104,8 @@ class ScrollIdleResource(private val activityProvider: () -> android.app.Activit
                 val m = view.javaClass.getMethod("getScrollState")
                 val state = m.invoke(view) as Int
                 if (state != 0) return false
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
         if (view is android.view.ViewGroup) {
             for (i in 0 until view.childCount) {
@@ -104,8 +116,11 @@ class ScrollIdleResource(private val activityProvider: () -> android.app.Activit
     }
 }
 
-class NetworkIdleResource(private val appContext: android.content.Context) : IdleResource {
+class NetworkIdleResource(
+    private val appContext: android.content.Context,
+) : IdleResource {
     override val name = "network"
+
     @Volatile private var lastIdle = true
     private var dispatcher: okhttp3.Dispatcher? = null
     private var discoveryAttempted = false
@@ -120,7 +135,9 @@ class NetworkIdleResource(private val appContext: android.content.Context) : Idl
             for (m in component.javaClass.methods) {
                 if (m.parameterCount == 0 && m.returnType.name.contains("RestApi")) {
                     val restApi = m.invoke(component)
-                    val handler = java.lang.reflect.Proxy.getInvocationHandler(restApi)
+                    val handler =
+                        java.lang.reflect.Proxy
+                            .getInvocationHandler(restApi)
                     val retrofitField = handler.javaClass.getDeclaredField("retrofit")
                     retrofitField.isAccessible = true
                     val retrofit = retrofitField.get(handler) as retrofit2.Retrofit
@@ -131,7 +148,8 @@ class NetworkIdleResource(private val appContext: android.content.Context) : Idl
                     break
                 }
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
         return dispatcher
     }
 
@@ -144,9 +162,13 @@ class NetworkIdleResource(private val appContext: android.content.Context) : Idl
     }
 }
 
-class DialogIdleResource(private val activityProvider: () -> android.app.Activity?) : IdleResource {
+class DialogIdleResource(
+    private val activityProvider: () -> android.app.Activity?,
+) : IdleResource {
     override val name = "dialog"
+
     @Volatile private var windowCount = 1
+
     @Volatile private var stableSince = System.currentTimeMillis()
     private var lastCount = 1
     private val handler = Handler(Looper.getMainLooper())
@@ -187,9 +209,13 @@ class DialogIdleResource(private val activityProvider: () -> android.app.Activit
     }
 }
 
-class ActivityTransitionIdleResource : IdleResource, android.app.Application.ActivityLifecycleCallbacks {
+class ActivityTransitionIdleResource :
+    IdleResource,
+    android.app.Application.ActivityLifecycleCallbacks {
     override val name = "activity_transition"
+
     @Volatile private var transitioning = false
+
     @Volatile private var transitionStart = 0L
 
     override fun onActivityPaused(activity: android.app.Activity) {
@@ -207,10 +233,20 @@ class ActivityTransitionIdleResource : IdleResource, android.app.Application.Act
         return (System.currentTimeMillis() - transitionStart) > 5000
     }
 
-    override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
+    override fun onActivityCreated(
+        activity: android.app.Activity,
+        savedInstanceState: android.os.Bundle?,
+    ) {}
+
     override fun onActivityStarted(activity: android.app.Activity) {}
+
     override fun onActivityStopped(activity: android.app.Activity) {}
-    override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+
+    override fun onActivitySaveInstanceState(
+        activity: android.app.Activity,
+        outState: android.os.Bundle,
+    ) {}
+
     override fun onActivityDestroyed(activity: android.app.Activity) {}
 }
 
@@ -226,15 +262,19 @@ class IdleResourceRegistry {
     }
 
     fun isIdle(resourceNames: List<String>? = null): Boolean {
-        val targets = if (resourceNames.isNullOrEmpty()) {
-            resources.values
-        } else {
-            resourceNames.mapNotNull { resources[it] }
-        }
+        val targets =
+            if (resourceNames.isNullOrEmpty()) {
+                resources.values
+            } else {
+                resourceNames.mapNotNull { resources[it] }
+            }
         return targets.all { it.isIdle() }
     }
 
-    fun waitForIdle(resourceNames: List<String>? = null, timeoutMs: Long = 5000): Boolean {
+    fun waitForIdle(
+        resourceNames: List<String>? = null,
+        timeoutMs: Long = 5000,
+    ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (isIdle(resourceNames)) return true

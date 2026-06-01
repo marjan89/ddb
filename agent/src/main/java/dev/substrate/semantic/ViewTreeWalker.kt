@@ -6,10 +6,10 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.VectorDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.VectorDrawable
 import android.os.Build
 import android.view.View
 import android.view.ViewGroup
@@ -22,7 +22,6 @@ import java.util.Locale
 import java.util.TimeZone
 
 object ViewTreeWalker {
-
     @Volatile
     var lastDebugLog: String = ""
         private set
@@ -41,9 +40,12 @@ object ViewTreeWalker {
                 if (field.type != Int::class.javaPrimitiveType) continue
                 try {
                     val resId = field.getInt(null)
-                    val typeface = if (Build.VERSION.SDK_INT >= 26) {
-                        context.resources.getFont(resId)
-                    } else null
+                    val typeface =
+                        if (Build.VERSION.SDK_INT >= 26) {
+                            context.resources.getFont(resId)
+                        } else {
+                            null
+                        }
                     if (typeface != null) {
                         val hash = computeGlyphHash(typeface)
                         fontFingerprints[hash] = field.name
@@ -62,11 +64,12 @@ object ViewTreeWalker {
     }
 
     private fun computeGlyphHash(typeface: Typeface): Long {
-        val paint = android.graphics.Paint().apply {
-            this.typeface = typeface
-            textSize = 48f
-            isAntiAlias = false
-        }
+        val paint =
+            android.graphics.Paint().apply {
+                this.typeface = typeface
+                textSize = 48f
+                isAntiAlias = false
+            }
         val text = "HgQW"
         val w = paint.measureText(text).toInt().coerceAtLeast(1)
         val h = 64
@@ -114,9 +117,10 @@ object ViewTreeWalker {
 
             val isGroup = view is ViewGroup
             val childCount = if (isGroup) (view as ViewGroup).childCount else 0
-            val effectivelyHidden = parentHidden
-                || (view.visibility == View.INVISIBLE)
-                || (view.alpha == 0f)
+            val effectivelyHidden =
+                parentHidden ||
+                    (view.visibility == View.INVISIBLE) ||
+                    (view.alpha == 0f)
 
             if (effectivelyHidden && childCount == 0) {
                 log.appendLine("SKIP $tag reason=hidden_leaf hidden=$parentHidden vis=${view.visibility} alpha=${view.alpha}")
@@ -129,12 +133,13 @@ object ViewTreeWalker {
                 return
             }
 
-            val bounds = Bounds(
-                x = rect.left,
-                y = rect.top,
-                w = rect.right - rect.left,
-                h = rect.bottom - rect.top,
-            )
+            val bounds =
+                Bounds(
+                    x = rect.left,
+                    y = rect.top,
+                    w = rect.right - rect.left,
+                    h = rect.bottom - rect.top,
+                )
             if (bounds.w <= 0 || bounds.h <= 0) {
                 log.appendLine("SKIP $tag reason=zero_size bounds=$bounds")
                 return
@@ -146,7 +151,9 @@ object ViewTreeWalker {
             if (effectivelyHidden) {
                 val element = buildElement(view, bounds, density, nextZ(), effectiveExternal)
                 elements.add(element)
-                log.appendLine("EMIT $tag z=${element.zIndex} type=${element.type} bounds=$bounds hidden_container=true vis=${view.visibility} alpha=${view.alpha} children=$childCount")
+                log.appendLine(
+                    "EMIT $tag z=${element.zIndex} type=${element.type} bounds=$bounds hidden_container=true vis=${view.visibility} alpha=${view.alpha} children=$childCount",
+                )
                 if (!isExternal && isGroup) {
                     val group = view as ViewGroup
                     for (i in 0 until group.childCount) {
@@ -158,7 +165,14 @@ object ViewTreeWalker {
 
             val element = buildElement(view, bounds, density, nextZ(), effectiveExternal)
             elements.add(element)
-            log.appendLine("EMIT $tag z=${element.zIndex} type=${element.type} bounds=$bounds vis=V alpha=${view.alpha} accessible=${view.isImportantForAccessibility} children=$childCount clickable=${view.isClickable} content=${element.content?.take(30) ?: "null"}")
+            val c = element.content?.take(30) ?: "null"
+            log.appendLine(
+                "EMIT $tag z=${element.zIndex} type=${element.type}" +
+                    " bounds=$bounds vis=V alpha=${view.alpha}" +
+                    " accessible=${view.isImportantForAccessibility}" +
+                    " children=$childCount clickable=${view.isClickable}" +
+                    " content=$c",
+            )
 
             if (isExternal) return
 
@@ -179,11 +193,12 @@ object ViewTreeWalker {
         sdf.timeZone = TimeZone.getTimeZone("UTC")
 
         val metrics = activity.resources.displayMetrics
-        val viewport = ViewportInfo(
-            width = metrics.widthPixels,
-            height = metrics.heightPixels,
-            density = density,
-        )
+        val viewport =
+            ViewportInfo(
+                width = metrics.widthPixels,
+                height = metrics.heightPixels,
+                density = density,
+            )
 
         return SemanticSchema(
             screen = activity.javaClass.simpleName,
@@ -195,7 +210,10 @@ object ViewTreeWalker {
         )
     }
 
-    private fun removeGhostTouchTargets(elements: MutableList<SemanticElement>, log: StringBuilder) {
+    private fun removeGhostTouchTargets(
+        elements: MutableList<SemanticElement>,
+        log: StringBuilder,
+    ) {
         val toRemove = mutableSetOf<Int>()
         for (i in elements.indices) {
             val a = elements[i]
@@ -246,17 +264,20 @@ object ViewTreeWalker {
                 textColor = colorToHex(view.currentTextColor)
                 type = "input"
             }
+
             is TextView -> {
                 content = view.text?.toString()
                 font = extractFont(view, density)
                 textColor = colorToHex(view.currentTextColor)
                 lineCount = view.lineCount.takeIf { it > 0 }
-                truncated = view.layout?.let { layout ->
-                    val lastLine = layout.lineCount - 1
-                    lastLine >= 0 && layout.getEllipsisCount(lastLine) > 0
-                }
+                truncated =
+                    view.layout?.let { layout ->
+                        val lastLine = layout.lineCount - 1
+                        lastLine >= 0 && layout.getEllipsisCount(lastLine) > 0
+                    }
                 type = if (view.isClickable) "button" else "text"
             }
+
             is ImageView -> {
                 content = view.contentDescription?.toString()
                 textColor = view.imageTintList?.defaultColor?.let { colorToHex(it) }
@@ -266,45 +287,54 @@ object ViewTreeWalker {
                 imagePath = imgInfo?.third
                 type = "image"
             }
+
             else -> {
                 content = view.contentDescription?.toString()
-                type = when {
-                    view.isClickable -> "button"
-                    view is ViewGroup -> "container"
-                    else -> "view"
-                }
+                type =
+                    when {
+                        view.isClickable -> "button"
+                        view is ViewGroup -> "container"
+                        else -> "view"
+                    }
             }
         }
 
-        val id = when {
-            !content.isNullOrEmpty() -> slugify(content)
-            resourceId != null -> resourceId.lowercase()
-            else -> "${view.javaClass.simpleName.lowercase()}_${bounds.x}_${bounds.y}"
-        }
+        val id =
+            when {
+                !content.isNullOrEmpty() -> slugify(content)
+                resourceId != null -> resourceId.lowercase()
+                else -> "${view.javaClass.simpleName.lowercase()}_${bounds.x}_${bounds.y}"
+            }
 
-        val padding = if (view.paddingTop > 0 || view.paddingBottom > 0 ||
-            view.paddingStart > 0 || view.paddingEnd > 0
-        ) {
-            PaddingInfo(
-                top = (view.paddingTop / density).toInt(),
-                bottom = (view.paddingBottom / density).toInt(),
-                start = (view.paddingStart / density).toInt(),
-                end = (view.paddingEnd / density).toInt(),
-            )
-        } else null
-
-        val margin = (view.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
-            if (lp.topMargin > 0 || lp.bottomMargin > 0 ||
-                lp.marginStart > 0 || lp.marginEnd > 0
+        val padding =
+            if (view.paddingTop > 0 || view.paddingBottom > 0 ||
+                view.paddingStart > 0 || view.paddingEnd > 0
             ) {
-                MarginInfo(
-                    top = (lp.topMargin / density).toInt(),
-                    bottom = (lp.bottomMargin / density).toInt(),
-                    start = (lp.marginStart / density).toInt(),
-                    end = (lp.marginEnd / density).toInt(),
+                PaddingInfo(
+                    top = (view.paddingTop / density).toInt(),
+                    bottom = (view.paddingBottom / density).toInt(),
+                    start = (view.paddingStart / density).toInt(),
+                    end = (view.paddingEnd / density).toInt(),
                 )
-            } else null
-        }
+            } else {
+                null
+            }
+
+        val margin =
+            (view.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
+                if (lp.topMargin > 0 || lp.bottomMargin > 0 ||
+                    lp.marginStart > 0 || lp.marginEnd > 0
+                ) {
+                    MarginInfo(
+                        top = (lp.topMargin / density).toInt(),
+                        bottom = (lp.bottomMargin / density).toInt(),
+                        start = (lp.marginStart / density).toInt(),
+                        end = (lp.marginEnd / density).toInt(),
+                    )
+                } else {
+                    null
+                }
+            }
 
         val elev = view.elevation + view.translationZ
         val elevDp = if (elev > 0f) elev / density else null
@@ -355,22 +385,29 @@ object ViewTreeWalker {
         }
     }
 
-    private fun extractFont(tv: TextView, density: Float): FontInfo {
+    private fun extractFont(
+        tv: TextView,
+        density: Float,
+    ): FontInfo {
         val typeface = tv.typeface ?: Typeface.DEFAULT
-        val weight = if (Build.VERSION.SDK_INT >= 28) typeface.weight else {
-            if (typeface.isBold) 700 else 400
-        }
-        val weightName = when {
-            weight < 200 -> "thin"
-            weight < 300 -> "extralight"
-            weight < 400 -> "light"
-            weight < 500 -> "regular"
-            weight < 600 -> "medium"
-            weight < 700 -> "semibold"
-            weight < 800 -> "bold"
-            weight < 900 -> "extrabold"
-            else -> "black"
-        }
+        val weight =
+            if (Build.VERSION.SDK_INT >= 28) {
+                typeface.weight
+            } else {
+                if (typeface.isBold) 700 else 400
+            }
+        val weightName =
+            when {
+                weight < 200 -> "thin"
+                weight < 300 -> "extralight"
+                weight < 400 -> "light"
+                weight < 500 -> "regular"
+                weight < 600 -> "medium"
+                weight < 700 -> "semibold"
+                weight < 800 -> "bold"
+                weight < 900 -> "extrabold"
+                else -> "black"
+            }
 
         val fingerprintMatch = lookupFontByFingerprint(typeface)
         val family = fingerprintMatch?.first ?: extractFontFamily(tv)
@@ -392,18 +429,19 @@ object ViewTreeWalker {
         return Pair(family, weightFromName)
     }
 
-    private val weightSuffixes = listOf(
-        "_extra_bold" to "extrabold",
-        "_semi_bold" to "semibold",
-        "_semibold" to "semibold",
-        "_bold" to "bold",
-        "_medium" to "medium",
-        "_regular" to "regular",
-        "_light" to "light",
-        "_extra_light" to "extralight",
-        "_thin" to "thin",
-        "_black" to "black",
-    )
+    private val weightSuffixes =
+        listOf(
+            "_extra_bold" to "extrabold",
+            "_semi_bold" to "semibold",
+            "_semibold" to "semibold",
+            "_bold" to "bold",
+            "_medium" to "medium",
+            "_regular" to "regular",
+            "_light" to "light",
+            "_extra_light" to "extralight",
+            "_thin" to "thin",
+            "_black" to "black",
+        )
 
     private fun extractWeightFromName(name: String): String? {
         var lower = name.lowercase()
@@ -421,14 +459,16 @@ object ViewTreeWalker {
             val family = ta.getString(0)
             ta.recycle()
             if (!family.isNullOrEmpty()) return cleanFontFamily(family)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         try {
             val field = Typeface::class.java.getDeclaredField("mFamilyName")
             field.isAccessible = true
             val name = field.get(tv.typeface) as? String
             if (name != null && name != "sans-serif") return cleanFontFamily(name)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         return "sans-serif"
     }
@@ -439,59 +479,91 @@ object ViewTreeWalker {
         if (name.startsWith("@font/")) name = name.removePrefix("@font/")
         if (name.endsWith(".ttf") || name.endsWith(".otf")) name = name.substringBeforeLast('.')
         if (name.endsWith("_italic")) name = name.removeSuffix("_italic")
-        for (suffix in listOf("_extra_bold", "_semi_bold", "_semibold", "_bold", "_medium", "_regular", "_extra_light", "_light", "_thin", "_black")) {
+        for (suffix in listOf(
+            "_extra_bold",
+            "_semi_bold",
+            "_semibold",
+            "_bold",
+            "_medium",
+            "_regular",
+            "_extra_light",
+            "_light",
+            "_thin",
+            "_black",
+        )) {
             if (name.endsWith(suffix)) return name.removeSuffix(suffix)
         }
         return name
     }
 
-    private fun extractBackgroundColor(view: View): String? {
-        return extractDrawableColor(view.background)
-    }
+    private fun extractBackgroundColor(view: View): String? = extractDrawableColor(view.background)
 
-    private fun extractDrawableColor(drawable: android.graphics.drawable.Drawable?): String? {
-        return when (drawable) {
-            is ColorDrawable -> colorToHex(drawable.color)
+    private fun extractDrawableColor(drawable: android.graphics.drawable.Drawable?): String? =
+        when (drawable) {
+            is ColorDrawable -> {
+                colorToHex(drawable.color)
+            }
+
             is GradientDrawable -> {
                 try {
                     val field = GradientDrawable::class.java.getDeclaredField("mSolidColors")
                     field.isAccessible = true
                     (field.get(drawable) as? android.content.res.ColorStateList)?.defaultColor?.let { colorToHex(it) }
-                } catch (_: Exception) { null }
+                } catch (_: Exception) {
+                    null
+                }
             }
+
             is RippleDrawable -> {
                 if (drawable.numberOfLayers > 0) {
                     extractDrawableColor(drawable.getDrawable(0))
-                } else null
+                } else {
+                    null
+                }
             }
-            else -> null
-        }
-    }
 
-    private fun extractImageInfo(view: ImageView, elementId: String): Triple<String, String, String>? {
+            else -> {
+                null
+            }
+        }
+
+    private fun extractImageInfo(
+        view: ImageView,
+        elementId: String,
+    ): Triple<String, String, String>? {
         val drawable = view.drawable ?: return null
 
-        val resName = try {
-            var cls: Class<*> = view.javaClass
-            var field: java.lang.reflect.Field? = null
-            while (cls != Any::class.java) {
-                try { field = cls.getDeclaredField("mResource"); break } catch (_: NoSuchFieldException) {}
-                cls = cls.superclass
+        val resName =
+            try {
+                var cls: Class<*> = view.javaClass
+                var field: java.lang.reflect.Field? = null
+                while (cls != Any::class.java) {
+                    try {
+                        field = cls.getDeclaredField("mResource")
+                        break
+                    } catch (_: NoSuchFieldException) {
+                    }
+                    cls = cls.superclass
+                }
+                if (field != null) {
+                    field.isAccessible = true
+                    val resId = field.getInt(view)
+                    if (resId != 0 && resId != -1) view.resources.getResourceEntryName(resId) else null
+                } else {
+                    null
+                }
+            } catch (_: Exception) {
+                null
             }
-            if (field != null) {
-                field.isAccessible = true
-                val resId = field.getInt(view)
-                if (resId != 0 && resId != -1) view.resources.getResourceEntryName(resId) else null
-            } else null
-        } catch (_: Exception) { null }
 
         val name = resName ?: elementId
 
-        val imgType = when (drawable) {
-            is VectorDrawable -> "vector"
-            is BitmapDrawable -> if (resName != null) "raster" else "loaded"
-            else -> "raster"
-        }
+        val imgType =
+            when (drawable) {
+                is VectorDrawable -> "vector"
+                is BitmapDrawable -> if (resName != null) "raster" else "loaded"
+                else -> "raster"
+            }
 
         val dir = imageOutputDir ?: return Triple(name, imgType, "images/$name.png")
         val fileName = "$name.png"
@@ -526,12 +598,17 @@ object ViewTreeWalker {
                 val field = GradientDrawable::class.java.getDeclaredField("mRadius")
                 field.isAccessible = true
                 field.getFloat(bg).takeIf { it > 0f }
-            } catch (_: Exception) { null }
+            } catch (_: Exception) {
+                null
+            }
         }
         return null
     }
 
-    private fun extractBorder(view: View, density: Float): BorderInfo? {
+    private fun extractBorder(
+        view: View,
+        density: Float,
+    ): BorderInfo? {
         val bg = view.background
         if (bg is GradientDrawable) {
             return try {
@@ -543,33 +620,40 @@ object ViewTreeWalker {
                 colorField.isAccessible = true
                 val strokeColor = (colorField.get(bg) as? android.content.res.ColorStateList)?.defaultColor?.let { colorToHex(it) }
                 BorderInfo(width = strokeWidth / density, color = strokeColor)
-            } catch (_: Exception) { null }
+            } catch (_: Exception) {
+                null
+            }
         }
         return null
     }
 
     private fun extractGradient(view: View): GradientInfo? {
         val bg = view.background
-        val drawable = when (bg) {
-            is GradientDrawable -> bg
-            is RippleDrawable -> if (bg.numberOfLayers > 0) bg.getDrawable(0) as? GradientDrawable else null
-            else -> null
-        } ?: return null
+        val drawable =
+            when (bg) {
+                is GradientDrawable -> bg
+                is RippleDrawable -> if (bg.numberOfLayers > 0) bg.getDrawable(0) as? GradientDrawable else null
+                else -> null
+            } ?: return null
 
         if (Build.VERSION.SDK_INT < 24) return null
         val colors = drawable.colors ?: return null
         if (colors.size < 2) return null
 
-        val type = when (drawable.gradientType) {
-            GradientDrawable.LINEAR_GRADIENT -> "linear"
-            GradientDrawable.RADIAL_GRADIENT -> "radial"
-            GradientDrawable.SWEEP_GRADIENT -> "sweep"
-            else -> "linear"
-        }
+        val type =
+            when (drawable.gradientType) {
+                GradientDrawable.LINEAR_GRADIENT -> "linear"
+                GradientDrawable.RADIAL_GRADIENT -> "radial"
+                GradientDrawable.SWEEP_GRADIENT -> "sweep"
+                else -> "linear"
+            }
 
-        val orientation = if (drawable.gradientType == GradientDrawable.LINEAR_GRADIENT) {
-            drawable.orientation?.name?.lowercase()
-        } else null
+        val orientation =
+            if (drawable.gradientType == GradientDrawable.LINEAR_GRADIENT) {
+                drawable.orientation?.name?.lowercase()
+            } else {
+                null
+            }
 
         return GradientInfo(
             type = type,
@@ -578,10 +662,17 @@ object ViewTreeWalker {
         )
     }
 
-    private val externalRenderPatterns = listOf(
-        "MapView", "MapFragment", "SurfaceView", "TextureView",
-        "VideoView", "WebView", "GLSurfaceView", "ExoPlayerView",
-    )
+    private val externalRenderPatterns =
+        listOf(
+            "MapView",
+            "MapFragment",
+            "SurfaceView",
+            "TextureView",
+            "VideoView",
+            "WebView",
+            "GLSurfaceView",
+            "ExoPlayerView",
+        )
 
     private fun isExternalSurface(view: View): Boolean {
         var cls: Class<*>? = view.javaClass
@@ -619,7 +710,11 @@ object ViewTreeWalker {
 
     private fun extractResourceId(view: View): String? {
         if (view.id == View.NO_ID) return null
-        return try { view.resources.getResourceEntryName(view.id) } catch (_: Exception) { null }
+        return try {
+            view.resources.getResourceEntryName(view.id)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun colorToHex(color: Int): String {
@@ -627,21 +722,27 @@ object ViewTreeWalker {
         val r = (color shr 16) and 0xFF
         val g = (color shr 8) and 0xFF
         val b = color and 0xFF
-        return if (a == 255) String.format("#%02X%02X%02X", r, g, b)
-        else String.format("#%02X%02X%02X%02X", a, r, g, b)
+        return if (a == 255) {
+            String.format("#%02X%02X%02X", r, g, b)
+        } else {
+            String.format("#%02X%02X%02X%02X", a, r, g, b)
+        }
     }
 
-    private fun boundsContains(outer: Bounds, inner: Bounds, tolerance: Int = 2): Boolean {
-        return inner.x >= outer.x - tolerance && inner.y >= outer.y - tolerance &&
+    private fun boundsContains(
+        outer: Bounds,
+        inner: Bounds,
+        tolerance: Int = 2,
+    ): Boolean =
+        inner.x >= outer.x - tolerance && inner.y >= outer.y - tolerance &&
             inner.x + inner.w <= outer.x + outer.w + tolerance &&
             inner.y + inner.h <= outer.y + outer.h + tolerance
-    }
 
-    private fun slugify(s: String): String {
-        return s.map { c -> if (c.isLetterOrDigit()) c.lowercaseChar() else '_' }
+    private fun slugify(s: String): String =
+        s
+            .map { c -> if (c.isLetterOrDigit()) c.lowercaseChar() else '_' }
             .joinToString("")
             .split("_")
             .filter { it.isNotEmpty() }
             .joinToString("_")
-    }
 }

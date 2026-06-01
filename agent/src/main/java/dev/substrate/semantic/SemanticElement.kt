@@ -30,19 +30,49 @@ data class SemanticElement(
     val tapTarget: Bounds? = null,
 )
 
-data class Bounds(val x: Int, val y: Int, val w: Int, val h: Int)
+data class Bounds(
+    val x: Int,
+    val y: Int,
+    val w: Int,
+    val h: Int,
+)
 
-data class BorderInfo(val width: Float, val color: String?)
+data class BorderInfo(
+    val width: Float,
+    val color: String?,
+)
 
-data class GradientInfo(val type: String, val colors: List<String>, val orientation: String?)
+data class GradientInfo(
+    val type: String,
+    val colors: List<String>,
+    val orientation: String?,
+)
 
-data class FontInfo(val family: String, val weight: String, val size: Float)
+data class FontInfo(
+    val family: String,
+    val weight: String,
+    val size: Float,
+)
 
-data class PaddingInfo(val top: Int, val bottom: Int, val start: Int, val end: Int)
+data class PaddingInfo(
+    val top: Int,
+    val bottom: Int,
+    val start: Int,
+    val end: Int,
+)
 
-data class MarginInfo(val top: Int, val bottom: Int, val start: Int, val end: Int)
+data class MarginInfo(
+    val top: Int,
+    val bottom: Int,
+    val start: Int,
+    val end: Int,
+)
 
-data class ViewportInfo(val width: Int, val height: Int, val density: Float)
+data class ViewportInfo(
+    val width: Int,
+    val height: Int,
+    val density: Float,
+)
 
 data class ScrollCaptureInfo(
     val scrollView: Bounds,

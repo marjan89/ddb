@@ -13,14 +13,14 @@ class SemanticServer private constructor(
     private val gitHash: String = "",
     private val buildTime: String = "",
 ) : NanoHTTPD(port) {
-
     private var currentActivity: WeakReference<Activity>? = null
     private var appRef: WeakReference<Application>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
     @Volatile private var cachedSchema: SemanticSchema? = null
     private var overlayView: android.view.View? = null
     val idleRegistry = IdleResourceRegistry()
-    val mockRegistry = MockRegistry()
+    val mockRegistry = MockRegistry.shared
 
     private data class RequestLogEntry(
         val ts: Long,
@@ -55,39 +55,97 @@ class SemanticServer private constructor(
         return response
     }
 
-    private fun serveInner(session: IHTTPSession, uri: String): Response {
-        return when {
+    private fun serveInner(
+        session: IHTTPSession,
+        uri: String,
+    ): Response =
+        when {
             uri == "/semantic" -> {
                 val scrollParam = session.parms?.get("scroll")
-                val scrollSteps = scrollParam?.toIntOrNull()
-                    ?: if (scrollParam?.toBooleanStrictOrNull() == true) 5 else 0
+                val scrollSteps =
+                    scrollParam?.toIntOrNull()
+                        ?: if (scrollParam?.toBooleanStrictOrNull() == true) 5 else 0
                 if (scrollSteps > 0) handleSemanticScroll(scrollSteps) else handleSemantic()
             }
+
             uri == "/overlay" -> {
-                if (session.method == Method.DELETE) handleOverlayOff()
-                else handleOverlayOn(session)
+                if (session.method == Method.DELETE) {
+                    handleOverlayOff()
+                } else {
+                    handleOverlayOn(session)
+                }
             }
-            uri == "/debug-log" && session.method == Method.DELETE -> { requestLog.clear(); jsonResponse("""{"cleared":true}""") }
-            uri == "/debug-log" -> handleDebugLog()
-            uri == "/health" -> jsonResponse("""{"status":"ok","agent":"semantic-agent","version":"5.0.0"}""")
-            uri == "/version" -> jsonResponse("""{"git_hash":"$gitHash","build_time":"$buildTime"}""")
-            uri == "/idle" -> handleIdle()
-            uri == "/keyboard/dismiss" && session.method == Method.POST -> handleKeyboardDismiss()
-            uri == "/type" && session.method == Method.POST -> handleType(session)
-            uri == "/stream" -> handleStream()
-            uri == "/query-when-idle" && session.method == Method.POST -> handleQueryWhenIdle(session)
-            uri == "/scroll-search" && session.method == Method.POST -> handleScrollSearch(session)
-            uri == "/idle-resources" -> handleIdleResources()
-            uri == "/click" && session.method == Method.POST -> handleClick(session)
-            uri == "/mock" && session.method == Method.POST -> handleMock(session)
-            uri == "/unmock" && session.method == Method.POST -> handleUnmock(session)
-            else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
+
+            uri == "/debug-log" && session.method == Method.DELETE -> {
+                requestLog.clear()
+                jsonResponse("""{"cleared":true}""")
+            }
+
+            uri == "/debug-log" -> {
+                handleDebugLog()
+            }
+
+            uri == "/health" -> {
+                jsonResponse("""{"status":"ok","agent":"semantic-agent","version":"5.0.0"}""")
+            }
+
+            uri == "/version" -> {
+                jsonResponse("""{"git_hash":"$gitHash","build_time":"$buildTime"}""")
+            }
+
+            uri == "/idle" -> {
+                handleIdle()
+            }
+
+            uri == "/keyboard/dismiss" && session.method == Method.POST -> {
+                handleKeyboardDismiss()
+            }
+
+            uri == "/type" && session.method == Method.POST -> {
+                handleType(session)
+            }
+
+            uri == "/stream" -> {
+                handleStream()
+            }
+
+            uri == "/query-when-idle" && session.method == Method.POST -> {
+                handleQueryWhenIdle(session)
+            }
+
+            uri == "/scroll-search" && session.method == Method.POST -> {
+                handleScrollSearch(session)
+            }
+
+            uri == "/idle-resources" -> {
+                handleIdleResources()
+            }
+
+            uri == "/click" && session.method == Method.POST -> {
+                handleClick(session)
+            }
+
+            uri == "/mock" && session.method == Method.POST -> {
+                handleMock(session)
+            }
+
+            uri == "/unmock" && session.method == Method.POST -> {
+                handleUnmock(session)
+            }
+
+            uri == "/mock-status" -> {
+                handleMockStatus()
+            }
+
+            else -> {
+                newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
+            }
         }
-    }
 
     private fun handleIdle(): Response {
-        val activity = currentActivity?.get()
-            ?: return jsonResponse("""{"idle":true}""")
+        val activity =
+            currentActivity?.get()
+                ?: return jsonResponse("""{"idle":true}""")
         var idle = true
         val latch = java.util.concurrent.CountDownLatch(1)
         mainHandler.post {
@@ -109,7 +167,8 @@ class SemanticServer private constructor(
                 val m = view.javaClass.getMethod("getScrollState")
                 val state = m.invoke(view) as Int
                 if (state != 0) return false // SCROLL_STATE_IDLE = 0
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
         if (view is android.view.ViewGroup) {
             for (i in 0 until view.childCount) {
@@ -120,8 +179,9 @@ class SemanticServer private constructor(
     }
 
     private fun handleKeyboardDismiss(): Response {
-        val activity = currentActivity?.get()
-            ?: return jsonResponse("""{"dismissed":false}""")
+        val activity =
+            currentActivity?.get()
+                ?: return jsonResponse("""{"dismissed":false}""")
         val latch = java.util.concurrent.CountDownLatch(1)
         var dismissed = false
         mainHandler.post {
@@ -135,21 +195,20 @@ class SemanticServer private constructor(
     }
 
     private fun handleType(session: IHTTPSession): Response {
-        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (contentLength > 0) {
-            val buf = ByteArray(contentLength)
-            session.inputStream.read(buf, 0, contentLength)
-            String(buf)
-        } else "{}"
-        val text = extractJsonString(body, "text")
-            ?: return jsonResponse("""{"error":"missing text"}""", Response.Status.BAD_REQUEST)
+        val body = readBody(session)
+        val text =
+            extractJsonString(body, "text")
+                ?: return jsonResponse("""{"error":"missing text"}""", Response.Status.BAD_REQUEST)
         val clear = extractJsonBool(body, "clear") ?: true
         val dismissKeyboard = extractJsonBool(body, "dismiss_keyboard") ?: false
+        val clickAfter = extractJsonString(body, "click_after")
 
-        val activity = currentActivity?.get()
-            ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
+        val activity =
+            currentActivity?.get()
+                ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
 
         var success = false
+        var clicked = false
         var error: String? = null
         val latch = java.util.concurrent.CountDownLatch(1)
 
@@ -157,18 +216,46 @@ class SemanticServer private constructor(
             try {
                 val focused = activity.currentFocus
                 if (focused is android.widget.EditText) {
-                    if (clear) {
-                        focused.text.clear()
-                        focused.text.append(text)
+                    focused.requestFocus()
+                    val ic = focused.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+                    if (ic != null) {
+                        if (clear) {
+                            ic.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_NONE)
+                            focused.selectAll()
+                            ic.commitText("", 1)
+                        }
+                        ic.commitText(text, 1)
                     } else {
-                        focused.text.append(text)
+                        if (clear) {
+                            focused.text.clear()
+                            focused.text.append(text)
+                        } else {
+                            focused.text.append(text)
+                        }
+                        focused.setSelection(focused.text.length)
                     }
-                    focused.setSelection(focused.text.length)
                     if (dismissKeyboard) {
-                        val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        val imm =
+                            activity.getSystemService(
+                                android.content.Context.INPUT_METHOD_SERVICE,
+                            ) as android.view.inputmethod.InputMethodManager
                         imm.hideSoftInputFromWindow(focused.windowToken, 0)
                     }
                     success = true
+                    if (clickAfter != null) {
+                        android.util.Log.i("SemanticAgent", "click_after: text='${focused.text}' length=${focused.text.length}")
+                        val target = findClickTarget(activity.window.decorView, null, clickAfter)
+                        if (target != null) {
+                            android.util.Log.i(
+                                "SemanticAgent",
+                                "click_after: found target class=${target.javaClass.simpleName} enabled=${target.isEnabled} clickable=${target.isClickable} hasOnClick=${target.hasOnClickListeners()}",
+                            )
+                            clicked = target.performClick()
+                            android.util.Log.i("SemanticAgent", "click_after: performClick returned $clicked")
+                        } else {
+                            android.util.Log.e("SemanticAgent", "click_after: target '$clickAfter' not found")
+                        }
+                    }
                 } else {
                     error = "no focused EditText"
                 }
@@ -178,31 +265,28 @@ class SemanticServer private constructor(
             latch.countDown()
         }
 
-        if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+        if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
             return jsonResponse("""{"typed":false,"error":"timeout"}""", Response.Status.REQUEST_TIMEOUT)
         }
         return if (success) {
-            jsonResponse("""{"typed":true,"text":"${escape(text)}"}""")
+            val clickInfo = if (clickAfter != null) ""","clicked":$clicked""" else ""
+            jsonResponse("""{"typed":true,"text":"${escape(text)}"$clickInfo}""")
         } else {
             jsonResponse("""{"typed":false,"error":"${escape(error ?: "")}"}""", Response.Status.BAD_REQUEST)
         }
     }
 
     private fun handleClick(session: IHTTPSession): Response {
-        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (contentLength > 0) {
-            val buf = ByteArray(contentLength)
-            session.inputStream.read(buf, 0, contentLength)
-            String(buf)
-        } else "{}"
+        val body = readBody(session)
         val resourceId = extractJsonString(body, "resource_id")
         val contentFuzzy = extractJsonString(body, "content_fuzzy")
         if (resourceId == null && contentFuzzy == null) {
             return jsonResponse("""{"error":"provide resource_id or content_fuzzy"}""", Response.Status.BAD_REQUEST)
         }
 
-        val activity = currentActivity?.get()
-            ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
+        val activity =
+            currentActivity?.get()
+                ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
 
         var clicked = false
         var error: String? = null
@@ -214,6 +298,16 @@ class SemanticServer private constructor(
                 val target = findClickTarget(rootView, resourceId, contentFuzzy)
                 if (target != null) {
                     clicked = target.performClick()
+                    if (!clicked) {
+                        var parent = target.parent
+                        while (parent is android.view.View && !clicked) {
+                            val parentView = parent as android.view.View
+                            if (parentView.isClickable) {
+                                clicked = parentView.performClick()
+                            }
+                            parent = parentView.parent
+                        }
+                    }
                 } else {
                     error = "view not found"
                 }
@@ -233,7 +327,11 @@ class SemanticServer private constructor(
         }
     }
 
-    private fun findClickTarget(view: android.view.View, resourceId: String?, contentFuzzy: String?): android.view.View? {
+    private fun findClickTarget(
+        view: android.view.View,
+        resourceId: String?,
+        contentFuzzy: String?,
+    ): android.view.View? {
         if (resourceId != null) {
             val resId = view.resources.getIdentifier(resourceId, "id", view.context.packageName)
             if (resId != 0) {
@@ -243,7 +341,17 @@ class SemanticServer private constructor(
         }
         if (contentFuzzy != null) {
             val target = contentFuzzy.lowercase()
-            if (view is android.widget.TextView && view.text?.toString()?.lowercase()?.contains(target) == true && view.isClickable) {
+            if (view is android.widget.TextView && view.text
+                    ?.toString()
+                    ?.lowercase()
+                    ?.contains(target) == true
+            ) {
+                if (view.isClickable || view.hasOnClickListeners()) return view
+                var parent = view.parent
+                while (parent is android.view.View) {
+                    if ((parent as android.view.View).isClickable) return parent
+                    parent = parent.getParent()
+                }
                 return view
             }
             if (view is android.view.ViewGroup) {
@@ -256,13 +364,21 @@ class SemanticServer private constructor(
         return null
     }
 
-    private fun handleMock(session: IHTTPSession): Response {
+    private fun readBody(session: IHTTPSession): String {
         val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (contentLength > 0) {
-            val buf = ByteArray(contentLength)
-            session.inputStream.read(buf, 0, contentLength)
-            String(buf)
-        } else "{}"
+        if (contentLength <= 0) return "{}"
+        val buf = ByteArray(contentLength)
+        var offset = 0
+        while (offset < contentLength) {
+            val n = session.inputStream.read(buf, offset, contentLength - offset)
+            if (n < 0) break
+            offset += n
+        }
+        return String(buf, 0, offset)
+    }
+
+    private fun handleMock(session: IHTTPSession): Response {
+        val body = readBody(session)
         try {
             val json = org.json.JSONObject(body)
             val mocks = mutableListOf<MockRule>()
@@ -281,7 +397,6 @@ class SemanticServer private constructor(
                 mocks.add(MockRule(urlPattern, method, MockResponse(status, respBody, headers)))
             }
             mockRegistry.register(mocks)
-            installMockInterceptor()
             return jsonResponse("""{"mocked":true,"count":${mocks.size}}""")
         } catch (e: Exception) {
             return jsonResponse("""{"error":"${escape(e.message ?: "")}"}""", Response.Status.BAD_REQUEST)
@@ -289,13 +404,13 @@ class SemanticServer private constructor(
     }
 
     private fun handleUnmock(session: IHTTPSession): Response {
-        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (contentLength > 0) {
-            val buf = ByteArray(contentLength)
-            session.inputStream.read(buf, 0, contentLength)
-            String(buf)
-        } else "{}"
-        val urlPattern = try { org.json.JSONObject(body).optString("url_pattern", "") } catch (_: Exception) { "" }
+        val body = readBody(session)
+        val urlPattern =
+            try {
+                org.json.JSONObject(body).optString("url_pattern", "")
+            } catch (_: Exception) {
+                ""
+            }
         if (urlPattern.isNotEmpty()) {
             mockRegistry.clear(urlPattern)
         } else {
@@ -304,77 +419,135 @@ class SemanticServer private constructor(
         return jsonResponse("""{"mocked":false}""")
     }
 
-    private var mockInterceptorInstalled = false
+    private fun handleMockStatus(): Response {
+        val interceptor = mockRegistry.interceptor
+        val rules = mockRegistry.ruleCount()
+        val hits = interceptor.hitCount
+        return jsonResponse("""{"rules":$rules,"hits":$hits}""")
+    }
 
-    private fun installMockInterceptor() {
-        if (mockInterceptorInstalled) return
-        val app = appRef?.get() ?: return
+    private fun walkDialogWindows(activity: android.app.Activity): List<SemanticElement> {
         try {
-            val componentMethod = app.javaClass.getMethod("generatedComponent")
-            val component = componentMethod.invoke(app)
-            for (m in component.javaClass.methods) {
-                if (m.parameterCount == 0 && m.returnType.name.contains("RestApi")) {
-                    val restApi = m.invoke(component)
-                    val handler = java.lang.reflect.Proxy.getInvocationHandler(restApi)
-                    val retrofitField = handler.javaClass.getDeclaredField("retrofit")
-                    retrofitField.isAccessible = true
-                    val retrofit = retrofitField.get(handler) as retrofit2.Retrofit
-                    val factoryField = retrofit2.Retrofit::class.java.getDeclaredField("callFactory")
-                    factoryField.isAccessible = true
-                    val client = factoryField.get(retrofit) as okhttp3.OkHttpClient
-                    val newClient = client.newBuilder()
-                        .addInterceptor(MockInterceptor(mockRegistry))
-                        .build()
-                    factoryField.set(retrofit, newClient)
-                    mockInterceptorInstalled = true
-                    android.util.Log.i("SemanticAgent", "MockInterceptor installed")
-                    break
+            val wmgClass = Class.forName("android.view.WindowManagerGlobal")
+            val getInstance = wmgClass.getMethod("getInstance")
+            val wmg = getInstance.invoke(null)
+            val viewsField = wmgClass.getDeclaredField("mViews")
+            viewsField.isAccessible = true
+            val views = viewsField.get(wmg) as? java.util.ArrayList<*> ?: return emptyList()
+            val decorView = activity.window.decorView
+            val density = activity.resources.displayMetrics.density
+            val extraElements = mutableListOf<SemanticElement>()
+            for (view in views) {
+                if (view is android.view.View && view !== decorView) {
+                    extractDialogElements(view, density, extraElements)
                 }
             }
-        } catch (e: Exception) {
-            android.util.Log.e("SemanticAgent", "Failed to install MockInterceptor: ${e.message}")
+            return extraElements
+        } catch (_: Exception) {
+            return emptyList()
+        }
+    }
+
+    private fun extractDialogElements(
+        view: android.view.View,
+        density: Float,
+        out: MutableList<SemanticElement>,
+    ) {
+        if (view is android.widget.TextView) {
+            val text = view.text?.toString()
+            if (!text.isNullOrBlank()) {
+                val rect = android.graphics.Rect()
+                view.getGlobalVisibleRect(rect)
+                out.add(
+                    SemanticElement(
+                        id = "dialog_${text.take(20).lowercase().replace(" ", "_")}",
+                        platformId = null,
+                        type = if (view is android.widget.Button) "button" else "text",
+                        content = text,
+                        font = null,
+                        color = null,
+                        bounds =
+                            Bounds(
+                                x = (rect.left / density).toInt(),
+                                y = (rect.top / density).toInt(),
+                                w = ((rect.right - rect.left) / density).toInt(),
+                                h = ((rect.bottom - rect.top) / density).toInt(),
+                            ),
+                        zIndex = out.size + 1000,
+                        clickable = view.isClickable,
+                        enabled = view.isEnabled,
+                        accessible = true,
+                        a11yLabel = null,
+                        a11yId = null,
+                        background = null,
+                        cornerRadius = null,
+                        padding = null,
+                        margin = null,
+                        elevation = null,
+                        render = null,
+                    ),
+                )
+            }
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                extractDialogElements(view.getChildAt(i), density, out)
+            }
         }
     }
 
     private val eventQueue = java.util.concurrent.LinkedBlockingQueue<String>()
 
-    fun emitEvent(event: String, data: String) {
+    fun emitEvent(
+        event: String,
+        data: String,
+    ) {
         eventQueue.offer("event: $event\ndata: $data\n\n")
     }
 
     private fun handleStream(): Response {
-        val stream = object : java.io.InputStream() {
-            private var buffer = ByteArray(0)
-            private var pos = 0
+        val stream =
+            object : java.io.InputStream() {
+                private var buffer = ByteArray(0)
+                private var pos = 0
 
-            override fun read(): Int {
-                while (true) {
-                    if (pos < buffer.size) return buffer[pos++].toInt() and 0xFF
-                    val msg = eventQueue.poll(30, java.util.concurrent.TimeUnit.SECONDS)
-                        ?: return -1
-                    buffer = msg.toByteArray()
-                    pos = 0
+                override fun read(): Int {
+                    while (true) {
+                        if (pos < buffer.size) return buffer[pos++].toInt() and 0xFF
+                        val msg =
+                            eventQueue.poll(30, java.util.concurrent.TimeUnit.SECONDS)
+                                ?: return -1
+                        buffer = msg.toByteArray()
+                        pos = 0
+                    }
                 }
             }
-        }
         return newChunkedResponse(Response.Status.OK, "text/event-stream", stream).apply {
             addHeader("Cache-Control", "no-cache")
             addHeader("Connection", "keep-alive")
         }
     }
 
-    private fun extractJsonString(json: String, key: String): String? {
-        val pattern = """"$key"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"""".toRegex()
-        return pattern.find(json)?.groupValues?.get(1)
-    }
+    private fun extractJsonString(
+        json: String,
+        key: String,
+    ): String? =
+        try {
+            val obj = org.json.JSONObject(json)
+            if (obj.has(key)) obj.getString(key) else null
+        } catch (_: Exception) {
+            null
+        }
 
-    private fun jsonResponse(json: String, status: Response.Status = Response.Status.OK): Response {
-        return newFixedLengthResponse(status, "application/json", json)
-    }
+    private fun jsonResponse(
+        json: String,
+        status: Response.Status = Response.Status.OK,
+    ): Response = newFixedLengthResponse(status, "application/json", json)
 
     private fun handleSemantic(): Response {
-        val activity = currentActivity?.get()
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
+        val activity =
+            currentActivity?.get()
+                ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
 
         var schema: SemanticSchema? = null
         var error: String? = null
@@ -388,6 +561,10 @@ class SemanticServer private constructor(
                     Thread.sleep(100)
                 }
                 schema = ViewTreeWalker.walk(activity)
+                val dialogElements = walkDialogWindows(activity)
+                if (dialogElements.isNotEmpty()) {
+                    schema = schema!!.copy(elements = schema!!.elements + dialogElements)
+                }
                 cachedSchema = schema
             } catch (e: Exception) {
                 error = e.message ?: "unknown error"
@@ -396,7 +573,7 @@ class SemanticServer private constructor(
         }
 
         if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "timeout walking view tree")
+            return newFixedLengthResponse(Response.Status.REQUEST_TIMEOUT, "text/plain", "timeout walking view tree")
         }
 
         if (error != null) {
@@ -407,8 +584,9 @@ class SemanticServer private constructor(
     }
 
     private fun handleSemanticScroll(steps: Int): Response {
-        val activity = currentActivity?.get()
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
+        val activity =
+            currentActivity?.get()
+                ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
 
         var result: SemanticSchema? = null
         var error: String? = null
@@ -425,7 +603,7 @@ class SemanticServer private constructor(
         }
 
         if (!latch.await(30, java.util.concurrent.TimeUnit.SECONDS)) {
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "timeout during scroll walk")
+            return newFixedLengthResponse(Response.Status.REQUEST_TIMEOUT, "text/plain", "timeout during scroll walk")
         }
 
         if (error != null) {
@@ -435,9 +613,13 @@ class SemanticServer private constructor(
         return newFixedLengthResponse(Response.Status.OK, "text/yaml", toYaml(result!!))
     }
 
-    private fun walkWithScroll(activity: Activity, steps: Int): SemanticSchema {
-        val scrollable = findScrollable(activity.window.decorView)
-            ?: throw IllegalStateException("no scrollable view found")
+    private fun walkWithScroll(
+        activity: Activity,
+        steps: Int,
+    ): SemanticSchema {
+        val scrollable =
+            findScrollable(activity.window.decorView)
+                ?: throw IllegalStateException("no scrollable view found")
 
         val density = activity.resources.displayMetrics.density
         val viewportH = (activity.resources.displayMetrics.heightPixels / density).toInt()
@@ -446,12 +628,13 @@ class SemanticServer private constructor(
 
         val svRect = android.graphics.Rect()
         scrollable.getGlobalVisibleRect(svRect)
-        val scrollViewBounds = Bounds(
-            x = (svRect.left / density).toInt(),
-            y = (svRect.top / density).toInt(),
-            w = ((svRect.right - svRect.left) / density).toInt(),
-            h = ((svRect.bottom - svRect.top) / density).toInt(),
-        )
+        val scrollViewBounds =
+            Bounds(
+                x = (svRect.left / density).toInt(),
+                y = (svRect.top / density).toInt(),
+                w = ((svRect.right - svRect.left) / density).toInt(),
+                h = ((svRect.bottom - svRect.top) / density).toInt(),
+            )
 
         val allElements = mutableListOf<SemanticElement>()
         val stickyIds = mutableSetOf<String>()
@@ -465,7 +648,10 @@ class SemanticServer private constructor(
         for (step in 1..steps) {
             scrollable.scrollBy(0, scrollAmountPx)
 
-            try { Thread.sleep(300) } catch (_: InterruptedException) {}
+            try {
+                Thread.sleep(300)
+            } catch (_: InterruptedException) {
+            }
 
             val schema = ViewTreeWalker.walk(activity)
             val newElements = schema.elements
@@ -485,23 +671,26 @@ class SemanticServer private constructor(
                 val key = boundsKey(e)
                 if (stickyIds.contains(key)) continue
 
-                val adjusted = e.copy(
-                    bounds = Bounds(
-                        x = e.bounds.x,
-                        y = e.bounds.y + cumulativeScrollDp,
-                        w = e.bounds.w,
-                        h = e.bounds.h,
-                    ),
-                )
+                val adjusted =
+                    e.copy(
+                        bounds =
+                            Bounds(
+                                x = e.bounds.x,
+                                y = e.bounds.y + cumulativeScrollDp,
+                                w = e.bounds.w,
+                                h = e.bounds.h,
+                            ),
+                    )
 
-                val isDuplicate = allElements.any { existing ->
-                    existing.type == adjusted.type
-                        && existing.content == adjusted.content
-                        && kotlin.math.abs(existing.bounds.x - adjusted.bounds.x) < 3
-                        && kotlin.math.abs(existing.bounds.y - adjusted.bounds.y) < 3
-                        && kotlin.math.abs(existing.bounds.w - adjusted.bounds.w) < 3
-                        && kotlin.math.abs(existing.bounds.h - adjusted.bounds.h) < 3
-                }
+                val isDuplicate =
+                    allElements.any { existing ->
+                        existing.type == adjusted.type &&
+                            existing.content == adjusted.content &&
+                            kotlin.math.abs(existing.bounds.x - adjusted.bounds.x) < 3 &&
+                            kotlin.math.abs(existing.bounds.y - adjusted.bounds.y) < 3 &&
+                            kotlin.math.abs(existing.bounds.w - adjusted.bounds.w) < 3 &&
+                            kotlin.math.abs(existing.bounds.h - adjusted.bounds.h) < 3
+                    }
 
                 if (!isDuplicate) {
                     allElements.add(adjusted)
@@ -516,12 +705,13 @@ class SemanticServer private constructor(
         }
         ViewTreeWalker.disambiguateIds(allElements)
 
-        val scrollInfo = ScrollCaptureInfo(
-            scrollView = scrollViewBounds,
-            advancePx = scrollAmountPx,
-            steps = steps,
-            stepOffsets = stepOffsets,
-        )
+        val scrollInfo =
+            ScrollCaptureInfo(
+                scrollView = scrollViewBounds,
+                advancePx = scrollAmountPx,
+                steps = steps,
+                stepOffsets = stepOffsets,
+            )
 
         return firstSchema.copy(elements = allElements, scrollCapture = scrollInfo)
     }
@@ -541,13 +731,12 @@ class SemanticServer private constructor(
         return null
     }
 
-    private fun boundsKey(e: SemanticElement): String {
-        return "${e.bounds.x},${e.bounds.y},${e.bounds.w},${e.bounds.h}"
-    }
+    private fun boundsKey(e: SemanticElement): String = "${e.bounds.x},${e.bounds.y},${e.bounds.w},${e.bounds.h}"
 
     private fun handleOverlayOn(session: IHTTPSession): Response {
-        val activity = currentActivity?.get()
-            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no activity")
+        val activity =
+            currentActivity?.get()
+                ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no activity")
 
         val mode = session.parms?.get("mode") ?: "stroke"
         val latch = java.util.concurrent.CountDownLatch(1)
@@ -566,63 +755,69 @@ class SemanticServer private constructor(
                 val screenW = decorView.width
                 val screenH = decorView.height
 
-                val rects = elements.map { e ->
-                    android.graphics.Rect(
-                        (e.bounds.x * density).toInt(),
-                        (e.bounds.y * density).toInt(),
-                        ((e.bounds.x + e.bounds.w) * density).toInt(),
-                        ((e.bounds.y + e.bounds.h) * density).toInt(),
-                    )
-                }
+                val rects =
+                    elements.map { e ->
+                        android.graphics.Rect(
+                            (e.bounds.x * density).toInt(),
+                            (e.bounds.y * density).toInt(),
+                            ((e.bounds.x + e.bounds.w) * density).toInt(),
+                            ((e.bounds.y + e.bounds.h) * density).toInt(),
+                        )
+                    }
                 val ids = elements.map { it.id }
                 val boundsW = elements.map { (it.bounds.w * density).toInt() }
                 val boundsH = elements.map { (it.bounds.h * density).toInt() }
 
-                val overlay = object : android.view.View(activity) {
-                    override fun onDraw(canvas: android.graphics.Canvas) {
-                        super.onDraw(canvas)
-                        canvas.drawColor(android.graphics.Color.WHITE)
+                val overlay =
+                    object : android.view.View(activity) {
+                        override fun onDraw(canvas: android.graphics.Canvas) {
+                            super.onDraw(canvas)
+                            canvas.drawColor(android.graphics.Color.WHITE)
 
-                        for ((i, rect) in rects.withIndex()) {
-                            if (mode == "fill") {
-                                val isFullScreen = boundsW[i] >= (screenW * 0.95).toInt()
-                                    && boundsH[i] >= (screenH * 0.95).toInt()
-                                if (isFullScreen) continue
-                            }
-
-                            val hue = (djb2Hash(ids.getOrElse(i) { "" }).toUInt() % 360u).toFloat()
-                            val elemColor = android.graphics.Color.HSVToColor(255, floatArrayOf(hue, 1f, 1f))
-
-                            if (mode == "fill") {
-                                val paint = android.graphics.Paint().apply {
-                                    color = elemColor
-                                    style = android.graphics.Paint.Style.FILL
+                            for ((i, rect) in rects.withIndex()) {
+                                if (mode == "fill") {
+                                    val isFullScreen =
+                                        boundsW[i] >= (screenW * 0.95).toInt() &&
+                                            boundsH[i] >= (screenH * 0.95).toInt()
+                                    if (isFullScreen) continue
                                 }
-                                canvas.drawRect(rect, paint)
-                            } else {
-                                val whitePaint = android.graphics.Paint().apply {
-                                    color = android.graphics.Color.WHITE
-                                    style = android.graphics.Paint.Style.FILL
-                                }
-                                canvas.drawRect(rect, whitePaint)
 
-                                val sw = 4f
-                                val paint = android.graphics.Paint().apply {
-                                    color = elemColor
-                                    style = android.graphics.Paint.Style.FILL
+                                val hue = (djb2Hash(ids.getOrElse(i) { "" }).toUInt() % 360u).toFloat()
+                                val elemColor = android.graphics.Color.HSVToColor(255, floatArrayOf(hue, 1f, 1f))
+
+                                if (mode == "fill") {
+                                    val paint =
+                                        android.graphics.Paint().apply {
+                                            color = elemColor
+                                            style = android.graphics.Paint.Style.FILL
+                                        }
+                                    canvas.drawRect(rect, paint)
+                                } else {
+                                    val whitePaint =
+                                        android.graphics.Paint().apply {
+                                            color = android.graphics.Color.WHITE
+                                            style = android.graphics.Paint.Style.FILL
+                                        }
+                                    canvas.drawRect(rect, whitePaint)
+
+                                    val sw = 4f
+                                    val paint =
+                                        android.graphics.Paint().apply {
+                                            color = elemColor
+                                            style = android.graphics.Paint.Style.FILL
+                                        }
+                                    val l = rect.left.toFloat()
+                                    val t = rect.top.toFloat()
+                                    val r = rect.right.toFloat()
+                                    val b = rect.bottom.toFloat()
+                                    canvas.drawRect(l, t, r, t + sw, paint)
+                                    canvas.drawRect(l, b - sw, r, b, paint)
+                                    canvas.drawRect(l, t + sw, l + sw, b - sw, paint)
+                                    canvas.drawRect(r - sw, t + sw, r, b - sw, paint)
                                 }
-                                val l = rect.left.toFloat()
-                                val t = rect.top.toFloat()
-                                val r = rect.right.toFloat()
-                                val b = rect.bottom.toFloat()
-                                canvas.drawRect(l, t, r, t + sw, paint)
-                                canvas.drawRect(l, b - sw, r, b, paint)
-                                canvas.drawRect(l, t + sw, l + sw, b - sw, paint)
-                                canvas.drawRect(r - sw, t + sw, r, b - sw, paint)
                             }
                         }
                     }
-                }
 
                 overlay.setBackgroundColor(android.graphics.Color.WHITE)
                 decorView.addView(
@@ -633,7 +828,8 @@ class SemanticServer private constructor(
                     ),
                 )
                 overlayView = overlay
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
             latch.countDown()
         }
 
@@ -653,32 +849,38 @@ class SemanticServer private constructor(
     }
 
     private fun handleDebugLog(): Response {
-        val entries = requestLog.map { e ->
-            """{"ts":${e.ts},"method":"${e.method}","path":"${escape(e.path)}","status":${e.status},"duration_ms":${e.durationMs},"body_size":${e.bodySize}}"""
-        }
+        val entries =
+            requestLog.map { e ->
+                """{"ts":${e.ts},"method":"${e.method}","path":"${escape(
+                    e.path,
+                )}","status":${e.status},"duration_ms":${e.durationMs},"body_size":${e.bodySize}}"""
+            }
         val walkLog = ViewTreeWalker.lastDebugLog.take(500)
-        return jsonResponse("""{"requests":[${entries.joinToString(",")}],"last_walk":"${escape(walkLog)}"}""")
+        val mockActive = !mockRegistry.isEmpty()
+        val mockInfo = if (mockActive) ""","mock":{"active":true,"rules":${mockRegistry.ruleCount()}}""" else ""","mock":{"active":false}"""
+        return jsonResponse("""{"requests":[${entries.joinToString(",")}],"last_walk":"${escape(walkLog)}"$mockInfo}""")
     }
 
     private fun handleQueryWhenIdle(session: IHTTPSession): Response {
-        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (contentLength > 0) {
-            val buf = ByteArray(contentLength)
-            session.inputStream.read(buf, 0, contentLength)
-            String(buf)
-        } else "{}"
+        val body = readBody(session)
 
         val timeout = extractJsonInt(body, "timeout")?.toLong()?.times(1000) ?: 5000
         val resourceNames = extractJsonArray(body, "idle_resources")
 
         val idled = idleRegistry.waitForIdle(resourceNames, timeout)
         if (!idled) {
-            val busy = idleRegistry.registeredNames().filter { name ->
-                val r = idleRegistry.let { reg ->
-                    try { !reg.isIdle(listOf(name)) } catch (_: Exception) { false }
+            val busy =
+                idleRegistry.registeredNames().filter { name ->
+                    val r =
+                        idleRegistry.let { reg ->
+                            try {
+                                !reg.isIdle(listOf(name))
+                            } catch (_: Exception) {
+                                false
+                            }
+                        }
+                    r
                 }
-                r
-            }
             return jsonResponse(
                 """{"idle":false,"busy":${busy.map { "\"$it\"" }},"timeout_ms":$timeout}""",
                 Response.Status.REQUEST_TIMEOUT,
@@ -695,35 +897,39 @@ class SemanticServer private constructor(
 
     private fun handleIdleResources(): Response {
         val names = idleRegistry.registeredNames()
-        val items = names.map { name ->
-            val idle = try { idleRegistry.isIdle(listOf(name)) } catch (_: Exception) { false }
-            """{"name":"$name","idle":$idle}"""
-        }
+        val items =
+            names.map { name ->
+                val idle =
+                    try {
+                        idleRegistry.isIdle(listOf(name))
+                    } catch (_: Exception) {
+                        false
+                    }
+                """{"name":"$name","idle":$idle}"""
+            }
         return jsonResponse("""{"resources":[${items.joinToString(",")}]}""")
     }
 
     private fun handleScrollSearch(session: IHTTPSession): Response {
-        val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (contentLength > 0) {
-            val buf = ByteArray(contentLength)
-            session.inputStream.read(buf, 0, contentLength)
-            String(buf)
-        } else "{}"
+        val body = readBody(session)
 
         val resourceNames = extractJsonArray(body, "idle_resources")
         val maxScroll = extractJsonInt(body, "max_scroll") ?: 10
         val restoreScroll = extractJsonBool(body, "restore_scroll") ?: false
-        val matchObj = extractJsonString(body, "content_fuzzy")
-            ?: extractNestedJsonString(body, "match", "content_fuzzy")
-            ?: return jsonResponse("""{"found":false,"reason":"missing match.content_fuzzy"}""", Response.Status.BAD_REQUEST)
-        val typeFilter = extractJsonString(body, "type")
-            ?: extractNestedJsonString(body, "match", "type")
+        val matchObj =
+            extractJsonString(body, "content_fuzzy")
+                ?: extractNestedJsonString(body, "match", "content_fuzzy")
+                ?: return jsonResponse("""{"found":false,"reason":"missing match.content_fuzzy"}""", Response.Status.BAD_REQUEST)
+        val typeFilter =
+            extractJsonString(body, "type")
+                ?: extractNestedJsonString(body, "match", "type")
 
         idleRegistry.waitForIdle(listOf("activity_transition"), 5000)
         idleRegistry.waitForIdle(resourceNames, 5000)
 
-        val activity = currentActivity?.get()
-            ?: return jsonResponse("""{"found":false,"scrolls":0,"reason":"no activity"}""")
+        val activity =
+            currentActivity?.get()
+                ?: return jsonResponse("""{"found":false,"scrolls":0,"reason":"no activity"}""")
 
         var found: SemanticElement? = null
         var scrollCount = 0
@@ -782,34 +988,67 @@ class SemanticServer private constructor(
 
         return if (found != null) {
             val e = found!!
-            jsonResponse("""{"found":true,"element":{"id":"${escape(e.id)}","content":"${escape(e.content ?: "")}","type":"${e.type}","bounds":{"x":${e.bounds.x},"y":${e.bounds.y},"w":${e.bounds.w},"h":${e.bounds.h}},"clickable":${e.clickable},"tap_target":${e.tapTarget?.let { """{"x":${it.x},"y":${it.y},"w":${it.w},"h":${it.h}}""" } ?: "null"}},"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
+            jsonResponse(
+                """{"found":true,"element":{"id":"${escape(
+                    e.id,
+                )}","content":"${escape(
+                    e.content ?: "",
+                )}","type":"${e.type}","bounds":{"x":${e.bounds.x},"y":${e.bounds.y},"w":${e.bounds.w},"h":${e.bounds.h}},"clickable":${e.clickable},"tap_target":${e.tapTarget?.let {
+                    """{"x":${it.x},"y":${it.y},"w":${it.w},"h":${it.h}}"""
+                } ?: "null"}},"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""",
+            )
         } else {
             jsonResponse("""{"found":false,"scrolls":$scrollCount,"scroll_restored":$scrollRestored}""")
         }
     }
 
-    private fun extractJsonBool(json: String, key: String): Boolean? {
-        val pattern = """"$key"\s*:\s*(true|false)""".toRegex()
-        return pattern.find(json)?.groupValues?.get(1)?.toBooleanStrictOrNull()
+    private fun extractJsonBool(
+        json: String,
+        key: String,
+    ): Boolean? =
+        try {
+            val obj = org.json.JSONObject(json)
+            if (obj.has(key)) obj.getBoolean(key) else null
+        } catch (_: Exception) {
+            null
+        }
+
+    private fun extractNestedJsonString(
+        json: String,
+        parent: String,
+        key: String,
+    ): String? {
+        return try {
+            val obj = org.json.JSONObject(json)
+            val nested = obj.optJSONObject(parent) ?: return null
+            if (nested.has(key)) nested.getString(key) else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun extractNestedJsonString(json: String, parent: String, key: String): String? {
-        val objPattern = """"$parent"\s*:\s*\{([^}]*)\}""".toRegex()
-        val obj = objPattern.find(json)?.groupValues?.get(1) ?: return null
-        return extractJsonString("{$obj}", key)
-    }
+    private fun extractJsonInt(
+        json: String,
+        key: String,
+    ): Int? =
+        try {
+            val obj = org.json.JSONObject(json)
+            if (obj.has(key)) obj.getInt(key) else null
+        } catch (_: Exception) {
+            null
+        }
 
-    private fun extractJsonInt(json: String, key: String): Int? {
-        val pattern = "\"$key\"\\s*:\\s*(\\d+)".toRegex()
-        return pattern.find(json)?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    private fun extractJsonArray(json: String, key: String): List<String>? {
-        val pattern = "\"$key\"\\s*:\\s*\\[([^\\]]*)\\]".toRegex()
-        val match = pattern.find(json) ?: return null
-        return match.groupValues[1].split(",")
-            .map { it.trim().trim('"') }
-            .filter { it.isNotEmpty() }
+    private fun extractJsonArray(
+        json: String,
+        key: String,
+    ): List<String>? {
+        return try {
+            val obj = org.json.JSONObject(json)
+            val arr = obj.optJSONArray(key) ?: return null
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun toYaml(schema: SemanticSchema): String {
@@ -896,9 +1135,7 @@ class SemanticServer private constructor(
         return sb.toString()
     }
 
-    private fun escape(s: String): String {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
-    }
+    private fun escape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 
     private fun djb2Hash(s: String): Int {
         var hash = 5381
@@ -934,31 +1171,45 @@ class SemanticServer private constructor(
             server.idleRegistry.register(activityTransition)
 
             app.registerActivityLifecycleCallbacks(activityTransition)
-            app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-                override fun onActivityResumed(activity: Activity) {
-                    server.currentActivity = WeakReference(activity)
-                    server.cachedSchema = null
-                    server.emitEvent("activity", """{"name":"${activity.javaClass.simpleName}","state":"resumed"}""")
-                    activity.window.decorView.viewTreeObserver.addOnGlobalLayoutListener {
-                        server.mainHandler.postDelayed({
-                            val rootView = activity.window.decorView
-                            val layoutIdle = !rootView.isLayoutRequested && !rootView.isDirty
-                            val scrollIdle = server.isScrollIdle(rootView)
-                            if (layoutIdle && scrollIdle) {
-                                server.emitEvent("idle", """{"idle":true}""")
-                            }
-                        }, 100)
+            app.registerActivityLifecycleCallbacks(
+                object : Application.ActivityLifecycleCallbacks {
+                    override fun onActivityResumed(activity: Activity) {
+                        server.currentActivity = WeakReference(activity)
+                        server.cachedSchema = null
+                        server.emitEvent("activity", """{"name":"${activity.javaClass.simpleName}","state":"resumed"}""")
+                        activity.window.decorView.viewTreeObserver.addOnGlobalLayoutListener {
+                            server.mainHandler.postDelayed({
+                                val rootView = activity.window.decorView
+                                val layoutIdle = !rootView.isLayoutRequested && !rootView.isDirty
+                                val scrollIdle = server.isScrollIdle(rootView)
+                                if (layoutIdle && scrollIdle) {
+                                    server.emitEvent("idle", """{"idle":true}""")
+                                }
+                            }, 100)
+                        }
                     }
-                }
-                override fun onActivityPaused(activity: Activity) {
-                    server.emitEvent("activity", """{"name":"${activity.javaClass.simpleName}","state":"paused"}""")
-                }
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-                override fun onActivityStarted(activity: Activity) {}
-                override fun onActivityStopped(activity: Activity) {}
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-                override fun onActivityDestroyed(activity: Activity) {}
-            })
+
+                    override fun onActivityPaused(activity: Activity) {
+                        server.emitEvent("activity", """{"name":"${activity.javaClass.simpleName}","state":"paused"}""")
+                    }
+
+                    override fun onActivityCreated(
+                        activity: Activity,
+                        savedInstanceState: Bundle?,
+                    ) {}
+
+                    override fun onActivityStarted(activity: Activity) {}
+
+                    override fun onActivityStopped(activity: Activity) {}
+
+                    override fun onActivitySaveInstanceState(
+                        activity: Activity,
+                        outState: Bundle,
+                    ) {}
+
+                    override fun onActivityDestroyed(activity: Activity) {}
+                },
+            )
 
             server.start()
             android.util.Log.i("SemanticAgent", "semantic server started on port $port")
