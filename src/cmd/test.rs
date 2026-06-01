@@ -183,6 +183,8 @@ struct StepRaw {
     wait_for: Option<Vec<String>>,
     #[serde(default)]
     wait_timeout: Option<u64>,
+    #[serde(default)]
+    click_after: Option<String>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -218,6 +220,7 @@ struct ActionStep {
     save_as: Option<String>,
     wait_for: Option<Vec<String>>,
     wait_timeout: Option<u64>,
+    click_after: Option<String>,
 }
 
 #[derive(Clone)]
@@ -251,6 +254,7 @@ impl StepRaw {
                 save_as: self.save_as,
                 wait_for: self.wait_for,
                 wait_timeout: self.wait_timeout,
+                click_after: self.click_after,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -832,19 +836,30 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     }
     dismiss_keyboard_if_visible(dev, runner);
 
-    // Tap password field (next input) and type password
-    let _ = runner.adb_shell(dev, &["input", "keyevent", "61"]); // TAB to next field
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Tap password field directly and type password
+    if let Err(e) = tap_target("password") {
+        // Fallback: TAB to next field
+        let _ = runner.adb_shell(dev, &["input", "keyevent", "61"]);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
     if let Err(e) = type_text(&password) {
         eprintln!("  login: couldn't type password: {e}");
         return;
     }
     dismiss_keyboard_if_visible(dev, runner);
 
-    // Tap "Log in" submit button
-    if let Err(e) = tap_target("Log in") {
-        eprintln!("  login: couldn't find submit 'Log in': {e}");
-        return;
+    // Click "Log in" submit via agent /click (bypasses touch pipeline)
+    let click_body = serde_json::json!({"content_fuzzy": "Log in"}).to_string();
+    let click_url = format!("{base}/click");
+    match runner.curl_with_deadline(&click_url, "POST", Some(&click_body)) {
+        Ok(resp) if resp.contains("clicked") => {},
+        _ => {
+            // Fallback: tap via coordinates
+            if let Err(e) = tap_target("Log in") {
+                eprintln!("  login: couldn't find submit 'Log in': {e}");
+                return;
+            }
+        }
     }
 
     // Wait for network + navigation settle
@@ -854,6 +869,16 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     });
     let _ = runner.curl_with_deadline(
         &format!("{base}/query-when-idle"), "POST", Some(&body.to_string())
+    );
+
+    // Wait for user sync (syncUserInfo fetches profile after login — needs ~5s)
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    let sync_body = serde_json::json!({
+        "idle_resources": ["network"],
+        "timeout": 10,
+    });
+    let _ = runner.curl_with_deadline(
+        &format!("{base}/query-when-idle"), "POST", Some(&sync_body.to_string())
     );
 
     eprintln!("  login complete (UI flow)");
@@ -1316,20 +1341,24 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             } else {
                 ensure_input_focus(dev, runner);
             }
-            // Use agent /type endpoint: atomic setText on focused EditText, bypasses IME
-            let type_body = serde_json::json!({"text": text, "clear": true}).to_string();
-            let type_url = format!("{}/type", agent_base_url());
-            match runner.curl_with_deadline(&type_url, "POST", Some(&type_body)) {
-                Ok(resp) if resp.contains("\"ok\"") || resp.contains("\"typed\"") => {},
-                _ => {
-                    // Fallback: adb input text (may garble on Samsung IME)
-                    runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
-                    runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
-                    runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    let escaped = text.replace(' ', "%s");
-                    runner.adb_shell(dev, &["input", "text", &escaped])?;
+            let has_non_ascii = text.chars().any(|c| !c.is_ascii());
+            if action.click_after.is_some() || has_non_ascii {
+                // Form field or non-ASCII: use /type (InputConnection handles Unicode)
+                let mut type_json = serde_json::json!({"text": text, "clear": true});
+                if let Some(ref click_target) = action.click_after {
+                    type_json["click_after"] = serde_json::json!(click_target);
                 }
+                let type_body = type_json.to_string();
+                let type_url = format!("{}/type", agent_base_url());
+                let _ = runner.curl_with_deadline(&type_url, "POST", Some(&type_body));
+            } else {
+                // Search/general: use adb input text (triggers TextWatcher naturally)
+                runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
+                runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
+                runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let escaped = text.replace(' ', "%s");
+                runner.adb_shell(dev, &["input", "text", &escaped])?;
             }
             Ok(format!("typed \"{}\"", text))
         }
@@ -1360,7 +1389,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
                 let mut result = None;
-                for attempt in 0..3 {
+                for attempt in 0..5 {
                     // Check if element is already visible before scrolling
                     if let Ok((x, y, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner)) {
                         result = Some(format!("already visible: {} at ({},{})", desc, x, y));
@@ -1370,8 +1399,8 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                         result = Some(desc);
                         break;
                     }
-                    if attempt < 2 {
-                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    if attempt < 4 {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
                     }
                 }
                 result.ok_or_else(|| "scroll_to: element not found after 3 attempts".to_string())
