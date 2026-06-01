@@ -341,11 +341,12 @@ pub fn token_jaccard(a: &str, b: &str) -> f64 {
 pub fn compute_scroll_bounds(dev: Option<&Device>, dir: &str) -> (i32, i32, i32, i32) {
     if let Ok(yaml) = fetch_agent_yaml(dev) {
         for chunk in yaml.split("\n- ") {
+            let chunk_lower = chunk.to_lowercase();
             let is_scrollable = chunk.contains("type: container") && (
-                chunk.to_lowercase().contains("recyclerview")
-                || chunk.to_lowercase().contains("nestedscrollview")
-                || chunk.to_lowercase().contains("scrollview")
-            );
+                chunk_lower.contains("recyclerview")
+                || chunk_lower.contains("nestedscrollview")
+                || chunk_lower.contains("scrollview")
+            ) && !chunk_lower.contains("viewpager") && !chunk_lower.contains("view_pager");
             if is_scrollable {
                 let x = extract_yaml_int(chunk, "x: ").unwrap_or(0);
                 let y = extract_yaml_int(chunk, "y: ").unwrap_or(0);
