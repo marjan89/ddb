@@ -257,6 +257,28 @@ class IdleResourceRegistry {
         resources[resource.name] = resource
     }
 
+    /**
+     * Convenience overload: register a lambda-backed IdleResource by name.
+     * Apps that can't rely on the built-in NetworkIdleResource reflection
+     * (non-Hilt projects, custom RestApi shapes, etc.) should register their
+     * OkHttp dispatcher idle check this way at app init.
+     *
+     * Example:
+     *   IdleResourceRegistry.register("okhttp") {
+     *     okHttpClient.dispatcher.runningCallsCount() == 0
+     *       && okHttpClient.dispatcher.queuedCallsCount() == 0
+     *   }
+     *
+     * Re-registering the same name replaces the prior resource.
+     */
+    fun register(name: String, isIdleFn: () -> Boolean) {
+        val resourceName = name
+        register(object : IdleResource {
+            override val name: String = resourceName
+            override fun isIdle(): Boolean = isIdleFn()
+        })
+    }
+
     fun unregister(name: String) {
         resources.remove(name)
     }

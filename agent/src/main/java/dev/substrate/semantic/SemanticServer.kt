@@ -1215,5 +1215,27 @@ class SemanticServer private constructor(
             server.start()
             android.util.Log.i("SemanticAgent", "semantic server started on port $port")
         }
+
+        /**
+         * Register a custom idle resource with the running agent. Call this from
+         * the app's init code (Application.onCreate, Hilt Module, etc.) AFTER
+         * install() has run. Returns false if the agent isn't installed yet.
+         *
+         * The built-in NetworkIdleResource discovers OkHttp via reflection that
+         * assumes Hilt + a `RestApi` component method; apps that don't match
+         * that shape should register their dispatcher explicitly here.
+         *
+         * Example:
+         *   SemanticServer.registerIdleResource("okhttp") {
+         *     val d = okHttpClient.dispatcher
+         *     d.runningCallsCount() == 0 && d.queuedCallsCount() == 0
+         *   }
+         */
+        @JvmStatic
+        fun registerIdleResource(name: String, isIdleFn: () -> Boolean): Boolean {
+            val s = instance ?: return false
+            s.idleRegistry.register(name, isIdleFn)
+            return true
+        }
     }
 }
