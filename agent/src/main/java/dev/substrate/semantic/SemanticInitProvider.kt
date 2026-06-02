@@ -9,11 +9,7 @@ import android.net.Uri
 class SemanticInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val app = context?.applicationContext as? Application ?: return false
-        SemanticServer.install(
-            app,
-            gitHash = se.naturkartan.android.BuildConfig.GIT_HASH,
-            buildTime = se.naturkartan.android.BuildConfig.BUILD_TIME,
-        )
+        SemanticServer.install(app)
         return true
     }
 

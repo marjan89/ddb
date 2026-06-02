@@ -26,6 +26,7 @@ dependencies {
     implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     compileOnly("com.squareup.okhttp3:okhttp:4.12.0")
+    compileOnly("com.squareup.retrofit2:retrofit:2.11.0")
 }
 
 afterEvaluate {
