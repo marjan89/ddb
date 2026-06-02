@@ -130,14 +130,31 @@ fn walk(v: &Value, out: &mut Vec<ElementRecord>) {
     }
 }
 
-/// Parse the agent YAML body into structured element records.
+/// Parse the agent YAML body into structured element records. Handles
+/// multi-document YAML by iterating every document with the Deserializer.
 pub fn parse_elements(yaml: &str) -> Vec<ElementRecord> {
-    match serde_yaml::from_str::<Value>(yaml) {
-        Ok(root) => {
-            let mut out = Vec::new();
-            walk(&root, &mut out);
-            out
+    use serde::Deserialize;
+    let debug = std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1");
+    let mut out = Vec::new();
+    let mut doc_count = 0usize;
+    for doc in serde_yaml::Deserializer::from_str(yaml) {
+        match Value::deserialize(doc) {
+            Ok(root) => {
+                doc_count += 1;
+                let before = out.len();
+                walk(&root, &mut out);
+                if debug {
+                    eprintln!("  [PARSE doc {}] +{} records (total {})", doc_count, out.len() - before, out.len());
+                }
+            }
+            Err(e) if debug => {
+                eprintln!("  [PARSE doc {}] ERROR: {}", doc_count + 1, e);
+            }
+            Err(_) => {}
         }
-        Err(_) => Vec::new(),
     }
+    if debug {
+        eprintln!("  [PARSE total] {} docs, {} records, {} bytes input", doc_count, out.len(), yaml.len());
+    }
+    out
 }
