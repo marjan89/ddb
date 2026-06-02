@@ -105,7 +105,21 @@ fn record_from_value(v: &Value) -> Option<ElementRecord> {
             "platform_id" => { if let Some(s) = as_string(val) { if !s.is_empty() { platform_id_val = Some(s); } } }
             "content" => { if let Some(s) = as_string(val) { content = s; } }
             "type" => { if let Some(s) = as_string(val) { etype = s; } }
-            "clickable" => { clickable = as_bool(val); }
+            "clickable" => {
+                if std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1") {
+                    let dump = match val {
+                        Value::Bool(b) => format!("Bool({b})"),
+                        Value::String(s) => format!("String({s:?})"),
+                        Value::Number(n) => format!("Number({n})"),
+                        Value::Null => "Null".into(),
+                        Value::Sequence(_) => "Sequence(..)".into(),
+                        Value::Mapping(_) => "Mapping(..)".into(),
+                        other => format!("Other({other:?})"),
+                    };
+                    eprintln!("    [CLICK-RAW] {}", dump);
+                }
+                clickable = as_bool(val);
+            }
             "bounds" => { bounds = extract_bounds(val); }
             _ => {}
         }
