@@ -185,6 +185,8 @@ struct StepRaw {
     wait_timeout: Option<u64>,
     #[serde(default)]
     click_after: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -221,6 +223,7 @@ struct ActionStep {
     wait_for: Option<Vec<String>>,
     wait_timeout: Option<u64>,
     click_after: Option<String>,
+    source: Option<String>,
 }
 
 #[derive(Clone)]
@@ -255,6 +258,7 @@ impl StepRaw {
                 wait_for: self.wait_for,
                 wait_timeout: self.wait_timeout,
                 click_after: self.click_after,
+                source: self.source,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -529,13 +533,14 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             }
         };
         let spec_clone = spec.clone();
+        let spec_path_clone = spec_path.to_string();
         let dev_clone = dev.clone();
         let step_timeout = args.step_timeout;
         let fixtures_clone = fixtures_map.clone();
         let mock_clone = mock_body.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone, mock_clone.as_deref());
+            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone, mock_clone.as_deref(), &spec_path_clone);
             let _ = tx.send(result);
         });
         let (result, step_logs) = match rx.recv_timeout(tc_hard_timeout) {
@@ -806,7 +811,10 @@ fn execute_recipe(recipe_path: &str, dev: Option<&Device>, runner: &StepRunner, 
     let steps: Vec<Step> = recipe.steps.into_iter()
         .filter_map(|s| s.into_step().ok())
         .collect();
-    let mut ctx = RunContext::new(fixtures.clone());
+    // Recipe-runner path (used by login + check_skip); no TC dir context.
+    // stage_gallery is not expected here, but if a recipe ever uses it the
+    // source must be absolute.
+    let mut ctx = RunContext::new(fixtures.clone(), std::path::PathBuf::from("."));
 
     for (i, step) in steps.iter().enumerate() {
         match step {
@@ -927,11 +935,14 @@ fn dismiss_keyboard_if_visible(dev: Option<&Device>, runner: &StepRunner) {
 
 struct RunContext {
     resolver: FixtureResolver,
+    /// Directory of the TC YAML file. Used to resolve relative paths in
+    /// actions like `stage_gallery` (source: images/carbonara.jpeg).
+    tc_dir: std::path::PathBuf,
 }
 
 impl RunContext {
-    fn new(fixtures: std::collections::HashMap<String, String>) -> Self {
-        Self { resolver: FixtureResolver::new(fixtures) }
+    fn new(fixtures: std::collections::HashMap<String, String>, tc_dir: std::path::PathBuf) -> Self {
+        Self { resolver: FixtureResolver::new(fixtures), tc_dir }
     }
 
     fn interpolate(&self, s: &str) -> String {
@@ -947,9 +958,13 @@ impl RunContext {
     }
 }
 
-fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>, mock_body: Option<&str>) -> (TestResult, Vec<StepLogEntry>) {
+fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>, mock_body: Option<&str>, spec_path: &str) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
-    let mut ctx = RunContext::new(fixtures.clone());
+    let tc_dir = std::path::Path::new(spec_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let mut ctx = RunContext::new(fixtures.clone(), tc_dir);
     let logger = Logger::new();
 
     let pkg_env = std::env::var("DDB_TEST_PACKAGE").ok();
@@ -1383,6 +1398,21 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             }
             Ok(format!("typed \"{}\"", text))
         }
+        "text_field_set" => {
+            let raw_text = action.text.as_ref().ok_or("text_field_set: no text")?;
+            let text = &ctx.interpolate(raw_text);
+            if let Some(ref target) = action.target {
+                dismiss_keyboard_if_visible(dev, &runner);
+                let (x, y, _) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
+                runner.adb_shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            let body = serde_json::json!({"value": text}).to_string();
+            let url = format!("{}/text-field/set", agent_base_url());
+            runner.curl_with_deadline(&url, "POST", Some(&body))
+                .map_err(|e| format!("text_field_set failed: {e}"))?;
+            Ok(format!("text_field_set \"{}\"", text))
+        }
         "wait_until" => {
             let target = action.target.as_ref().ok_or("wait_until: no target")?;
             let timeout = action.wait_timeout.unwrap_or(30);
@@ -1472,6 +1502,49 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         "home" => {
             runner.adb_shell(dev, &["input", "keyevent", "3"])?;
             Ok(String::new())
+        }
+        "stage_gallery" => {
+            // Stage a fixture image into the device's MediaStore so the
+            // system Photo Picker (Android 13+) and gallery apps see it.
+            // Source path is resolved relative to the TC YAML file. Pushes
+            // to /sdcard/Pictures/<basename> and triggers MediaScanner.
+            let raw_source = action.source.as_ref().ok_or("stage_gallery: no source")?;
+            let source = ctx.interpolate(raw_source);
+            let abs_source = if std::path::Path::new(&source).is_absolute() {
+                std::path::PathBuf::from(&source)
+            } else {
+                ctx.tc_dir.join(&source)
+            };
+            if !abs_source.exists() {
+                return Err(format!("stage_gallery: source not found: {}", abs_source.display()));
+            }
+            let basename = abs_source.file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| format!("stage_gallery: bad basename in {}", abs_source.display()))?;
+            let device_path = format!("/sdcard/Pictures/{basename}");
+            let source_str = abs_source.to_str()
+                .ok_or_else(|| format!("stage_gallery: non-utf8 source path {}", abs_source.display()))?;
+
+            // push (uses raw adb, not the runner's exec-out shell)
+            let mut push_cmd = std::process::Command::new("adb");
+            if let Some(d) = dev { push_cmd.arg("-s").arg(d.transport_id()); }
+            push_cmd.args(["push", source_str, &device_path]);
+            let out = runner.run_with_deadline(&mut push_cmd)?;
+            if !out.status.success() {
+                return Err(format!(
+                    "stage_gallery: adb push failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                ));
+            }
+
+            // trigger MediaScanner so the Photo Picker indexes the new file
+            runner.adb_shell(dev, &[
+                "am", "broadcast",
+                "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                "-d", &format!("file://{device_path}"),
+            ])?;
+
+            Ok(format!("staged {basename} → {device_path}"))
         }
         "wait" => {
             let secs = action.seconds.unwrap_or(2);
