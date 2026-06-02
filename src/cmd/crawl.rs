@@ -343,6 +343,15 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             scroll_and_discover(dev_arg, &base, args.max_scroll_depth)
         } else { elements.clone() };
 
+        // Opt-in debug: dump every parsed element on one line. Triggered by
+        // DDB_CRAWL_DEBUG=1 so it doesn't pollute normal runs.
+        if std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1") {
+            for (i, e) in all_elements.iter().enumerate() {
+                eprintln!("  [DBG {:03}] click={} id={:?} type={:?} content={:?} bounds={:?}",
+                    i, e.clickable, e.id, e.element_type, e.content, e.bounds);
+            }
+        }
+
         let screen_id = fingerprint(&activity, &all_elements);
         let count = visit_counts.entry(screen_id.clone()).or_insert(0);
         *count += 1;
