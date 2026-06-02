@@ -96,6 +96,16 @@ fn is_app_alive(dev: Option<&str>, pkg: &str) -> bool {
     adb_shell(dev, &["pidof", pkg]).map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
+fn current_foreground_pkg(dev: Option<&str>) -> Option<String> {
+    let out = adb_shell(dev, &["dumpsys", "window"]).ok()?;
+    let line = out.lines().find(|l| l.contains("mCurrentFocus"))?;
+    let bracket = line.split('{').nth(1)?;
+    let inside = bracket.split('}').next()?;
+    let token = inside.split_whitespace().last()?;
+    let pkg = token.split('/').next()?;
+    Some(pkg.to_string())
+}
+
 fn take_screenshot(dev: Option<&str>, path: &str) -> bool {
     let remote = "/sdcard/crawl_screenshot.png";
     let _ = adb_shell(dev, &["screencap", "-p", remote]);
@@ -248,6 +258,23 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             std::thread::sleep(std::time::Duration::from_secs(3));
             continue;
+        }
+
+        // Foreground guard: if another app stole focus (e.g. Bluetooth companion app),
+        // force-stop the intruder and relaunch target. Record as quirk.
+        if let Some(fg) = current_foreground_pkg(dev_arg) {
+            if fg != args.package {
+                eprintln!("  INTRUSION: {} took foreground — force-stopping + relaunching {}", fg, args.package);
+                state.quirks.push(Quirk {
+                    screen: "unknown".into(),
+                    quirk_type: "foreground_intrusion".into(),
+                    description: format!("{} took foreground during crawl", fg),
+                });
+                let _ = adb_shell(dev_arg, &["am", "force-stop", &fg]);
+                let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
         }
 
         // Get current screen
