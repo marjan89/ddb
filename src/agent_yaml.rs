@@ -1,104 +1,143 @@
 //! Shared parser for the semantic-agent /semantic YAML response.
 //!
 //! Single source of truth for both `cmd::crawl` (structured fields) and
-//! `cmd::test_element` (raw chunks for substring matching). This module
-//! preserves the exact behavior of the previous crawl + test parsers
-//! (bug-for-bug parity); structural improvements are tracked separately.
+//! `cmd::test_element` (raw chunks for substring matching).
+//!
+//! Uses serde_yaml for the structured parse so nested blocks, multi-line
+//! values, and arbitrary sub-objects do not confuse element boundary
+//! detection. The raw-chunk splitter is preserved for the test runner's
+//! substring searches and stays byte-compatible with the legacy format.
+
+use serde_yaml::Value;
 
 #[derive(Debug, Clone)]
 pub struct ElementRecord {
-    /// Raw YAML chunk (for substring search by the test runner).
+    /// Raw YAML text for the element (best-effort serialization of the parsed
+    /// node — used by callers that do substring matching).
     pub raw: String,
     pub content: String,
     pub etype: String,
-    /// Matches either `id` or `platform_id` from the agent dump.
+    /// Matches either `id` or `platform_id`. `platform_id` wins when both present.
     pub id: Option<String>,
+    /// Decoded as [left, top, right, bottom] in pixels.
     pub bounds: Option<[i32; 4]>,
     pub clickable: bool,
 }
 
-/// Split the agent YAML into raw chunks delimited by top-level list items
-/// (`\n- ` marker). Preserves the legacy format consumed by the test runner's
-/// substring searches.
+/// Split the agent YAML into raw chunks delimited by top-level list items.
+/// Kept verbatim — the test runner's substring searches depend on the legacy
+/// chunk format.
 pub fn split_elements(yaml: &str) -> Vec<String> {
     yaml.split("\n- ").map(|s| s.to_string()).collect()
 }
 
-fn field_key(line: &str) -> &str {
-    line.split_once(':')
-        .map(|(k, _)| k)
-        .unwrap_or("")
-        .trim_start_matches('-')
-        .trim()
+fn as_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
-fn extract_value(line: &str) -> String {
-    line.split_once(':')
-        .map(|(_, v)| v)
-        .unwrap_or("")
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_string()
+fn as_bool(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::String(s) => s.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
 }
 
-fn parse_bounds(s: &str) -> Option<[i32; 4]> {
-    let inner = s.trim_start_matches('[').trim_end_matches(']');
-    let parts: Vec<i32> = inner.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-    if parts.len() == 4 { Some([parts[0], parts[1], parts[2], parts[3]]) } else { None }
+fn as_i32(v: &Value) -> Option<i32> {
+    match v {
+        Value::Number(n) => n.as_i64().map(|i| i as i32),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
 }
 
-/// Parse all elements from the agent YAML body. Field-order-agnostic;
-/// matches the current crawl behavior including the `id`/`platform_id` alias.
-pub fn parse_elements(yaml: &str) -> Vec<ElementRecord> {
-    let mut out = Vec::new();
-    let mut current: Option<Vec<String>> = None;
-
-    let flush = |out: &mut Vec<ElementRecord>, lines: Vec<String>| {
-        if lines.is_empty() { return; }
-        let raw = lines.join("\n");
-        let mut rec = ElementRecord {
-            raw: raw.clone(),
-            content: String::new(),
-            etype: String::new(),
-            id: None,
-            bounds: None,
-            clickable: false,
-        };
-        for line in raw.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            let key = field_key(trimmed);
-            let val = extract_value(trimmed);
-            match key {
-                "content" => rec.content = val,
-                "type" => rec.etype = val,
-                "id" | "platform_id" => { if !val.is_empty() { rec.id = Some(val); } }
-                "clickable" => rec.clickable = val == "true",
-                "bounds" => rec.bounds = parse_bounds(&val),
-                _ => {}
-            }
+/// Extract bounds in [left, top, right, bottom] form from any of the shapes
+/// the agent emits:
+///   - inline array: [left, top, right, bottom]
+///   - mapping {x, y, w, h}
+///   - mapping {left, top, right, bottom}
+fn extract_bounds(v: &Value) -> Option<[i32; 4]> {
+    if let Value::Sequence(seq) = v {
+        let nums: Vec<i32> = seq.iter().filter_map(as_i32).collect();
+        if nums.len() == 4 { return Some([nums[0], nums[1], nums[2], nums[3]]); }
+    }
+    if let Value::Mapping(m) = v {
+        let get = |k: &str| m.get(Value::String(k.into())).and_then(as_i32);
+        if let (Some(l), Some(t), Some(r), Some(b)) = (get("left"), get("top"), get("right"), get("bottom")) {
+            return Some([l, t, r, b]);
         }
-        // Keep behavior identical to prior crawl flush: any of content/type/id
-        // present means the chunk is real.
-        if !rec.content.is_empty() || !rec.etype.is_empty() || rec.id.is_some() {
-            out.push(rec);
+        if let (Some(x), Some(y), Some(w), Some(h)) = (get("x"), get("y"), get("w"), get("h")) {
+            return Some([x, y, x + w, y + h]);
         }
+    }
+    None
+}
+
+fn record_from_value(v: &Value) -> Option<ElementRecord> {
+    let map = match v {
+        Value::Mapping(m) => m,
+        _ => return None,
     };
+    let g = |k: &str| map.get(Value::String(k.into()));
 
-    for line in yaml.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("- ") && trimmed.contains(':') {
-            if let Some(lines) = current.take() {
-                flush(&mut out, lines);
+    let mut id: Option<String> = None;
+    if let Some(p) = g("platform_id").and_then(as_string) { if !p.is_empty() { id = Some(p); } }
+    if id.is_none() {
+        if let Some(p) = g("id").and_then(as_string) { if !p.is_empty() { id = Some(p); } }
+    }
+
+    let content = g("content").and_then(as_string).unwrap_or_default();
+    let etype = g("type").and_then(as_string).unwrap_or_default();
+    let clickable = g("clickable").map(as_bool).unwrap_or(false);
+    let bounds = g("bounds").and_then(extract_bounds);
+
+    let raw = serde_yaml::to_string(v).unwrap_or_default();
+
+    // Drop completely empty records.
+    if id.is_none() && content.is_empty() && etype.is_empty() && bounds.is_none() && !clickable {
+        return None;
+    }
+    Some(ElementRecord { raw, content, etype, id, bounds, clickable })
+}
+
+/// Recursively walk a parsed YAML value, collecting every mapping that looks
+/// like an element (has `id`, `platform_id`, `content`, `type`, `bounds`, or
+/// `clickable`). Robust to whether the agent wraps the list under a top-level
+/// key or returns it bare.
+fn walk(v: &Value, out: &mut Vec<ElementRecord>) {
+    match v {
+        Value::Sequence(seq) => {
+            for item in seq {
+                if let Some(rec) = record_from_value(item) {
+                    out.push(rec);
+                }
+                // Always recurse — items may themselves contain child lists
+                // (the agent flattens these but we don't rely on that).
+                walk(item, out);
             }
-            current = Some(vec![trimmed.trim_start_matches('-').trim_start().to_string()]);
-        } else if let Some(ref mut lines) = current {
-            lines.push(trimmed.to_string());
         }
+        Value::Mapping(m) => {
+            for (_, val) in m {
+                walk(val, out);
+            }
+        }
+        _ => {}
     }
-    if let Some(lines) = current.take() {
-        flush(&mut out, lines);
+}
+
+/// Parse the agent YAML body into structured element records.
+pub fn parse_elements(yaml: &str) -> Vec<ElementRecord> {
+    match serde_yaml::from_str::<Value>(yaml) {
+        Ok(root) => {
+            let mut out = Vec::new();
+            walk(&root, &mut out);
+            out
+        }
+        Err(_) => Vec::new(),
     }
-    out
 }

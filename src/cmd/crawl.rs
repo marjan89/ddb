@@ -384,11 +384,16 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         // Find untapped clickable elements — must be clickable AND addressable
         // (either content text OR a stable id). Touch targets like 'discoverTouch'
         // have id but no content; bottom-nav text labels have content but no id.
+        // Tappable = clickable + addressable. Addressable means we have at least
+        // one of: stable id, content text, or bounds (for unlabeled touch zones).
         let element_key = |e: &CrawlElement| -> String {
-            if let Some(ref id) = e.id { format!("id:{id}") } else { format!("content:{}", e.content) }
+            if let Some(ref id) = e.id { return format!("id:{id}"); }
+            if !e.content.is_empty() { return format!("content:{}", e.content); }
+            if let Some(b) = e.bounds { return format!("bounds:{},{},{},{}", b[0], b[1], b[2], b[3]); }
+            String::from("anon")
         };
         let tappable: Vec<&CrawlElement> = all_elements.iter()
-            .filter(|e| e.clickable && (!e.content.is_empty() || e.id.is_some()))
+            .filter(|e| e.clickable && (e.id.is_some() || !e.content.is_empty() || e.bounds.is_some()))
             .filter(|e| !exclude.iter().any(|p| e.content.to_lowercase().contains(p)))
             .filter(|e| {
                 let key = element_key(e);
@@ -399,20 +404,38 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         if tappable.is_empty() { continue; }
 
         let elem = tappable[0];
-        let label = if elem.content.is_empty() { elem.id.clone().unwrap_or_default() } else { elem.content.clone() };
+        let label = if !elem.content.is_empty() {
+            elem.content.clone()
+        } else if let Some(ref id) = elem.id {
+            id.clone()
+        } else if let Some(b) = elem.bounds {
+            format!("[{},{},{},{}]", b[0], b[1], b[2], b[3])
+        } else {
+            "<unknown>".into()
+        };
         eprintln!("  TAP: '{}'", label);
 
         // Record as tapped using the same key
         let key = element_key(elem);
         if let Some(s) = state.visited.get_mut(&screen_id) { s.tapped.push(key); }
 
-        // Execute tap via /click
+        // Execute tap. Precedence: resource_id (id) > content_fuzzy > center-of-bounds.
         let click_body = if let Some(ref id) = elem.id {
             serde_json::json!({"resource_id": id}).to_string()
-        } else {
+        } else if !elem.content.is_empty() {
             serde_json::json!({"content_fuzzy": elem.content}).to_string()
+        } else if let Some(b) = elem.bounds {
+            let cx = (b[0] + b[2]) / 2;
+            let cy = (b[1] + b[3]) / 2;
+            // Fall back to raw input tap — agent /click may not accept bounds directly.
+            let _ = adb_shell(dev_arg, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+            String::new()
+        } else {
+            String::new()
         };
-        let _ = curl_post(&format!("{base}/click"), &click_body);
+        if !click_body.is_empty() {
+            let _ = curl_post(&format!("{base}/click"), &click_body);
+        }
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         // Crash check after tap
