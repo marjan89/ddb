@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::agent_yaml::{self, ElementRecord};
 use crate::registry::Registry;
 
 #[derive(clap::Args)]
@@ -37,6 +38,18 @@ struct CrawlElement {
     id: Option<String>,
     bounds: Option<[i32; 4]>,
     clickable: bool,
+}
+
+impl From<&ElementRecord> for CrawlElement {
+    fn from(r: &ElementRecord) -> Self {
+        CrawlElement {
+            content: r.content.clone(),
+            element_type: r.etype.clone(),
+            id: r.id.clone(),
+            bounds: r.bounds,
+            clickable: r.clickable,
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -169,75 +182,7 @@ fn fnv_hash(s: &str) -> u64 {
 }
 
 fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
-    // Each element is a YAML list item; field order is not guaranteed.
-    // A new element begins on any line whose trimmed form starts with "- "
-    // and contains ":". Fields can be `id` or `platform_id`, in any order.
-    fn extract_value(s: &str) -> String {
-        s.split_once(':').map(|(_, v)| v).unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_string()
-    }
-    fn field_key(s: &str) -> &str {
-        s.split_once(':').map(|(k, _)| k).unwrap_or("").trim_start_matches('-').trim()
-    }
-
-    let mut elements = Vec::new();
-    let mut content = String::new();
-    let mut etype = String::new();
-    let mut eid: Option<String> = None;
-    let mut clickable = false;
-    let mut in_element = false;
-
-    let flush = |elements: &mut Vec<CrawlElement>, content: &mut String, etype: &mut String, eid: &mut Option<String>, clickable: &mut bool| {
-        if !content.is_empty() || !etype.is_empty() || eid.is_some() {
-            elements.push(CrawlElement {
-                content: std::mem::take(content),
-                element_type: std::mem::take(etype),
-                id: eid.take(),
-                bounds: None,
-                clickable: *clickable,
-            });
-        }
-        *clickable = false;
-    };
-
-    for line in yaml.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-
-        let is_item_start = trimmed.starts_with("- ") && trimmed.contains(':');
-        if is_item_start {
-            if in_element {
-                flush(&mut elements, &mut content, &mut etype, &mut eid, &mut clickable);
-            }
-            in_element = true;
-            // The first field on this line may be id/content/type/clickable — parse it.
-            let key = field_key(trimmed);
-            let val = extract_value(trimmed);
-            match key {
-                "content" => content = val,
-                "type" => etype = val,
-                "id" | "platform_id" => { if !val.is_empty() { eid = Some(val); } }
-                "clickable" => clickable = val == "true",
-                _ => {}
-            }
-            continue;
-        }
-
-        if in_element {
-            let key = field_key(trimmed);
-            let val = extract_value(trimmed);
-            match key {
-                "content" => content = val,
-                "type" => etype = val,
-                "id" | "platform_id" => { if !val.is_empty() { eid = Some(val); } }
-                "clickable" => clickable = val == "true",
-                _ => {}
-            }
-        }
-    }
-    if in_element {
-        flush(&mut elements, &mut content, &mut etype, &mut eid, &mut clickable);
-    }
-    elements
+    agent_yaml::parse_elements(yaml).iter().map(CrawlElement::from).collect()
 }
 
 fn scroll_and_discover(dev: Option<&str>, base: &str, max_depth: usize) -> Vec<CrawlElement> {

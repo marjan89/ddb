@@ -1,4 +1,5 @@
 mod adb;
+mod agent_yaml;
 mod catalogue;
 mod cmd;
 mod config;

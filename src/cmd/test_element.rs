@@ -295,7 +295,7 @@ pub fn fetch_agent_yaml_full_with_retry(dev: Option<&Device>) -> Result<String, 
 
 pub fn get_semantic_elements(dev: Option<&Device>) -> Result<Vec<String>, String> {
     let yaml = fetch_agent_yaml(dev)?;
-    Ok(yaml.split("\n- ").map(|s| s.to_string()).collect())
+    Ok(crate::agent_yaml::split_elements(&yaml))
 }
 
 // --- YAML parsing helpers ---
