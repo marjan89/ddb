@@ -461,9 +461,17 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             let new_elems = parse_semantic_elements(&new_sem);
             let new_id = fingerprint(&new_activity, &new_elems);
 
+            let debug = std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1");
+            if debug {
+                eprintln!("  [TAP-CMP] before={} after={} new_activity={} same={}",
+                    screen_id, new_id, new_activity, new_id == screen_id);
+            }
             if new_id != screen_id {
+                eprintln!("  EDGE: '{}' -> {}", label, new_id);
                 state.edges.push(NavEdge { from: screen_id.clone(), element: elem.content.clone(), to: new_id.clone() });
                 screens_to_explore.push(new_id);
+            } else if debug {
+                eprintln!("  NO-NAV: tap on '{}' did not change screen fingerprint", label);
             }
         }
 
