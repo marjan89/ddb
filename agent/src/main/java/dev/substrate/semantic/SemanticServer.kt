@@ -105,6 +105,10 @@ class SemanticServer private constructor(
                 handleType(session)
             }
 
+            uri == "/text-field/set" && session.method == Method.POST -> {
+                handleTextFieldSet(session)
+            }
+
             uri == "/stream" -> {
                 handleStream()
             }
@@ -273,6 +277,53 @@ class SemanticServer private constructor(
             jsonResponse("""{"typed":true,"text":"${escape(text)}"$clickInfo}""")
         } else {
             jsonResponse("""{"typed":false,"error":"${escape(error ?: "")}"}""", Response.Status.BAD_REQUEST)
+        }
+    }
+
+    /**
+     * Atomic replace of the focused EditText value. Bypasses keystroke / IME /
+     * autofill races that plague /type — runs setText on the main thread,
+     * fires beforeTextChanged → onTextChanged → afterTextChanged exactly once,
+     * sets cursor to end. Mirrors iOS /text-field/set (ea6f281).
+     *
+     * Body: {"value": "..."}
+     */
+    private fun handleTextFieldSet(session: IHTTPSession): Response {
+        val body = readBody(session)
+        val value = extractJsonString(body, "value")
+            ?: return jsonResponse("""{"error":"missing value"}""", Response.Status.BAD_REQUEST)
+
+        val activity = currentActivity?.get()
+            ?: return jsonResponse("""{"error":"no activity"}""", Response.Status.SERVICE_UNAVAILABLE)
+
+        var success = false
+        var error: String? = null
+        val latch = java.util.concurrent.CountDownLatch(1)
+
+        mainHandler.post {
+            try {
+                val focused = activity.currentFocus
+                if (focused is android.widget.EditText) {
+                    focused.requestFocus()
+                    focused.setText(value)
+                    focused.setSelection(focused.text.length)
+                    success = true
+                } else {
+                    error = "no focused EditText"
+                }
+            } catch (e: Exception) {
+                error = e.message
+            }
+            latch.countDown()
+        }
+
+        if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            return jsonResponse("""{"set":false,"error":"timeout"}""", Response.Status.REQUEST_TIMEOUT)
+        }
+        return if (success) {
+            jsonResponse("""{"set":true,"value":"${escape(value)}"}""")
+        } else {
+            jsonResponse("""{"set":false,"error":"${escape(error ?: "")}"}""", Response.Status.BAD_REQUEST)
         }
     }
 

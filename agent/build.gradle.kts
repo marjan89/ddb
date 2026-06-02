@@ -36,7 +36,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "dev.substrate"
                 artifactId = "semantic-agent"
-                version = "0.3.0"
+                version = "0.4.0"
             }
         }
     }
