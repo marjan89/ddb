@@ -283,6 +283,26 @@ class IdleResourceRegistry {
         resources.remove(name)
     }
 
+    /**
+     * Invoke a resource's isIdle() under a Throwable guard. A misbehaving
+     * caller-supplied lambda must not be able to crash the /idle HTTP handler
+     * (which would close the connection and starve every consumer). Default
+     * on failure is `false` (busy) so callers err on the side of waiting,
+     * never on the side of false-idle.
+     */
+    private fun safeIsIdle(resource: IdleResource): Boolean {
+        return try {
+            resource.isIdle()
+        } catch (t: Throwable) {
+            android.util.Log.w(
+                "SemanticAgent",
+                "idle resource '${resource.name}' threw on isIdle(): ${t.message}",
+                t,
+            )
+            false
+        }
+    }
+
     fun isIdle(resourceNames: List<String>? = null): Boolean {
         val targets =
             if (resourceNames.isNullOrEmpty()) {
@@ -290,7 +310,7 @@ class IdleResourceRegistry {
             } else {
                 resourceNames.mapNotNull { resources[it] }
             }
-        return targets.all { it.isIdle() }
+        return targets.all { safeIsIdle(it) }
     }
 
     fun waitForIdle(
