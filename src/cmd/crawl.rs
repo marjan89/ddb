@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::registry::Registry;
+
 #[derive(clap::Args)]
 pub struct CrawlArgs {
     #[arg(long, env = "DDB_TEST_PACKAGE")]
@@ -173,7 +175,7 @@ fn scroll_and_discover(dev: Option<&str>, base: &str, max_depth: usize) -> Vec<C
     all_elements
 }
 
-pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
+pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     let out_dir = PathBuf::from(&args.output);
     std::fs::create_dir_all(out_dir.join("screens")).map_err(|e| format!("mkdir: {e}"))?;
     std::fs::create_dir_all(out_dir.join("screenshots")).map_err(|e| format!("mkdir: {e}"))?;
@@ -189,20 +191,50 @@ pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
 
     eprintln!("Crawling {} (max {} screens)", args.package, args.max_screens);
 
+    // Resolve device name → serial via Registry (adb -s needs serial, not friendly name)
+    let devices = Registry::load()?;
+    let serial: Option<String> = if devices.is_empty() && dev_arg.is_none() {
+        None
+    } else {
+        let (_, d) = Registry::resolve(dev_arg, &devices)?;
+        Some(d.transport_id())
+    };
+    let dev_arg: Option<&str> = serial.as_deref();
+
+    // Setup: matches ddb test precondition flow (DDB_CLEAN_STATE branches pm clear vs force-stop)
+    let clean_state = std::env::var("DDB_CLEAN_STATE").ok().map(|v| v == "true").unwrap_or(false);
+    if clean_state {
+        let _ = adb_shell(dev_arg, &["pm", "clear", &args.package]);
+        let perms = format!(
+            "pm grant {pkg} android.permission.ACCESS_FINE_LOCATION; pm grant {pkg} android.permission.ACCESS_COARSE_LOCATION; pm grant {pkg} android.permission.POST_NOTIFICATIONS",
+            pkg = args.package
+        );
+        let _ = adb_shell(dev_arg, &[&perms]);
+    } else {
+        let _ = adb_shell(dev_arg, &["am", "force-stop", &args.package]);
+    }
+
     // Launch app
-    let _ = adb_shell(dev_name, &["am", "force-stop", &args.package]);
     std::thread::sleep(std::time::Duration::from_millis(500));
     let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{}/.MainActivity", args.package));
-    let _ = adb_shell(dev_name, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Wait for agent
+    // Port forwarding for agent (uses resolved serial)
+    let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
+    if let Some(s) = dev_arg {
+        let mut fwd = std::process::Command::new("adb");
+        fwd.args(["-s", s]).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
+        let _ = fwd.output();
+    }
+
+    // Health check: hard fail if agent not ready (10 × 500ms)
     let mut ready = false;
     for _ in 0..10 {
         if curl_get(&format!("{base}/health")).map(|b| b.contains("semantic-agent")).unwrap_or(false) { ready = true; break; }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    if !ready { return Err("agent not ready".into()); }
+    if !ready { return Err("agent not ready after 5s".into()); }
 
     let mut screens_to_explore: Vec<String> = vec!["initial".into()];
 
@@ -210,10 +242,10 @@ pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         if state.visited.len() >= args.max_screens { break; }
 
         // Crash detection
-        if !is_app_alive(dev_name, &args.package) {
+        if !is_app_alive(dev_arg, &args.package) {
             eprintln!("  CRASH detected — relaunching");
             state.quirks.push(Quirk { screen: "unknown".into(), quirk_type: "crash".into(), description: "app crashed during crawl".into() });
-            let _ = adb_shell(dev_name, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+            let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             std::thread::sleep(std::time::Duration::from_secs(3));
             continue;
         }
@@ -224,12 +256,12 @@ pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             Err(_) => { eprintln!("  /semantic unreachable"); break; }
         };
 
-        let activity = get_activity(dev_name);
+        let activity = get_activity(dev_arg);
         let elements = parse_semantic_elements(&semantic);
 
         // Scroll discovery
         let all_elements = if args.max_scroll_depth > 0 {
-            scroll_and_discover(dev_name, &base, args.max_scroll_depth)
+            scroll_and_discover(dev_arg, &base, args.max_scroll_depth)
         } else { elements.clone() };
 
         let screen_id = fingerprint(&activity, &all_elements);
@@ -247,7 +279,7 @@ pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
 
             // Screenshot
             let ss_path = out_dir.join("screenshots").join(format!("{screen_id}.png"));
-            let ss_name = if take_screenshot(dev_name, ss_path.to_str().unwrap_or("")) {
+            let ss_name = if take_screenshot(dev_arg, ss_path.to_str().unwrap_or("")) {
                 Some(format!("screenshots/{screen_id}.png"))
             } else { None };
 
@@ -286,20 +318,20 @@ pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         // Crash check after tap
-        if !is_app_alive(dev_name, &args.package) {
+        if !is_app_alive(dev_arg, &args.package) {
             eprintln!("  CRASH after tapping '{}'", elem.content);
             state.quirks.push(Quirk {
                 screen: screen_id.clone(), quirk_type: "crash".into(),
                 description: format!("crash after tapping '{}'", elem.content),
             });
-            let _ = adb_shell(dev_name, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+            let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             std::thread::sleep(std::time::Duration::from_secs(3));
             screens_to_explore.push(screen_id);
             continue;
         }
 
         // Check what screen we're on now
-        let new_activity = get_activity(dev_name);
+        let new_activity = get_activity(dev_arg);
         if let Ok(new_sem) = curl_get(&format!("{base}/semantic")) {
             let new_elems = parse_semantic_elements(&new_sem);
             let new_id = fingerprint(&new_activity, &new_elems);
@@ -311,7 +343,7 @@ pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         }
 
         // Navigate back
-        let _ = adb_shell(dev_name, &["input", "keyevent", "KEYCODE_BACK"]);
+        let _ = adb_shell(dev_arg, &["input", "keyevent", "KEYCODE_BACK"]);
         std::thread::sleep(std::time::Duration::from_secs(1));
 
         // Re-queue current screen for more tapping
