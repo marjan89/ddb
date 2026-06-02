@@ -185,6 +185,13 @@ fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
     agent_yaml::parse_elements(yaml).iter().map(CrawlElement::from).collect()
 }
 
+fn element_dedup_key(e: &CrawlElement) -> String {
+    if let Some(ref id) = e.id { return format!("id:{id}"); }
+    if !e.content.is_empty() { return format!("content:{}", e.content); }
+    if let Some(b) = e.bounds { return format!("bounds:{},{},{},{}", b[0], b[1], b[2], b[3]); }
+    format!("type:{}:click:{}", e.element_type, e.clickable)
+}
+
 fn scroll_and_discover(dev: Option<&str>, base: &str, max_depth: usize) -> Vec<CrawlElement> {
     let mut all_elements = Vec::new();
     let mut seen_contents: HashSet<String> = HashSet::new();
@@ -194,7 +201,9 @@ fn scroll_and_discover(dev: Option<&str>, base: &str, max_depth: usize) -> Vec<C
             let elems = parse_semantic_elements(&sem);
             let mut new_count = 0;
             for e in &elems {
-                if seen_contents.insert(e.content.clone()) {
+                // Use composite key: id-first, content-second, bounds-third — empty
+                // content alone collides for every unlabeled clickable.
+                if seen_contents.insert(element_dedup_key(e)) {
                     all_elements.push(e.clone());
                     new_count += 1;
                 }
@@ -386,17 +395,11 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         // have id but no content; bottom-nav text labels have content but no id.
         // Tappable = clickable + addressable. Addressable means we have at least
         // one of: stable id, content text, or bounds (for unlabeled touch zones).
-        let element_key = |e: &CrawlElement| -> String {
-            if let Some(ref id) = e.id { return format!("id:{id}"); }
-            if !e.content.is_empty() { return format!("content:{}", e.content); }
-            if let Some(b) = e.bounds { return format!("bounds:{},{},{},{}", b[0], b[1], b[2], b[3]); }
-            String::from("anon")
-        };
         let tappable: Vec<&CrawlElement> = all_elements.iter()
             .filter(|e| e.clickable && (e.id.is_some() || !e.content.is_empty() || e.bounds.is_some()))
             .filter(|e| !exclude.iter().any(|p| e.content.to_lowercase().contains(p)))
             .filter(|e| {
-                let key = element_key(e);
+                let key = element_dedup_key(e);
                 state.visited.get(&screen_id).map_or(true, |s| !s.tapped.contains(&key))
             })
             .collect();
@@ -416,7 +419,7 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         eprintln!("  TAP: '{}'", label);
 
         // Record as tapped using the same key
-        let key = element_key(elem);
+        let key = element_dedup_key(elem);
         if let Some(s) = state.visited.get_mut(&screen_id) { s.tapped.push(key); }
 
         // Execute tap. Precedence: resource_id (id) > content_fuzzy > center-of-bounds.
