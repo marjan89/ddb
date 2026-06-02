@@ -61,12 +61,23 @@ struct CrawlState {
 // ---------------------------------------------------------------------------
 
 fn chunk_top_field(chunk: &str, key: &str) -> Option<String> {
-    let mut base_indent: Option<usize> = None;
+    // After agent_yaml::split_elements consumes the leading `\n- ` delimiter,
+    // the first line of a chunk is at column 0 (the leading dash + space was
+    // stripped) while subsequent top-level fields keep their original 2-space
+    // indent. Treat both column 0 AND the post-first-line indent as top-level.
+    // Nested children (e.g. bounds.{x,y,w,h}) sit one level deeper than that.
+    let mut field_indent: Option<usize> = None;
+    let mut seen_first = false;
     for line in chunk.lines() {
         if line.trim().is_empty() { continue; }
         let indent = line.chars().take_while(|c| *c == ' ').count();
-        let base = *base_indent.get_or_insert(indent);
-        if indent != base { continue; }
+        if !seen_first {
+            seen_first = true;
+        } else if field_indent.is_none() {
+            field_indent = Some(indent);
+        }
+        let is_top = indent == 0 || Some(indent) == field_indent;
+        if !is_top { continue; }
         let trimmed = line.trim_start().trim_start_matches('-').trim_start();
         if let Some(rest) = trimmed.strip_prefix(&format!("{key}:")) {
             return Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
@@ -88,19 +99,24 @@ fn chunk_bounds(chunk: &str) -> Option<[i32; 4]> {
             }
         }
     }
-    // Nested `bounds:\n  x: …\n  y: …\n  w: …\n  h: …`
+    // Nested `bounds:\n  x: …\n  y: …\n  w: …\n  h: …`.
+    // Same baseline asymmetry as chunk_top_field: first line at column 0
+    // (post split), subsequent top-level fields at field_indent.
     let mut in_bounds = false;
-    let mut base_indent: Option<usize> = None;
+    let mut field_indent: Option<usize> = None;
+    let mut seen_first = false;
     let mut bounds_indent: Option<usize> = None;
     let mut x = None; let mut y = None; let mut w = None; let mut h = None;
     let mut l = None; let mut t = None; let mut r = None; let mut b = None;
     for line in chunk.lines() {
         if line.trim().is_empty() { continue; }
         let indent = line.chars().take_while(|c| *c == ' ').count();
-        let base = *base_indent.get_or_insert(indent);
+        if !seen_first { seen_first = true; }
+        else if field_indent.is_none() { field_indent = Some(indent); }
         let trimmed = line.trim_start();
         if !in_bounds {
-            if indent == base && trimmed.trim_start_matches('-').trim_start().starts_with("bounds:") {
+            let is_top = indent == 0 || Some(indent) == field_indent;
+            if is_top && trimmed.trim_start_matches('-').trim_start().starts_with("bounds:") {
                 in_bounds = true;
                 bounds_indent = Some(indent);
             }
