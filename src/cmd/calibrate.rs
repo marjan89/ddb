@@ -1,4 +1,17 @@
+//! ddb calibrate — runs each TC end-to-end via the shared test runner and
+//! produces a calibration report that mirrors test results per step.
+//!
+//! Previously calibrate was static: it queried `/semantic` on the current
+//! screen and tried to match each step's target text. That worked for the
+//! first screen only — every multi-screen TC reported NOT_FOUND past step 2.
+//!
+//! Now calibrate delegates to `cmd::test::run` for each TC and reformats
+//! the resulting JSON into a calibration shape. One execution path for tests
+//! and calibration — same elements, same idle waits, same navigation.
+
 use std::path::PathBuf;
+
+use crate::cmd::test;
 
 #[derive(clap::Args)]
 pub struct CalibrateArgs {
@@ -6,17 +19,17 @@ pub struct CalibrateArgs {
     #[arg(long)]
     pub tc_dir: Option<String>,
 
-    /// Single recipe file to calibrate
+    /// Single TC file (overrides --tc-dir if set)
     #[arg(long)]
-    pub recipe: Option<String>,
+    pub spec: Option<String>,
 
-    /// Crawl data directory (for element verification)
-    #[arg(long)]
-    pub crawl_dir: Option<String>,
-
-    /// Output directory for calibrated TCs
+    /// Output directory for calibration reports
     #[arg(long, default_value = "catalogue/proven/android")]
     pub output: String,
+
+    /// Per-step timeout in seconds (passed to the test runner)
+    #[arg(long, default_value = "10")]
+    pub step_timeout: u64,
 }
 
 #[derive(serde::Serialize)]
@@ -27,201 +40,159 @@ struct CalibrationReport {
     steps: Vec<StepReport>,
     total: usize,
     passed: usize,
-    adjusted: usize,
     failed: usize,
+    skipped: usize,
 }
 
 #[derive(serde::Serialize)]
 struct StepReport {
     step: usize,
-    action: String,
+    action: Option<String>,
+    assert: Option<String>,
+    target: Option<String>,
     status: String,
-    old_target: Option<String>,
-    new_target: Option<String>,
-    reason: Option<String>,
+    element_found: Option<String>,
+    error: Option<String>,
 }
 
-fn agent_base_url() -> String {
-    let port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
-    format!("http://127.0.0.1:{port}")
-}
-
-fn curl_get(url: &str) -> Result<String, String> {
-    let output = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "10", url])
-        .output().map_err(|e| format!("curl: {e}"))?;
-    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).to_string()) }
-    else { Err("curl non-zero".into()) }
-}
-
-fn find_in_semantic(semantic: &str, target: &str) -> MatchResult {
-    let target_lower = target.to_lowercase();
-    let lines: Vec<&str> = semantic.lines().collect();
-
-    // Exact match
-    for line in &lines {
-        let trimmed = line.trim().trim_start_matches("- content:").trim_start_matches("content:").trim().trim_matches('"');
-        if trimmed == target { return MatchResult::Exact; }
+fn collect_tc_files(args: &CalibrateArgs) -> Result<Vec<String>, String> {
+    if let Some(ref spec) = args.spec {
+        return Ok(vec![spec.clone()]);
     }
-
-    // Case-insensitive
-    for line in &lines {
-        let trimmed = line.trim().trim_start_matches("- content:").trim_start_matches("content:").trim().trim_matches('"');
-        if trimmed.to_lowercase() == target_lower { return MatchResult::Fuzzy(trimmed.to_string()); }
-    }
-
-    // Substring
-    for line in &lines {
-        let trimmed = line.trim().trim_start_matches("- content:").trim_start_matches("content:").trim().trim_matches('"');
-        if !trimmed.is_empty() && trimmed.to_lowercase().contains(&target_lower) {
-            return MatchResult::Fuzzy(trimmed.to_string());
+    let tc_dir = args.tc_dir.as_deref().unwrap_or("catalogue/generated/android");
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(tc_dir).map_err(|e| format!("read_dir {tc_dir}: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
+            out.push(path.to_string_lossy().to_string());
         }
     }
+    out.sort();
+    Ok(out)
+}
 
-    // Reverse substring
-    for line in &lines {
-        let trimmed = line.trim().trim_start_matches("- content:").trim_start_matches("content:").trim().trim_matches('"');
-        if !trimmed.is_empty() && target_lower.contains(&trimmed.to_lowercase()) && trimmed.len() > 3 {
-            return MatchResult::Fuzzy(trimmed.to_string());
+fn map_step_status(result: &str) -> &'static str {
+    match result.to_lowercase().as_str() {
+        "pass" => "PASS",
+        "fail" => "FAIL",
+        "skip" => "SKIP",
+        _ => "UNKNOWN",
+    }
+}
+
+fn build_calibration_report(tc_name: &str, tc_results_json: &str) -> Result<CalibrationReport, String> {
+    let value: serde_json::Value = serde_json::from_str(tc_results_json)
+        .map_err(|e| format!("parse test report: {e}"))?;
+    // test::run writes Vec<TestResult>. Single-spec invocation → 1 element.
+    let tc = value.as_array()
+        .and_then(|arr| arr.first())
+        .ok_or_else(|| "test report empty".to_string())?;
+
+    let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or(tc_name).to_string();
+    let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or(tc_name).to_string();
+    let log = tc.get("log").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    let mut steps = Vec::with_capacity(log.len());
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    for entry in &log {
+        let result = entry.get("result").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let status = map_step_status(result);
+        match status {
+            "PASS" => passed += 1,
+            "FAIL" => failed += 1,
+            "SKIP" => skipped += 1,
+            _ => {}
         }
+        steps.push(StepReport {
+            step: entry.get("step").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            action: entry.get("action").and_then(|v| v.as_str()).map(String::from),
+            assert: entry.get("assert").and_then(|v| v.as_str()).map(String::from),
+            target: entry.get("target").and_then(|v| v.as_str()).map(String::from),
+            status: status.to_string(),
+            element_found: entry.get("element_found").and_then(|v| v.as_str()).map(String::from),
+            error: entry.get("error").and_then(|v| v.as_str()).map(String::from),
+        });
     }
+    let total = steps.len();
+    let status = if failed > 0 { "HAS_FAILURES" } else { "CALIBRATED" };
 
-    MatchResult::NotFound
-}
-
-enum MatchResult {
-    Exact,
-    Fuzzy(String),
-    NotFound,
-}
-
-fn extract_target_text(step_yaml: &str) -> Option<String> {
-    if let Some(pos) = step_yaml.find("content_fuzzy:") {
-        let rest = &step_yaml[pos + 14..];
-        let trimmed = rest.trim().trim_matches('"').trim_matches('\'');
-        let end = trimmed.find('}').or_else(|| trimmed.find(',')).unwrap_or(trimmed.len());
-        return Some(trimmed[..end].trim().trim_matches('"').trim_matches('\'').to_string());
-    }
-    None
+    Ok(CalibrationReport {
+        tc_id: id,
+        tc_name: name,
+        status: status.into(),
+        steps,
+        total,
+        passed,
+        failed,
+        skipped,
+    })
 }
 
 pub fn run(dev_name: Option<&str>, args: CalibrateArgs) -> Result<(), String> {
-    let base = agent_base_url();
-
-    // Wait for agent
-    let mut ready = false;
-    for _ in 0..10 {
-        if curl_get(&format!("{base}/health")).map(|b| b.contains("semantic-agent")).unwrap_or(false) { ready = true; break; }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-    if !ready { return Err("agent not ready".into()); }
-
-    let tc_dir = args.tc_dir.as_deref().unwrap_or("catalogue/generated/android");
     let out_dir = PathBuf::from(&args.output);
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("mkdir: {e}"))?;
+    std::fs::create_dir_all(out_dir.join("reports"))
+        .map_err(|e| format!("mkdir reports: {e}"))?;
 
-    let mut tc_files: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(tc_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
-                tc_files.push(path.to_string_lossy().to_string());
-            }
-        }
-    }
-    tc_files.sort();
+    let tc_files = collect_tc_files(&args)?;
+    eprintln!("Calibrating {} TC(s)", tc_files.len());
 
-    eprintln!("Calibrating {} TCs from {}", tc_files.len(), tc_dir);
-
+    let mut all_ok = true;
     for tc_path in &tc_files {
-        let content = std::fs::read_to_string(tc_path).map_err(|e| format!("read {tc_path}: {e}"))?;
-        let tc_name = std::path::Path::new(tc_path).file_stem()
-            .map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-
+        let tc_name = std::path::Path::new(tc_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         eprintln!("\n  Calibrating: {tc_name}");
 
-        // Parse TC YAML lines to find steps with targets
-        let lines: Vec<&str> = content.lines().collect();
-        let mut report = CalibrationReport {
-            tc_id: tc_name.clone(), tc_name: tc_name.clone(),
-            status: "CALIBRATED".into(),
-            steps: Vec::new(), total: 0, passed: 0, adjusted: 0, failed: 0,
+        let tmp_report = std::env::temp_dir().join(format!("ddb-calibrate-{tc_name}.json"));
+        let test_args = test::TestArgs {
+            specs: vec![tc_path.clone()],
+            report: Some(tmp_report.to_string_lossy().to_string()),
+            step_timeout: args.step_timeout,
+            rerun_failed: false,
+            suite: None,
+            results_dir: None,
+            tests_dir: None,
+            expected_hash: None,
+            build: false,
+            project_dir: None,
+            regression_gate: false,
+            base_branch: "main".into(),
+            tc_map: None,
+            capture_baseline: false,
         };
 
-        let mut calibrated = content.clone();
-        let mut step_num = 0;
-
-        for (i, line) in lines.iter().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("- action:") || trimmed.starts_with("- assert:") {
-                step_num += 1;
-                report.total += 1;
-
-                let action = trimmed.strip_prefix("- action:").or_else(|| trimmed.strip_prefix("- assert:"))
-                    .unwrap_or("").trim().to_string();
-
-                // Find the target line (next few lines)
-                let step_block: String = lines[i..std::cmp::min(i + 5, lines.len())].join("\n");
-                let target_text = extract_target_text(&step_block);
-
-                if let Some(ref target) = target_text {
-                    // Query current semantic
-                    let semantic = curl_get(&format!("{base}/semantic")).unwrap_or_default();
-                    let result = find_in_semantic(&semantic, target);
-
-                    match result {
-                        MatchResult::Exact => {
-                            report.passed += 1;
-                            report.steps.push(StepReport {
-                                step: step_num, action: action.clone(), status: "PASS".into(),
-                                old_target: None, new_target: None, reason: None,
-                            });
-                            eprintln!("    step {step_num} ({action}): PASS");
-                        }
-                        MatchResult::Fuzzy(actual) => {
-                            report.adjusted += 1;
-                            calibrated = calibrated.replace(target, &actual);
-                            report.steps.push(StepReport {
-                                step: step_num, action: action.clone(), status: "ADJUSTED".into(),
-                                old_target: Some(target.clone()), new_target: Some(actual.clone()),
-                                reason: Some("text mismatch — adjusted to match actual UI".into()),
-                            });
-                            eprintln!("    step {step_num} ({action}): ADJUSTED '{}' → '{}'", target, actual);
-                        }
-                        MatchResult::NotFound => {
-                            report.failed += 1;
-                            report.status = "HAS_FAILURES".into();
-                            report.steps.push(StepReport {
-                                step: step_num, action: action.clone(), status: "NOT_FOUND".into(),
-                                old_target: Some(target.clone()), new_target: None,
-                                reason: Some("element not found on current screen".into()),
-                            });
-                            eprintln!("    step {step_num} ({action}): NOT_FOUND '{}'", target);
-                        }
-                    }
-                } else {
-                    report.passed += 1;
-                    report.steps.push(StepReport {
-                        step: step_num, action: action.clone(), status: "PASS".into(),
-                        old_target: None, new_target: None, reason: None,
-                    });
-                }
-            }
+        if let Err(e) = test::run(dev_name, test_args) {
+            eprintln!("    test runner errored: {e}");
+            all_ok = false;
         }
 
-        // Write calibrated TC
-        let out_path = out_dir.join(format!("{tc_name}.yaml"));
-        let _ = std::fs::write(&out_path, &calibrated);
+        let report_json = std::fs::read_to_string(&tmp_report)
+            .map_err(|e| format!("read test report {}: {e}", tmp_report.display()))?;
+        let report = build_calibration_report(&tc_name, &report_json)?;
 
-        // Write report
-        let report_dir = out_dir.join("reports");
-        let _ = std::fs::create_dir_all(&report_dir);
-        let _ = std::fs::write(report_dir.join(format!("{tc_name}-report.yaml")),
-            serde_yaml::to_string(&report).unwrap_or_default());
+        for step in &report.steps {
+            let descr = step.action.as_deref()
+                .or(step.assert.as_deref())
+                .unwrap_or("?");
+            eprintln!("    step {} ({}): {}", step.step, descr, step.status);
+        }
+        eprintln!(
+            "    {} → {} ({}/{} passed, {} failed, {} skipped)",
+            tc_name, report.status, report.passed, report.total, report.failed, report.skipped
+        );
 
-        eprintln!("  {tc_name}: {}/{} pass, {} adjusted, {} failed",
-            report.passed, report.total, report.adjusted, report.failed);
+        if report.failed > 0 { all_ok = false; }
+
+        let report_path = out_dir.join("reports").join(format!("{tc_name}.json"));
+        std::fs::write(&report_path, serde_json::to_string_pretty(&report).unwrap_or_default())
+            .map_err(|e| format!("write report {}: {e}", report_path.display()))?;
+        eprintln!("    report: {}", report_path.display());
     }
 
+    if !all_ok { return Err("one or more TCs had failures".into()); }
     Ok(())
 }
