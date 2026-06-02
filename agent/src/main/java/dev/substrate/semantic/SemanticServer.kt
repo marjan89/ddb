@@ -443,7 +443,8 @@ class SemanticServer private constructor(
                 }
             }
             return extraElements
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("SemanticAgent", "walkDialogWindows failed", e)
             return emptyList()
         }
     }
