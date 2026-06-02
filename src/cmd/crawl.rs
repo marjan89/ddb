@@ -313,14 +313,35 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         }
         let _ = current_screen;
 
-        // Get current screen
-        let semantic = match curl_get(&format!("{base}/semantic")) {
-            Ok(s) => s,
-            Err(_) => { eprintln!("  /semantic unreachable"); break; }
-        };
+        // Get current screen — retry up to 3× with 1s gap if /semantic returns no elements
+        // (covers the case where activity is resumed but UI hasn't fully rendered yet).
+        let mut semantic = String::new();
+        let mut elements: Vec<CrawlElement> = Vec::new();
+        let mut semantic_ok = false;
+        for attempt in 0..3 {
+            match curl_get(&format!("{base}/semantic")) {
+                Ok(s) => {
+                    let parsed = parse_semantic_elements(&s);
+                    if !parsed.is_empty() {
+                        semantic = s;
+                        elements = parsed;
+                        semantic_ok = true;
+                        break;
+                    }
+                    if attempt + 1 < 3 {
+                        eprintln!("  /semantic empty (attempt {}/3), retrying in 1s", attempt + 1);
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+                Err(_) => { eprintln!("  /semantic unreachable"); break; }
+            }
+        }
+        if !semantic_ok && elements.is_empty() {
+            eprintln!("  /semantic returned 0 elements after 3 attempts — skipping iteration");
+            continue;
+        }
 
         let activity = get_activity(dev_arg);
-        let elements = parse_semantic_elements(&semantic);
 
         // Scroll discovery
         let all_elements = if args.max_scroll_depth > 0 {
