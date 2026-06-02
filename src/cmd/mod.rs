@@ -1,6 +1,7 @@
 mod adb_passthrough;
 mod app;
 mod config_cmd;
+pub mod calibrate;
 pub mod crawl;
 mod daemon;
 mod devices;
@@ -93,6 +94,9 @@ pub enum Command {
     /// Autonomous app exploration — discovers screens, elements, navigation graph
     Crawl(crawl::CrawlArgs),
 
+    /// Calibrate generated TCs against actual UI on device
+    Calibrate(calibrate::CalibrateArgs),
+
     /// Pass through to adb (auto-injects -s from registry)
     Adb(adb_passthrough::AdbArgs),
 
@@ -125,6 +129,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Command::Config(args) => config_cmd::run(args),
         Command::Test(args) => test::run(dev, args),
         Command::Crawl(args) => crawl::run(dev, args),
+        Command::Calibrate(args) => calibrate::run(dev, args),
         Command::Mount(args) => mount::run(args),
         Command::Unmount(args) => mount::unmount(args),
         Command::Adb(args) => adb_passthrough::run(dev, args),
