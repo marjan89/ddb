@@ -395,16 +395,30 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         // have id but no content; bottom-nav text labels have content but no id.
         // Tappable = clickable + addressable. Addressable means we have at least
         // one of: stable id, content text, or bounds (for unlabeled touch zones).
-        let tappable: Vec<&CrawlElement> = all_elements.iter()
+        let total = all_elements.len();
+        let after_clickable: Vec<&CrawlElement> = all_elements.iter()
             .filter(|e| e.clickable && (e.id.is_some() || !e.content.is_empty() || e.bounds.is_some()))
+            .collect();
+        let after_exclude: Vec<&CrawlElement> = after_clickable.iter()
+            .copied()
             .filter(|e| !exclude.iter().any(|p| e.content.to_lowercase().contains(p)))
+            .collect();
+        let tappable: Vec<&CrawlElement> = after_exclude.iter()
+            .copied()
             .filter(|e| {
                 let key = element_dedup_key(e);
                 state.visited.get(&screen_id).map_or(true, |s| !s.tapped.contains(&key))
             })
             .collect();
 
-        if tappable.is_empty() { continue; }
+        eprintln!("  TAPPABLE: total={} clickable+addr={} after-exclude={} after-dedup={}",
+            total, after_clickable.len(), after_exclude.len(), tappable.len());
+
+        if tappable.is_empty() {
+            // Visit-count cap also forces a continue. Note it for the operator.
+            eprintln!("  SKIP: no tappable on screen {} (visit {}/3)", screen_id, count);
+            continue;
+        }
 
         let elem = tappable[0];
         let label = if !elem.content.is_empty() {
