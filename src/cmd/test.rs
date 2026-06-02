@@ -856,27 +856,31 @@ fn execute_recipe(recipe_path: &str, dev: Option<&Device>, runner: &StepRunner, 
     Ok(())
 }
 
-fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepRunner, fixtures: &std::collections::HashMap<String, String>) {
+fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepRunner, fixtures: &std::collections::HashMap<String, String>) -> Result<(), String> {
     let indicator = std::env::var("DDB_LOGGED_IN_INDICATOR").unwrap_or_else(|_| "log out".into());
     let base = agent_base_url();
     if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
         if body.to_lowercase().contains(&indicator.to_lowercase()) {
             eprintln!("  already logged in (found '{}' in semantic)", indicator);
-            return;
+            return Ok(());
         }
     }
 
-    let recipe_path = match std::env::var("DDB_LOGIN_RECIPE").ok().filter(|p| !p.is_empty()) {
-        Some(p) => p,
-        None => {
-            eprintln!("  ERROR: DDB_LOGIN_RECIPE not set — cannot login. Set it to the path of your login recipe YAML.");
-            return;
+    let recipe_path = std::env::var("DDB_LOGIN_RECIPE").ok().filter(|p| !p.is_empty())
+        .ok_or_else(|| "DDB_LOGIN_RECIPE not set — TC requires logged_in:true but no recipe path provided".to_string())?;
+
+    execute_recipe(&recipe_path, dev, runner, fixtures)
+        .map_err(|e| format!("login recipe '{recipe_path}' failed: {e}"))?;
+    eprintln!("  login recipe executed successfully");
+
+    // Post-verify: the recipe may report success but auth state can lag the UI.
+    // Re-check the semantic dump for the configured indicator before proceeding.
+    if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
+        if body.to_lowercase().contains(&indicator.to_lowercase()) {
+            return Ok(());
         }
-    };
-    match execute_recipe(&recipe_path, dev, runner, fixtures) {
-        Ok(()) => eprintln!("  login recipe executed successfully"),
-        Err(e) => eprintln!("  login recipe failed: {e}"),
     }
+    Err(format!("login recipe ran but logged-in indicator '{indicator}' not found in /semantic post-recipe"))
 }
 
 fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &StepRunner) {
@@ -1005,10 +1009,24 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         }, step_logs);
     }
 
-    // 4. Login if needed (recipe-only, no hardcoded flow)
+    // 4. Login if needed (recipe-only, no hardcoded flow).
+    // Hard-fail the TC if the recipe is missing, fails, or doesn't actually
+    // produce a logged-in state — silent continuation past a failed login
+    // makes downstream wait_until / assert failures look like UI bugs.
     if let Some(ref pre) = spec.precondition {
         if pre.logged_in == Some(true) {
-            ensure_logged_in_with_runner(dev, pkg, &setup_runner, fixtures);
+            if let Err(e) = ensure_logged_in_with_runner(dev, pkg, &setup_runner, fixtures) {
+                return (TestResult {
+                    id: spec.id.clone(), name: spec.name.clone(),
+                    status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+                    failure: Some(FailureDetail {
+                        step: 0,
+                        description: format!("login required by precondition.logged_in=true: {e}"),
+                        screenshot: None,
+                    }),
+                    log: logger.entries(),
+                }, step_logs);
+            }
         }
     }
 
