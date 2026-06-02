@@ -276,24 +276,36 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     if !ready { return Err("agent not ready after 5s".into()); }
 
     // Content settle: after launch the app's chrome appears immediately but
-    // dynamic content (lists, network-driven views) renders asynchronously.
-    // Poll /semantic until the parsed element count is stable across two
-    // consecutive ticks (or timeout). Generic — no app strings, no element
-    // names. Tunable via DDB_SETTLE_MS / DDB_SETTLE_TICK_MS.
+    // dynamic content (lists, network-driven views, async image loads) renders
+    // asynchronously. Static skeletons frequently have a stable total element
+    // count even before clickables arrive, so settling on total-count alone
+    // exits the wait too early.
+    //
+    // Track the (total_count, clickable_count) tuple. Settle when the tuple
+    // is unchanged across two consecutive ticks AND total > 0. If a screen
+    // genuinely has no clickables the tuple still stabilizes on (n, 0) and
+    // we exit. If clickables arrive late, the changing tuple keeps the wait
+    // alive until they too settle.
+    //
+    // Tunable via DDB_SETTLE_MS / DDB_SETTLE_TICK_MS.
     let settle_budget_ms: u64 = std::env::var("DDB_SETTLE_MS")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(8_000);
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(15_000);
     let settle_tick_ms: u64 = std::env::var("DDB_SETTLE_TICK_MS")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(500);
-    let mut last_count: Option<usize> = None;
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(1_000);
+    let mut last_tuple: Option<(usize, usize)> = None;
     let mut elapsed = 0u64;
     while elapsed < settle_budget_ms {
         if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
-            let n = parse_semantic_elements(&sem).len();
-            if last_count == Some(n) && n > 0 {
-                eprintln!("Content settled at {} elements after {}ms", n, elapsed);
+            let elems = parse_semantic_elements(&sem);
+            let total = elems.len();
+            let clickable = elems.iter().filter(|e| e.clickable).count();
+            let tuple = (total, clickable);
+            if last_tuple == Some(tuple) && total > 0 {
+                eprintln!("Content settled at {} elements ({} clickable) after {}ms",
+                    total, clickable, elapsed);
                 break;
             }
-            last_count = Some(n);
+            last_tuple = Some(tuple);
         }
         std::thread::sleep(std::time::Duration::from_millis(settle_tick_ms));
         elapsed += settle_tick_ms;
