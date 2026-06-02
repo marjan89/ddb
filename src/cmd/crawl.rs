@@ -87,7 +87,10 @@ fn get_activity(dev: Option<&str>) -> String {
     adb_shell(dev, &["dumpsys", "activity", "activities"])
         .ok()
         .and_then(|out| {
-            let line = out.lines().find(|l| l.trim_start().starts_with("mResumedActivity"))?;
+            let line = out.lines().find(|l| {
+                let t = l.trim_start();
+                t.starts_with("mResumedActivity") || t.starts_with("topResumedActivity")
+            })?;
             let bracket = line.split('{').nth(1)?;
             let inside = bracket.split('}').next()?;
             inside.split_whitespace().find(|t| t.contains('/')).map(|s| s.to_string())
@@ -100,11 +103,12 @@ fn is_app_alive(dev: Option<&str>, pkg: &str) -> bool {
 }
 
 fn current_foreground_pkg(dev: Option<&str>) -> Option<String> {
-    // Use mResumedActivity from `dumpsys activity activities` — there is exactly one
-    // resumed activity per device, unlike mCurrentFocus which has one entry per display.
+    // Samsung uses topResumedActivity, AOSP uses mResumedActivity. Both are singletons.
     let out = adb_shell(dev, &["dumpsys", "activity", "activities"]).ok()?;
-    let line = out.lines().find(|l| l.trim_start().starts_with("mResumedActivity"))?;
-    // Line shape: "  mResumedActivity: ActivityRecord{abc u0 pkg/.ClassName t123}"
+    let line = out.lines().find(|l| {
+        let t = l.trim_start();
+        t.starts_with("mResumedActivity") || t.starts_with("topResumedActivity")
+    })?;
     let bracket = line.split('{').nth(1)?;
     let inside = bracket.split('}').next()?;
     let token = inside.split_whitespace().find(|t| t.contains('/'))?;
