@@ -123,7 +123,26 @@ fn is_app_alive(dev: Option<&Device>, pkg: &str) -> bool {
 }
 
 fn is_launcher_pkg(pkg: &str) -> bool {
-    pkg.ends_with(".launcher") || pkg.contains("nexuslauncher")
+    // Match common launcher package suffixes:
+    //   *.launcher           (vendor + AOSP, e.g. com.sec.android.app.launcher)
+    //   *.launcher<digits>   (versioned AOSP, e.g. com.android.launcher3)
+    //   *nexuslauncher       (Pixel launcher)
+    if pkg.contains("nexuslauncher") { return true; }
+    let trimmed = pkg.trim_end_matches(|c: char| c.is_ascii_digit());
+    trimmed.ends_with(".launcher")
+}
+
+#[cfg(test)]
+mod is_launcher_tests {
+    use super::is_launcher_pkg;
+    #[test] fn matches_samsung() { assert!(is_launcher_pkg("com.sec.android.app.launcher")); }
+    #[test] fn matches_aosp_versioned() { assert!(is_launcher_pkg("com.android.launcher3")); }
+    #[test] fn matches_pixel() { assert!(is_launcher_pkg("com.google.android.apps.nexuslauncher")); }
+    #[test] fn rejects_third_party() {
+        assert!(!is_launcher_pkg("com.bose.app.staging"));
+        assert!(!is_launcher_pkg("se.naturkartan.android"));
+        assert!(!is_launcher_pkg("com.google.android.apps.maps"));
+    }
 }
 
 fn forward_agent_port(dev: Option<&Device>) {
