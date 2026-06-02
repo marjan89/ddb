@@ -1,86 +1,99 @@
-# Semantic Agent — Android
+# semantic-agent (Android)
 
-Embeddable debug-only HTTP server that exposes the Android view tree as structured YAML for automated QA tooling. Runs on port 9876 inside the app process.
+Debug-only in-process HTTP server exposing the Android view tree, idle state, and tap/type surface for automated QA. Released as `dev.substrate:semantic-agent`.
 
-## Quick Start
+See [tctl/docs/agent-porting-guide.md](../tctl/docs/agent-porting-guide.md) for the cross-platform contract and [tctl/docs/agent-capability-matrix.md](../tctl/docs/agent-capability-matrix.md) for per-platform feature status.
 
-### 1. Add dependency
+## Versions
 
-```gradle
-// settings.gradle.kts — add Maven Local
-repositories {
-    mavenLocal()
+| Version | SHA | Change |
+|---|---|---|
+| 0.4.0 | 25b493b | `POST /text-field/set` atomic value replace |
+| 0.3.0 | 7c8f517 | `IdleResourceRegistry.safeIsIdle` throwable guard |
+| 0.2.0 | 88b7f6f | public `SemanticServer.registerIdleResource(name, lambda)` |
+| 0.1.0 | b57401c | initial publish |
+
+## Consume
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories { mavenLocal() }
 }
 
 // app/build.gradle.kts
 dependencies {
-    debugImplementation("dev.substrate:semantic-agent:0.1.0")
+    debugImplementation("dev.substrate:semantic-agent:0.4.0")
 }
 ```
 
-### 2. Wire MockInterceptor into OkHttp (optional, for mock layer)
-
-```kotlin
-// In your DI module (debug build only)
-if (BuildConfig.DEBUG) {
-    val registry = dev.substrate.semantic.MockRegistry.shared
-    okHttpClientBuilder.addInterceptor(registry.interceptor)
-}
-```
-
-### 3. Auto-start
-
-The agent starts automatically via `SemanticInitProvider` (ContentProvider). No code needed — just add the dependency.
-
-### 4. Verify
-
-```bash
-adb forward tcp:9876 tcp:9876
-curl http://127.0.0.1:9876/health
-# → {"status":"ok","agent":"semantic-agent"}
-curl http://127.0.0.1:9876/semantic
-# → YAML view tree
-```
+`SemanticInitProvider` auto-starts the server. No `Application.onCreate` boilerplate required for the agent itself.
 
 ## Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Health check |
-| GET | /version | Agent version (git hash + build time) |
-| GET | /semantic | View tree as YAML |
-| GET | /idle | Idle resource status |
-| POST | /query-when-idle | Wait for idle then return semantic |
-| POST | /scroll-search | Scroll + search for element |
-| POST | /type | Type text into focused/targeted field (clear + InputConnection) |
-| POST | /click | Programmatic performClick by resource_id |
-| POST | /mock | Register mock HTTP rules |
-| POST | /unmock | Clear mock rules |
-| GET | /mock-status | Mock hit count and registered rules |
-| POST | /keyboard/dismiss | Dismiss software keyboard |
+| Method | Path | Notes |
+|---|---|---|
+| GET  | `/health` | `{"status":"ok","agent":"semantic-agent","version":"3.0.0"}` |
+| GET  | `/version` | git hash + build time when packaged with `gitHash`/`buildTime` to `install()` |
+| GET  | `/semantic` | YAML element list, current screen |
+| GET  | `/semantic?scroll=0` | full-page semantic, ignores viewport |
+| GET  | `/idle` | `{"idle":bool}` — AND of every registered resource (throwable-guarded since 0.3.0) |
+| GET  | `/idle-resources` | list registered resource names |
+| POST | `/query-when-idle` | wait for idle + element match, return coords |
+| POST | `/scroll-search` | scroll within a scrollable to surface an off-screen element |
+| POST | `/click` | tap by `{resource_id|content_fuzzy|bounds}` |
+| POST | `/type` | per-char `commitText` via `InputConnection` — see caveat below |
+| POST | `/text-field/set` (0.4.0+) | atomic `setText` on focused `EditText`, single TextWatcher fire; preferred for login + IME-sensitive paths |
+| POST | `/keyboard/dismiss` | `imm.hideSoftInputFromWindow` |
+| POST | `/mock` | register mock HTTP rules |
+| POST | `/unmock` | clear mock rules |
+| GET  | `/mock-status` | hit counts + registered rules |
+| GET  | `/stream` | SSE event stream |
+| GET  | `/overlay` | optional debug overlay |
+| GET  | `/debug-log` | recent agent log |
+| DELETE | `/debug-log` | clear |
 
-## Publishing to Maven Local
+## Idle resource registration
 
-```bash
-cd semantic-agent-android
-./gradlew :agent:publishToMavenLocal
+Built-in resources at `SemanticServer.install()`: `ui_thread`, `layout`, `scroll`, `network`, `dialog`, `activity_transition`.
+
+`network` uses reflection to find a Hilt-provided OkHttp `Dispatcher`. Apps that don't match that shape (different DI, no Hilt, custom HTTP client) MUST register explicitly:
+
+```kotlin
+val lastStart = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+okHttpClientBuilder.eventListener(object : okhttp3.EventListener() {
+    override fun requestHeadersStart(call: okhttp3.Call) {
+        lastStart.set(System.currentTimeMillis())
+    }
+})
+SemanticServer.registerIdleResource("okhttp") {
+    val sinceLast = System.currentTimeMillis() - lastStart.get()
+    dispatcher.runningCallsCount() == 0 && sinceLast > 1500
+}
 ```
 
-Publishes `dev.substrate:semantic-agent:0.1.0` to `~/.m2/repository/`.
+EventListener (not `addInterceptor`) is required so the listener doesn't fire for mocked requests (mock chain short-circuits inside the interceptor stack). 1.5s settle prevents background polling (workers, analytics) from holding `/idle` busy.
 
-## Configuration
+Reference integration: nk-android-2026 `app/src/main/java/se/naturkartan/android/di/Module.kt` (c7dc2eb) + eager `@Inject RestApi` in `MainApplication.onCreate` so the provider runs before the agent's first `/idle` probe.
 
-The agent accepts constructor parameters with defaults:
+## Publish
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| port | 9876 | HTTP server port |
+```
+nosandbox ./gradlew :agent:publishReleasePublicationToMavenLocal --no-daemon
+```
 
-## Architecture
+Publishes to `~/.m2/repository/dev/substrate/semantic-agent/<version>/`.
 
-- **SemanticServer**: NanoHTTPD-based HTTP server, routes requests to handlers
-- **ViewTreeWalker**: Walks Android view hierarchy, produces SemanticElement tree
-- **SemanticElement**: Structured representation of a UI element (text, bounds, type, resource_id)
-- **IdleResourceRegistry**: Tracks UI idle state (network, animations, UI thread)
-- **MockRegistry + MockInterceptor**: OkHttp interceptor for HTTP mocking
-- **SemanticInitProvider**: ContentProvider for auto-start (no app code needed)
+## Endpoint selection guidance
+
+| Use case | Endpoint | Why |
+|---|---|---|
+| Plain text input, non-secure field | `/type` | per-char keystrokes acceptable; fires standard text events |
+| Password, SecureKeyboard, autofill-prone field | `/text-field/set` | atomic, single TextWatcher fire, bypasses IME/autofill races |
+| Tap addressable element | `/click` with `resource_id` | most stable |
+| Tap text label | `/click` with `content_fuzzy` | fuzzy substring match |
+| Tap unlabeled touch zone | `/click` with `bounds` | last resort |
+
+## Known limitations
+
+See [tctl/docs/agent-capability-matrix.md](../tctl/docs/agent-capability-matrix.md) §"Known limitations" rows L2, L5, L6, L7, L8, L9.
