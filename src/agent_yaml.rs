@@ -83,18 +83,36 @@ fn record_from_value(v: &Value) -> Option<ElementRecord> {
         Value::Mapping(m) => m,
         _ => return None,
     };
-    let g = |k: &str| map.get(Value::String(k.into()));
 
-    let mut id: Option<String> = None;
-    if let Some(p) = g("platform_id").and_then(as_string) { if !p.is_empty() { id = Some(p); } }
-    if id.is_none() {
-        if let Some(p) = g("id").and_then(as_string) { if !p.is_empty() { id = Some(p); } }
+    // Iterate the mapping and dispatch by stringified key — defensive against
+    // serde_yaml's Index impl quirks (different key Value variants, tagged
+    // strings, etc.). This is the only field reader; do not use Mapping::get
+    // here.
+    let mut id_val: Option<String> = None;
+    let mut platform_id_val: Option<String> = None;
+    let mut content = String::new();
+    let mut etype = String::new();
+    let mut clickable = false;
+    let mut bounds: Option<[i32; 4]> = None;
+
+    for (k, val) in map {
+        let key = match k {
+            Value::String(s) => s.as_str(),
+            _ => continue,
+        };
+        match key {
+            "id" => { if let Some(s) = as_string(val) { if !s.is_empty() { id_val = Some(s); } } }
+            "platform_id" => { if let Some(s) = as_string(val) { if !s.is_empty() { platform_id_val = Some(s); } } }
+            "content" => { if let Some(s) = as_string(val) { content = s; } }
+            "type" => { if let Some(s) = as_string(val) { etype = s; } }
+            "clickable" => { clickable = as_bool(val); }
+            "bounds" => { bounds = extract_bounds(val); }
+            _ => {}
+        }
     }
 
-    let content = g("content").and_then(as_string).unwrap_or_default();
-    let etype = g("type").and_then(as_string).unwrap_or_default();
-    let clickable = g("clickable").map(as_bool).unwrap_or(false);
-    let bounds = g("bounds").and_then(extract_bounds);
+    // platform_id wins over id when both present.
+    let id = platform_id_val.or(id_val);
 
     let raw = serde_yaml::to_string(v).unwrap_or_default();
 
