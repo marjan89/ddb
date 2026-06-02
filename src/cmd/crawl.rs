@@ -427,20 +427,30 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             state.visited.insert(screen_id.clone(), snapshot);
         }
 
-        // Find untapped clickable elements
+        // Find untapped clickable elements — must be clickable AND addressable
+        // (either content text OR a stable id). Touch targets like 'discoverTouch'
+        // have id but no content; bottom-nav text labels have content but no id.
+        let element_key = |e: &CrawlElement| -> String {
+            if let Some(ref id) = e.id { format!("id:{id}") } else { format!("content:{}", e.content) }
+        };
         let tappable: Vec<&CrawlElement> = all_elements.iter()
-            .filter(|e| e.clickable && !e.content.is_empty())
+            .filter(|e| e.clickable && (!e.content.is_empty() || e.id.is_some()))
             .filter(|e| !exclude.iter().any(|p| e.content.to_lowercase().contains(p)))
-            .filter(|e| state.visited.get(&screen_id).map_or(true, |s| !s.tapped.contains(&e.content)))
+            .filter(|e| {
+                let key = element_key(e);
+                state.visited.get(&screen_id).map_or(true, |s| !s.tapped.contains(&key))
+            })
             .collect();
 
         if tappable.is_empty() { continue; }
 
         let elem = tappable[0];
-        eprintln!("  TAP: '{}'", elem.content);
+        let label = if elem.content.is_empty() { elem.id.clone().unwrap_or_default() } else { elem.content.clone() };
+        eprintln!("  TAP: '{}'", label);
 
-        // Record as tapped
-        if let Some(s) = state.visited.get_mut(&screen_id) { s.tapped.push(elem.content.clone()); }
+        // Record as tapped using the same key
+        let key = element_key(elem);
+        if let Some(s) = state.visited.get_mut(&screen_id) { s.tapped.push(key); }
 
         // Execute tap via /click
         let click_body = if let Some(ref id) = elem.id {
