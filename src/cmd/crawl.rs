@@ -82,12 +82,15 @@ fn adb_shell(dev: Option<&str>, args: &[&str]) -> Result<String, String> {
 }
 
 fn get_activity(dev: Option<&str>) -> String {
-    adb_shell(dev, &["dumpsys", "activity", "top"])
+    // Single source of truth: mResumedActivity (one resumed activity per device).
+    // Returns full "pkg/.ClassName" token to match prior format.
+    adb_shell(dev, &["dumpsys", "activity", "activities"])
         .ok()
         .and_then(|out| {
-            out.lines().find(|l| l.contains("ACTIVITY"))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .map(|s| s.to_string())
+            let line = out.lines().find(|l| l.trim_start().starts_with("mResumedActivity"))?;
+            let bracket = line.split('{').nth(1)?;
+            let inside = bracket.split('}').next()?;
+            inside.split_whitespace().find(|t| t.contains('/')).map(|s| s.to_string())
         })
         .unwrap_or_else(|| "unknown".into())
 }
@@ -97,11 +100,14 @@ fn is_app_alive(dev: Option<&str>, pkg: &str) -> bool {
 }
 
 fn current_foreground_pkg(dev: Option<&str>) -> Option<String> {
-    let out = adb_shell(dev, &["dumpsys", "window"]).ok()?;
-    let line = out.lines().find(|l| l.contains("mCurrentFocus"))?;
+    // Use mResumedActivity from `dumpsys activity activities` — there is exactly one
+    // resumed activity per device, unlike mCurrentFocus which has one entry per display.
+    let out = adb_shell(dev, &["dumpsys", "activity", "activities"]).ok()?;
+    let line = out.lines().find(|l| l.trim_start().starts_with("mResumedActivity"))?;
+    // Line shape: "  mResumedActivity: ActivityRecord{abc u0 pkg/.ClassName t123}"
     let bracket = line.split('{').nth(1)?;
     let inside = bracket.split('}').next()?;
-    let token = inside.split_whitespace().last()?;
+    let token = inside.split_whitespace().find(|t| t.contains('/'))?;
     let pkg = token.split('/').next()?;
     Some(pkg.to_string())
 }
