@@ -155,6 +155,15 @@ pub fn parse_elements(yaml: &str) -> Vec<ElementRecord> {
     }
     if debug {
         eprintln!("  [PARSE total] {} docs, {} records, {} bytes input", doc_count, out.len(), yaml.len());
+        for (i, r) in out.iter().take(3).enumerate() {
+            eprintln!("    [REC {}] id={:?} content={:?} etype={:?} clickable={} bounds={:?}",
+                i, r.id, r.content, r.etype, r.clickable, r.bounds);
+        }
+        let click_count = out.iter().filter(|r| r.clickable).count();
+        let with_bounds = out.iter().filter(|r| r.bounds.is_some()).count();
+        let with_id = out.iter().filter(|r| r.id.is_some()).count();
+        eprintln!("    [STATS] clickable={} with_bounds={} with_id={}",
+            click_count, with_bounds, with_id);
     }
     out
 }
