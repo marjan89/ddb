@@ -110,6 +110,19 @@ fn is_launcher_pkg(pkg: &str) -> bool {
     pkg.ends_with(".launcher") || pkg.contains("nexuslauncher")
 }
 
+fn wait_for_foreground(dev: Option<&str>, target: &str, timeout_ms: u64) -> bool {
+    let step_ms = 200u64;
+    let mut elapsed = 0u64;
+    while elapsed < timeout_ms {
+        if let Some(fg) = current_foreground_pkg(dev) {
+            if fg == target { return true; }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(step_ms));
+        elapsed += step_ms;
+    }
+    false
+}
+
 fn take_screenshot(dev: Option<&str>, path: &str) -> bool {
     let remote = "/sdcard/crawl_screenshot.png";
     let _ = adb_shell(dev, &["screencap", "-p", remote]);
@@ -231,8 +244,11 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     // Launch app
     std::thread::sleep(std::time::Duration::from_millis(500));
     let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{}/.MainActivity", args.package));
-    // -W blocks until activity is fully started + visible
+    // -W blocks until activity is fully started; poll mCurrentFocus as belt+suspenders
     let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+    if !wait_for_foreground(dev_arg, &args.package, 5_000) {
+        eprintln!("  WARN: target {} did not reach foreground within 5s after launch", args.package);
+    }
 
     // Port forwarding for agent (uses resolved serial)
     let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
@@ -252,20 +268,21 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
 
     let mut screens_to_explore: Vec<String> = vec!["initial".into()];
 
-    while let Some(_) = screens_to_explore.pop() {
+    while let Some(current_screen) = screens_to_explore.pop() {
         if state.visited.len() >= args.max_screens { break; }
 
-        // Crash detection
+        // Crash detection — re-queue current and retry
         if !is_app_alive(dev_arg, &args.package) {
             eprintln!("  CRASH detected — relaunching");
             state.quirks.push(Quirk { screen: "unknown".into(), quirk_type: "crash".into(), description: "app crashed during crawl".into() });
             let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+            let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
+            screens_to_explore.push(current_screen);
             continue;
         }
 
-        // Foreground guard: if another app holds focus (Bluetooth companion app, system launcher
-        // mid-transition, etc.), bring target back. Force-stop only third-party intruders —
-        // never force-stop a launcher.
+        // Foreground guard: re-queue current screen and retry. Force-stop only third-party
+        // intruders — never force-stop a launcher.
         if let Some(fg) = current_foreground_pkg(dev_arg) {
             if fg != args.package {
                 let is_launcher = is_launcher_pkg(&fg);
@@ -279,9 +296,12 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
                     let _ = adb_shell(dev_arg, &["am", "force-stop", &fg]);
                 }
                 let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+                let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
+                screens_to_explore.push(current_screen);
                 continue;
             }
         }
+        let _ = current_screen;
 
         // Get current screen
         let semantic = match curl_get(&format!("{base}/semantic")) {
@@ -358,6 +378,7 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
                 description: format!("crash after tapping '{}'", elem.content),
             });
             let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
+            let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
             screens_to_explore.push(screen_id);
             continue;
         }
