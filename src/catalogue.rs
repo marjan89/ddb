@@ -35,7 +35,7 @@ pub struct Entry {
 }
 
 /// Detect catalogue path components from an output file path.
-/// Returns (catalogue_root, entry_key) where entry_key is like "android/discover".
+/// Returns (catalogue_root, entry_key) where entry_key is like "android/screen1".
 /// The output path must contain a `catalogue/` ancestor with `{platform}/{screen}/` inside.
 pub fn detect_catalogue_path(output: &str) -> Option<(PathBuf, String)> {
     let path = Path::new(output);
@@ -189,11 +189,11 @@ mod tests {
     #[test]
     fn detect_catalogue_path_valid() {
         let (root, key) = detect_catalogue_path(
-            "/Users/Shared/projects/Outdoors/catalogue/android/discover/semantic.yaml",
+            "/Users/Shared/projects/test/catalogue/android/screen1/semantic.yaml",
         )
         .unwrap();
-        assert_eq!(root, PathBuf::from("/Users/Shared/projects/Outdoors/catalogue"));
-        assert_eq!(key, "android/discover");
+        assert_eq!(root, PathBuf::from("/Users/Shared/projects/test/catalogue"));
+        assert_eq!(key, "android/screen1");
     }
 
     #[test]
@@ -224,18 +224,18 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let _ = std::fs::remove_file(dir.join("manifest.yaml"));
 
-        update_manifest_semantic(&dir, "android/discover", 42, 0).unwrap();
+        update_manifest_semantic(&dir, "android/screen1", 42, 0).unwrap();
 
         let manifest = load_manifest(&dir).unwrap();
         assert_eq!(manifest.entries.len(), 1);
-        let entry = manifest.entries.get("android/discover").unwrap();
+        let entry = manifest.entries.get("android/screen1").unwrap();
         assert_eq!(entry.elements, Some(42));
         assert_eq!(entry.history_count, Some(0));
         assert_eq!(entry.state.as_deref(), Some("default"));
 
-        update_manifest_screenshot(&dir, "android/discover").unwrap();
+        update_manifest_screenshot(&dir, "android/screen1").unwrap();
         let manifest2 = load_manifest(&dir).unwrap();
-        let entry2 = manifest2.entries.get("android/discover").unwrap();
+        let entry2 = manifest2.entries.get("android/screen1").unwrap();
         assert_eq!(entry2.elements, Some(42));
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -265,12 +265,12 @@ mod tests {
     fn parse_existing_manifest() {
         let yaml = r#"version: 1
 updated: '2026-05-24T00:30:00Z'
-project: naturkartan
+project: testapp
 tolerances:
   spatial: 10%
   color: 3.0
 entries:
-  android/discover:
+  android/screen1:
     last_captured: '2026-05-24T00:54:00Z'
     elements: 60
     state: default
@@ -278,10 +278,10 @@ entries:
 "#;
         let manifest: Manifest = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(manifest.version, 1);
-        assert_eq!(manifest.project, Some("naturkartan".to_string()));
+        assert_eq!(manifest.project, Some("testapp".to_string()));
         assert!(manifest.tolerances.is_some());
         assert_eq!(manifest.entries.len(), 1);
-        let entry = manifest.entries.get("android/discover").unwrap();
+        let entry = manifest.entries.get("android/screen1").unwrap();
         assert_eq!(entry.elements, Some(60));
         assert_eq!(entry.regions, Some(7));
     }

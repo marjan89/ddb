@@ -1,6 +1,7 @@
 mod adb_passthrough;
 mod app;
 mod config_cmd;
+pub mod crawl;
 mod daemon;
 mod devices;
 mod doctor;
@@ -21,7 +22,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 
 /// Device Debug Bridge — unified Android device CLI
 #[derive(Parser)]
-#[command(name = "ddb", version, about)]
+#[command(name = "ddb", version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("DDB_GIT_HASH"), ")"), about)]
 pub struct Cli {
     #[command(flatten)]
     pub global: GlobalOpts,
@@ -89,6 +90,9 @@ pub enum Command {
     /// Remove debug instrumentation from a project
     Unmount(mount::MountArgs),
 
+    /// Autonomous app exploration — discovers screens, elements, navigation graph
+    Crawl(crawl::CrawlArgs),
+
     /// Pass through to adb (auto-injects -s from registry)
     Adb(adb_passthrough::AdbArgs),
 
@@ -120,6 +124,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Command::Doctor => doctor::run(),
         Command::Config(args) => config_cmd::run(args),
         Command::Test(args) => test::run(dev, args),
+        Command::Crawl(args) => crawl::run(dev, args),
         Command::Mount(args) => mount::run(args),
         Command::Unmount(args) => mount::unmount(args),
         Command::Adb(args) => adb_passthrough::run(dev, args),

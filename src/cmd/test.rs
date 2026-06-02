@@ -352,10 +352,13 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 let rest = &body[hash_start + 12..];
                 if let Some(end) = rest.find('"') {
                     let installed = &rest[..end];
-                    if installed != expected_hash {
+                    if installed.is_empty() {
+                        eprintln!("  WARNING: agent returned empty hash (AAR without BuildConfig)");
+                    } else if installed != expected_hash {
                         return Err(format!("STALE BINARY: installed={installed} expected={expected_hash}. Rebuild APK."));
+                    } else {
+                        eprintln!("  agent version: {installed} ✓");
                     }
-                    eprintln!("  agent version: {installed} ✓");
                 }
             } else {
                 eprintln!("  WARNING: could not read agent version (agent may not support /version)");
@@ -484,9 +487,6 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let expanded: Vec<StepRaw> = raw.steps.into_iter()
             .flat_map(|s| {
                 let action_name = s.action.as_deref().unwrap_or("");
-                if action_name == "navigate_to_site" || action_name == "navigate_to_user" {
-                    return vec![s];
-                }
                 if let Some(ref plat) = s.platform {
                     if let Some(android_steps) = &plat.android {
                         return android_steps.clone();
@@ -522,7 +522,8 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 std::time::Duration::from_secs(t)
             } else {
                 let step_count = spec.steps.len() as u64;
-                let steps_budget = 120u64.max(args.step_timeout * step_count).min(600);
+                let per_step = 30u64.max(args.step_timeout);
+                let steps_budget = (per_step * step_count).max(300).min(900);
                 let setup_budget = 120u64;
                 std::time::Duration::from_secs(steps_budget + setup_budget)
             }
@@ -776,123 +777,106 @@ fn get_failed_tc_specs(results_dir: &str, tests_dir: &str, runner: &StepRunner) 
     Ok(specs)
 }
 
-fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepRunner) {
-    let base = agent_base_url();
+fn interpolate_env_vars(content: &str) -> String {
+    let mut result = content.to_string();
+    while let Some(start) = result.find("${") {
+        if let Some(end) = result[start..].find('}') {
+            let var_name = &result[start + 2..start + end];
+            let replacement = std::env::var(var_name).unwrap_or_default();
+            result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
+        } else {
+            break;
+        }
+    }
+    result
+}
 
-    // Check if already logged in via semantic dump
+fn execute_recipe(recipe_path: &str, dev: Option<&Device>, runner: &StepRunner, fixtures: &std::collections::HashMap<String, String>) -> Result<(), String> {
+    let raw_content = std::fs::read_to_string(recipe_path)
+        .map_err(|e| format!("recipe read error: {e}"))?;
+    let after_fixtures = interpolate_raw(&raw_content, fixtures);
+    let content = interpolate_env_vars(&after_fixtures);
+
+    #[derive(serde::Deserialize)]
+    struct RecipeFile { steps: Vec<StepRaw> }
+
+    let recipe: RecipeFile = serde_yaml::from_str(&content)
+        .map_err(|e| format!("recipe parse error: {e}"))?;
+
+    let steps: Vec<Step> = recipe.steps.into_iter()
+        .filter_map(|s| s.into_step().ok())
+        .collect();
+    let mut ctx = RunContext::new(fixtures.clone());
+
+    for (i, step) in steps.iter().enumerate() {
+        match step {
+            Step::Action(action) if action.action == "check_skip" => {
+                if let Some(ref target) = action.target {
+                    let search = target.content_fuzzy.as_deref().unwrap_or("");
+                    if !search.is_empty() {
+                        let url = format!("{}/semantic", agent_base_url());
+                        if let Ok(yaml) = runner.curl_with_deadline(&url, "GET", None) {
+                            if yaml.to_lowercase().contains(&search.to_lowercase()) {
+                                eprintln!("  recipe step {}: check_skip → '{}' found, skipping remaining steps", i + 1, search);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                eprintln!("  recipe step {}: check_skip → not found, continuing", i + 1);
+            }
+            Step::Action(action) if action.action == "type" && action.target.is_some() => {
+                let text = action.text.as_ref().ok_or("recipe type: no text")?;
+                let resolved = ctx.interpolate(text);
+                let target = action.target.as_ref().unwrap();
+                let mut type_json = serde_json::json!({"text": resolved, "clear": true});
+                if let Some(ref fuzzy) = target.content_fuzzy {
+                    type_json["content_fuzzy"] = serde_json::json!(fuzzy);
+                }
+                if let Some(ref id) = target.id {
+                    type_json["resource_id"] = serde_json::json!(id);
+                }
+                let type_body = type_json.to_string();
+                let type_url = format!("{}/type", agent_base_url());
+                match runner.curl_with_deadline(&type_url, "POST", Some(&type_body)) {
+                    Ok(_) => eprintln!("  recipe step {}: type → typed \"{}\"", i + 1, resolved),
+                    Err(e) => return Err(format!("recipe step {} (type) failed: {}", i + 1, e)),
+                }
+            }
+            Step::Action(action) => {
+                let result = execute_action(dev, action, &mut ctx, runner);
+                match result {
+                    Ok(desc) => eprintln!("  recipe step {}: {} → {}", i + 1, action.action, desc),
+                    Err(e) => return Err(format!("recipe step {} ({}) failed: {}", i + 1, action.action, e)),
+                }
+            }
+            Step::Assert(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepRunner, fixtures: &std::collections::HashMap<String, String>) {
+    let indicator = std::env::var("DDB_LOGGED_IN_INDICATOR").unwrap_or_else(|_| "log out".into());
+    let base = agent_base_url();
     if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
-        let body_lower = body.to_lowercase();
-        if body_lower.contains("log out") || body_lower.contains("sign out") || body_lower.contains("logout") {
-            eprintln!("  already logged in (found logout text in semantic)");
+        if body.to_lowercase().contains(&indicator.to_lowercase()) {
+            eprintln!("  already logged in (found '{}' in semantic)", indicator);
             return;
         }
     }
 
-    let email = match std::env::var("DDB_TEST_EMAIL") {
-        Ok(e) => e,
-        Err(_) => { eprintln!("  ERROR: DDB_TEST_EMAIL not set — cannot login"); return; }
-    };
-    let password = match std::env::var("DDB_TEST_PASSWORD") {
-        Ok(p) => p,
-        Err(_) => { eprintln!("  ERROR: DDB_TEST_PASSWORD not set — cannot login"); return; }
-    };
-    eprintln!("  UI login as {}...", email);
-
-    let tap_target = |text: &str| -> Result<(), String> {
-        let target = Target {
-            content_fuzzy: Some(text.to_string()),
-            id: None, text: None, clickable_only: None, exclude_type: None, x: None, y: None, type_filter: None,
-        };
-        let (x, y, _) = find_element_unified(dev, &target, &idle_barrier_sources(5), Some(runner))?;
-        runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
-        wait_idle(dev, 3);
-        Ok(())
-    };
-
-    let type_text = |text: &str| -> Result<(), String> {
-        let agent = agent_base_url();
-        let type_body = serde_json::json!({"text": text, "clear": true}).to_string();
-        let type_url = format!("{agent}/type");
-        match runner.curl_with_deadline(&type_url, "POST", Some(&type_body)) {
-            Ok(resp) if resp.contains("\"ok\"") || resp.contains("\"typed\"") => {},
-            _ => {
-                runner.adb_shell(dev, &["input", "text", text])?;
-            }
+    let recipe_path = match std::env::var("DDB_LOGIN_RECIPE").ok().filter(|p| !p.is_empty()) {
+        Some(p) => p,
+        None => {
+            eprintln!("  ERROR: DDB_LOGIN_RECIPE not set — cannot login. Set it to the path of your login recipe YAML.");
+            return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        Ok(())
     };
-
-    // Tap "My page" tab
-    if let Err(e) = tap_target("My page") {
-        eprintln!("  login: couldn't find 'My page': {e}");
-        return;
+    match execute_recipe(&recipe_path, dev, runner, fixtures) {
+        Ok(()) => eprintln!("  login recipe executed successfully"),
+        Err(e) => eprintln!("  login recipe failed: {e}"),
     }
-
-    // Tap "Log in" button
-    if let Err(e) = tap_target("Log in") {
-        eprintln!("  login: couldn't find 'Log in': {e}");
-        return;
-    }
-
-    // Type email
-    if let Err(e) = type_text(&email) {
-        eprintln!("  login: couldn't type email: {e}");
-        return;
-    }
-    dismiss_keyboard_if_visible(dev, runner);
-
-    // Tap password field directly and type password
-    if let Err(e) = tap_target("password") {
-        // Fallback: TAB to next field
-        let _ = runner.adb_shell(dev, &["input", "keyevent", "61"]);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-    if let Err(e) = type_text(&password) {
-        eprintln!("  login: couldn't type password: {e}");
-        return;
-    }
-    dismiss_keyboard_if_visible(dev, runner);
-
-    // Click login submit via resource_id (disambiguates from title/tab)
-    let click_body = serde_json::json!({"resource_id": "signButton"}).to_string();
-    let click_url = format!("{base}/click");
-    match runner.curl_with_deadline(&click_url, "POST", Some(&click_body)) {
-        Ok(resp) if resp.contains("clicked") => {},
-        _ => {
-            if let Err(e) = tap_target("Log in") {
-                eprintln!("  login: couldn't find submit 'Log in': {e}");
-                return;
-            }
-        }
-    }
-
-    // Wait for network + navigation settle
-    let body = serde_json::json!({
-        "idle_resources": ["network", "ui_thread"],
-        "timeout": 10,
-    });
-    let _ = runner.curl_with_deadline(
-        &format!("{base}/query-when-idle"), "POST", Some(&body.to_string())
-    );
-
-    // Wait for user sync (syncUserInfo fetches profile after login — needs ~5s)
-    std::thread::sleep(std::time::Duration::from_secs(5));
-    let sync_body = serde_json::json!({
-        "idle_resources": ["network"],
-        "timeout": 10,
-    });
-    let _ = runner.curl_with_deadline(
-        &format!("{base}/query-when-idle"), "POST", Some(&sync_body.to_string())
-    );
-
-    // Second network idle cycle to ensure syncUserInfo Room insert completes
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    let _ = runner.curl_with_deadline(
-        &format!("{base}/query-when-idle"), "POST", Some(&sync_body.to_string())
-    );
-
-    eprintln!("  login complete (UI flow)");
 }
 
 fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &StepRunner) {
@@ -969,98 +953,70 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         .and_then(|p| p.package.as_deref())
         .or(pkg_env.as_deref())
         .expect("No package name. Set DDB_TEST_PACKAGE env var or add precondition.package to TC YAML.");
-    let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{pkg}/.ui.MainActivity"));
+    let main_activity = std::env::var("DDB_MAIN_ACTIVITY")
+        .expect("DDB_MAIN_ACTIVITY not set — required for app launch");
     let base = agent_base_url();
 
     let setup_start = std::time::Instant::now();
     let setup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let setup_runner = StepRunner::new(setup_deadline, PhaseBudgets { pre_idle_s: 120, execute_s: 120, post_idle_s: 3 });
 
-    // Check if agent is already running
-    let mut agent_ready = false;
-    if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
-        if body.contains("semantic-agent") {
-            agent_ready = true;
-            logger.setup("agent already running", setup_start.elapsed().as_millis() as u64);
-        }
+    // ── TC Setup: one clean flow, no branches ──
+    // 1. Stop app
+    let clean_state = std::env::var("DDB_CLEAN_STATE").ok().map(|v| v == "true").unwrap_or(false);
+    if clean_state {
+        let _ = setup_runner.adb_shell(dev, &["pm", "clear", pkg]);
+        grant_all_permissions_with_runner(dev, pkg, &setup_runner);
+    } else {
+        let _ = setup_runner.adb_shell(dev, &["am", "force-stop", pkg]);
     }
 
-    // Force-stop then relaunch — kills process + agent, need to re-check health
-    agent_ready = false;
-    let launch_start = std::time::Instant::now();
-    let _ = setup_runner.adb_shell(dev, &["am", "force-stop", pkg]);
+    // 2. Launch app
     std::thread::sleep(std::time::Duration::from_millis(500));
     let _ = setup_runner.adb_shell(dev, &[
         "am", "start", "-a", "android.intent.action.MAIN",
         "-c", "android.intent.category.LAUNCHER",
         "-n", &main_activity,
     ]);
-    logger.setup("launch app", launch_start.elapsed().as_millis() as u64);
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    if !agent_ready {
-        let health_start = std::time::Instant::now();
-        for _ in 0..10 {
-            if setup_runner.expired() { break; }
-            if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
-                if body.contains("semantic-agent") {
-                    agent_ready = true;
-                    logger.setup("agent health check", health_start.elapsed().as_millis() as u64);
-                    break;
-                }
+    // 3. Health check — hard fail if agent not ready
+    let mut agent_ready = false;
+    for _ in 0..10 {
+        if setup_runner.expired() { break; }
+        if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
+            if body.contains("semantic-agent") {
+                agent_ready = true;
+                break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        if !agent_ready {
-            return (TestResult {
-                id: spec.id.clone(), name: spec.name.clone(),
-                status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
-                failure: Some(FailureDetail {
-                    step: 0,
-                    description: "agent not ready after 5s — cannot proceed without agent".into(),
-                    screenshot: None,
-                }),
-                log: logger.entries(),
-            }, step_logs);
-        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if !agent_ready {
+        return (TestResult {
+            id: spec.id.clone(), name: spec.name.clone(),
+            status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+            failure: Some(FailureDetail {
+                step: 0,
+                description: "agent not ready after 5s".into(),
+                screenshot: None,
+            }),
+            log: logger.entries(),
+        }, step_logs);
     }
 
-    // Grant permissions via single batched ADB call
-    let perm_start = std::time::Instant::now();
-    grant_all_permissions_with_runner(dev, pkg, &setup_runner);
-    logger.setup("grant permissions", perm_start.elapsed().as_millis() as u64);
-
-    // Handle logged_in precondition (HTTP via agent)
+    // 4. Login if needed (recipe-only, no hardcoded flow)
     if let Some(ref pre) = spec.precondition {
         if pre.logged_in == Some(true) {
-            ensure_logged_in_with_runner(dev, pkg, &setup_runner);
-        }
-        if pre.logged_in == Some(false) {
-            let _ = setup_runner.adb_shell(dev, &["pm", "clear", pkg]);
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            let _ = setup_runner.adb_shell(dev, &[
-                "am", "start", "-a", "android.intent.action.MAIN",
-                "-c", "android.intent.category.LAUNCHER",
-                "-n", &main_activity,
-            ]);
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            // Re-check agent health after pm clear + relaunch
-            for _ in 0..10 {
-                if setup_runner.expired() { break; }
-                if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
-                    if body.contains("semantic-agent") { break; }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-            grant_all_permissions_with_runner(dev, pkg, &setup_runner);
+            ensure_logged_in_with_runner(dev, pkg, &setup_runner, fixtures);
         }
     }
 
-    // Apply mocks AFTER precondition handling (pm clear destroys in-memory mock state)
+    // 5. Register mocks — fail TC if error
     if let Some(body) = mock_body {
         let mock_url = format!("{base}/mock");
         match setup_runner.curl_with_deadline(&mock_url, "POST", Some(body)) {
-            Ok(_) => logger.setup("mock registration", 0),
+            Ok(_) => {},
             Err(e) => {
                 return (TestResult {
                     id: spec.id.clone(), name: spec.name.clone(),
@@ -1075,6 +1031,10 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             }
         }
     }
+
+    // 6. Wait for idle
+    wait_idle(dev, 3);
+    logger.setup("TC setup", setup_start.elapsed().as_millis() as u64);
 
     // Precondition: verify activity via agent health (not ADB dumpsys)
     if let Some(ref pre) = spec.precondition {
@@ -1219,7 +1179,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                         let _ = runner.adb_shell(dev, &[
                             "am", "start", "-a", "android.intent.action.MAIN",
                             "-c", "android.intent.category.LAUNCHER",
-                            "-n", &format!("{pkg}/.ui.MainActivity"), "--activity-clear-task",
+                            "-n", &std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_default(), "--activity-clear-task",
                         ]);
                         std::thread::sleep(std::time::Duration::from_secs(3));
                     }
@@ -1369,7 +1329,9 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             dismiss_keyboard_if_visible(dev, &runner);
             let target = action.target.as_ref().ok_or("tap: no target")?;
             let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
-            runner.adb_shell(dev, &["input", "swipe", &x.to_string(), &y.to_string(), &x.to_string(), &y.to_string(), "50"])?;
+            // Re-query for fresh coordinates right before tap (idle barrier may have introduced delay)
+            let (fx, fy, _) = find_element_unified(dev, target, &[], Some(runner)).unwrap_or((x, y, desc.clone()));
+            runner.adb_shell(dev, &["input", "swipe", &fx.to_string(), &fy.to_string(), &fx.to_string(), &fy.to_string(), "50"])?;
             Ok(desc)
         }
         "type" => {
@@ -1383,9 +1345,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             } else {
                 ensure_input_focus(dev, runner);
             }
-            let has_non_ascii = text.chars().any(|c| !c.is_ascii());
-            if action.click_after.is_some() || has_non_ascii {
-                // Form field or non-ASCII: use /type (InputConnection handles Unicode)
+            if action.click_after.is_some() || text.chars().any(|c| !c.is_ascii()) {
                 let mut type_json = serde_json::json!({"text": text, "clear": true});
                 if let Some(ref click_target) = action.click_after {
                     type_json["click_after"] = serde_json::json!(click_target);
@@ -1395,11 +1355,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 runner.curl_with_deadline(&type_url, "POST", Some(&type_body))
                     .map_err(|e| format!("type via agent failed: {e}"))?;
             } else {
-                // Search/general: use adb input text (triggers TextWatcher naturally)
+                // Search (no target): use adb input text (triggers TextWatcher)
                 runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_MOVE_HOME"])?;
                 runner.adb_shell(dev, &["input", "keyevent", "--longpress", "KEYCODE_SHIFT_LEFT", "KEYCODE_MOVE_END"])?;
                 runner.adb_shell(dev, &["input", "keyevent", "KEYCODE_DEL"])?;
-                std::thread::sleep(std::time::Duration::from_millis(300));
+                std::thread::sleep(std::time::Duration::from_millis(200));
                 let escaped = text.replace(' ', "%s");
                 runner.adb_shell(dev, &["input", "text", &escaped])?;
             }
@@ -1457,33 +1417,8 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 Ok(String::new())
             }
         }
-        "navigate_to_site" => {
-            let site_id = action.site_id
-                .map(|id| id.to_string())
-                .or_else(|| ctx.get_var("site_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.get_var("site_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
-                .ok_or("navigate_to_site: no site_id")?;
-            let base = agent_base_url();
-            let body = runner.curl_with_deadline(&format!("{base}/navigate/site/{site_id}"), "POST", None)?;
-            if body.contains("\"navigated\"") {
-                wait_for_idle_after_navigate(dev);
-                Ok(format!("navigated to site {site_id}"))
-            } else {
-                Err(format!("navigate_to_site failed: {}", body.trim()))
-            }
-        }
-        "navigate_to_user" => {
-            let user_id = action.user_id
-                .map(|id| id.to_string())
-                .or_else(|| ctx.get_var("user_id").and_then(|v| v.as_str().map(|s| s.to_string())).or_else(|| ctx.get_var("user_id").and_then(|v| v.as_i64().map(|n| n.to_string()))))
-                .ok_or("navigate_to_user: no user_id")?;
-            let base = agent_base_url();
-            let body = runner.curl_with_deadline(&format!("{base}/navigate/user/{user_id}"), "POST", None)?;
-            if body.contains("\"navigated\"") {
-                wait_for_idle_after_navigate(dev);
-                Ok(format!("navigated to user {user_id}"))
-            } else {
-                Err(format!("navigate_to_user failed: {}", body.trim()))
-            }
+        "navigate_to_site" | "navigate_to_user" => {
+            Err(format!("{}: direct navigation deleted — use UI search/tap steps instead", action.action))
         }
         "deep_link" => {
             Err(format!("{}: use platform: android: steps in TC YAML", action.action))
@@ -1838,8 +1773,8 @@ mod platform_tests {
 id: TC-19
 name: "test"
 steps:
-  - action: navigate_to_site
-    site_id: 31255
+  - action: tap
+    target: {content_fuzzy: "Search"}
     platform:
       android:
         - action: tap
@@ -1854,7 +1789,7 @@ steps:
 "#;
         let raw: TestSpecRaw = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(raw.steps.len(), 2, "should have 2 raw steps");
-        
+
         let first = &raw.steps[0];
         assert!(first.platform.is_some(), "first step should have platform");
         let plat = first.platform.as_ref().unwrap();
@@ -1862,14 +1797,10 @@ steps:
         let android = plat.android.as_ref().unwrap();
         assert_eq!(android.len(), 2, "android should have 2 sub-steps");
         assert_eq!(android[0].action.as_deref(), Some("tap"));
-        
-        // Test expansion
+
+        // Test expansion — platform fork expands to android sub-steps
         let expanded: Vec<StepRaw> = raw.steps.into_iter()
             .flat_map(|s| {
-                let action_name = s.action.as_deref().unwrap_or("");
-                if action_name == "navigate_to_site" || action_name == "navigate_to_user" {
-                    return vec![s];
-                }
                 if let Some(ref plat) = s.platform {
                     if let Some(android_steps) = &plat.android {
                         return android_steps.clone();
@@ -1878,10 +1809,9 @@ steps:
                 vec![s]
             })
             .collect();
-        // navigate_to_site skips platform expansion, so 1 navigate + 1 scroll = 2
-        assert_eq!(expanded.len(), 2, "expanded should have 2 steps (navigate skips fork + 1 scroll)");
-        assert_eq!(expanded[0].action.as_deref(), Some("navigate_to_site"));
-        assert_eq!(expanded[1].action.as_deref(), Some("scroll_to"));
+        assert_eq!(expanded.len(), 3, "expanded should have 3 steps (2 android + 1 scroll)");
+        assert_eq!(expanded[0].action.as_deref(), Some("tap"));
+        assert_eq!(expanded[2].action.as_deref(), Some("scroll_to"));
     }
 
     #[test]
@@ -1894,14 +1824,14 @@ steps:
 id: TEST-1
 name: "test fixture interpolation"
 steps:
-  - action: navigate_to_user
-    user_id: "{{fixtures.test_user.id}}"
-  - action: navigate_to_site
-    site_id: "{{fixtures.test_site.id}}"
+  - action: tap
+    target: {content_fuzzy: "{{fixtures.test_user.id}}"}
+  - action: tap
+    target: {content_fuzzy: "{{fixtures.test_site.id}}"}
 "#;
         let interpolated = interpolate_raw(yaml, &map);
-        assert!(interpolated.contains("user_id: 158926"), "user_id should be interpolated as bare int");
-        assert!(interpolated.contains("site_id: 31255"), "site_id should be interpolated as bare int");
+        assert!(interpolated.contains("158926"), "user id should be interpolated");
+        assert!(interpolated.contains("31255"), "site id should be interpolated");
 
         // Verify it parses after interpolation
         let raw: TestSpecRaw = serde_yaml::from_str(&interpolated).unwrap();
@@ -1911,7 +1841,7 @@ steps:
     #[test]
     fn test_fixture_interpolation_string_fields() {
         let mut map = std::collections::HashMap::new();
-        map.insert("{{fixtures.test_user.name}}".to_string(), "sinisa".to_string());
+        map.insert("{{fixtures.test_user.name}}".to_string(), "testuser".to_string());
         map.insert("{{fixtures.oscar.name}}".to_string(), "Oscar Kockum".to_string());
 
         let yaml = r#"
@@ -1922,7 +1852,7 @@ steps:
     target: {content_fuzzy: "{{fixtures.test_user.name}}"}
 "#;
         let interpolated = interpolate_raw(yaml, &map);
-        assert!(interpolated.contains("sinisa"), "name should be interpolated");
+        assert!(interpolated.contains("testuser"), "name should be interpolated");
     }
 
     #[test]
@@ -1930,7 +1860,7 @@ steps:
         let yaml = r#"
 test_user:
   id: 158926
-  name: "sinisa"
+  name: "testuser"
 oscar:
   id: 14
   name: "Oscar Kockum"
@@ -1940,7 +1870,7 @@ oscar:
         flatten_fixtures("fixtures", &val, &mut map);
 
         assert_eq!(map.get("{{fixtures.test_user.id}}"), Some(&"158926".to_string()));
-        assert_eq!(map.get("{{fixtures.test_user.name}}"), Some(&"sinisa".to_string()));
+        assert_eq!(map.get("{{fixtures.test_user.name}}"), Some(&"testuser".to_string()));
         assert_eq!(map.get("{{fixtures.oscar.id}}"), Some(&"14".to_string()));
     }
 
@@ -2087,7 +2017,7 @@ oscar:
     #[test]
     fn test_fixture_interpolation_missing_key_passthrough() {
         let mut map = std::collections::HashMap::new();
-        map.insert("{{fixtures.test_user.name}}".to_string(), "sinisa".to_string());
+        map.insert("{{fixtures.test_user.name}}".to_string(), "testuser".to_string());
 
         let input = "name: {{fixtures.nonexistent.field}}";
         let result = interpolate_raw(input, &map);

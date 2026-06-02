@@ -119,7 +119,7 @@ pub fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, 
                 let is_clickable = chunk.contains("clickable: true");
                 let chunk_lower = chunk.to_lowercase();
                 let deprioritize = std::env::var("DDB_DEPRIORITIZE_PATTERNS")
-                    .unwrap_or_else(|_| "see all,inspiration".into());
+                    .unwrap_or_default();
                 let is_nav_link = deprioritize.split(',')
                     .any(|p| chunk_lower.contains(p.trim()));
                 let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
@@ -568,7 +568,7 @@ fn search_semantic_yaml(
                 let is_clickable = chunk.contains("clickable: true");
                 let chunk_lower = chunk.to_lowercase();
                 let deprioritize = std::env::var("DDB_DEPRIORITIZE_PATTERNS")
-                    .unwrap_or_else(|_| "see all,inspiration".into());
+                    .unwrap_or_default();
                 let is_nav_link = deprioritize.split(',')
                     .any(|p| chunk_lower.contains(p.trim()));
                 let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
