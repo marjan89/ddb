@@ -1741,7 +1741,7 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
-fn wait_idle(_dev: Option<&Device>, timeout: u64) {
+pub fn wait_idle(_dev: Option<&Device>, timeout: u64) {
     let base = agent_base_url();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     eprintln!("    wait_idle: polling {base}/idle for {timeout}s");

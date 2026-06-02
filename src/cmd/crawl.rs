@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::adb;
 use crate::agent_yaml;
+use crate::cmd::test::wait_idle;
 use crate::cmd::test_element::{agent_base_url, curl_get, curl_post};
-use crate::registry::Registry;
+use crate::registry::{Device, Registry};
 
 #[derive(clap::Args)]
 pub struct CrawlArgs {
@@ -54,104 +56,10 @@ struct CrawlState {
     quirks: Vec<Quirk>,
 }
 
-fn adb_shell(dev: Option<&str>, args: &[&str]) -> Result<String, String> {
-    let mut cmd = std::process::Command::new("adb");
-    if let Some(d) = dev { cmd.args(["-s", d]); }
-    cmd.arg("shell").args(args);
-    let output = cmd.output().map_err(|e| format!("adb: {e}"))?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
+// ---------------------------------------------------------------------------
+// Field extraction from /semantic chunks (parser shared via agent_yaml::split_elements)
+// ---------------------------------------------------------------------------
 
-fn get_activity(dev: Option<&str>) -> String {
-    // Single source of truth: mResumedActivity (one resumed activity per device).
-    // Returns full "pkg/.ClassName" token to match prior format.
-    adb_shell(dev, &["dumpsys", "activity", "activities"])
-        .ok()
-        .and_then(|out| {
-            let line = out.lines().find(|l| {
-                let t = l.trim_start();
-                t.starts_with("mResumedActivity") || t.starts_with("topResumedActivity")
-            })?;
-            let bracket = line.split('{').nth(1)?;
-            let inside = bracket.split('}').next()?;
-            inside.split_whitespace().find(|t| t.contains('/')).map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| "unknown".into())
-}
-
-fn is_app_alive(dev: Option<&str>, pkg: &str) -> bool {
-    adb_shell(dev, &["pidof", pkg]).map(|s| !s.trim().is_empty()).unwrap_or(false)
-}
-
-fn current_foreground_pkg(dev: Option<&str>) -> Option<String> {
-    // Samsung uses topResumedActivity, AOSP uses mResumedActivity. Both are singletons.
-    let out = adb_shell(dev, &["dumpsys", "activity", "activities"]).ok()?;
-    let line = out.lines().find(|l| {
-        let t = l.trim_start();
-        t.starts_with("mResumedActivity") || t.starts_with("topResumedActivity")
-    })?;
-    let bracket = line.split('{').nth(1)?;
-    let inside = bracket.split('}').next()?;
-    let token = inside.split_whitespace().find(|t| t.contains('/'))?;
-    let pkg = token.split('/').next()?;
-    Some(pkg.to_string())
-}
-
-fn is_launcher_pkg(pkg: &str) -> bool {
-    pkg.ends_with(".launcher") || pkg.contains("nexuslauncher")
-}
-
-fn forward_agent_port(dev: Option<&str>) {
-    // adb forward dies after pm clear + relaunch (new app PID + new socket).
-    // Cheap to re-establish; call after every launch/relaunch.
-    if let Some(s) = dev {
-        let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
-        let mut fwd = std::process::Command::new("adb");
-        fwd.args(["-s", s]).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
-        let _ = fwd.output();
-    }
-}
-
-fn wait_for_foreground(dev: Option<&str>, target: &str, timeout_ms: u64) -> bool {
-    let step_ms = 200u64;
-    let mut elapsed = 0u64;
-    while elapsed < timeout_ms {
-        if let Some(fg) = current_foreground_pkg(dev) {
-            if fg == target { return true; }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(step_ms));
-        elapsed += step_ms;
-    }
-    false
-}
-
-fn take_screenshot(dev: Option<&str>, path: &str) -> bool {
-    let remote = "/sdcard/crawl_screenshot.png";
-    let _ = adb_shell(dev, &["screencap", "-p", remote]);
-    let mut cmd = std::process::Command::new("adb");
-    if let Some(d) = dev { cmd.args(["-s", d]); }
-    cmd.args(["pull", remote, path]).output().map(|o| o.status.success()).unwrap_or(false)
-}
-
-fn fingerprint(activity: &str, elements: &[CrawlElement]) -> String {
-    let mut set: Vec<String> = elements.iter()
-        .map(|e| format!("{}:{}", e.id.as_deref().unwrap_or(&e.content), e.element_type))
-        .collect();
-    set.push(format!("activity:{activity}"));
-    set.sort();
-    let hash = set.join("|");
-    format!("{:x}", fnv_hash(&hash))
-}
-
-fn fnv_hash(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(0x100000001b3); }
-    h
-}
-
-/// Extract a top-level `key: value` from a chunk (string value, quote-stripped).
-/// Top-level only: ignores keys appearing inside nested blocks of higher indent
-/// (e.g. an `image: { type: loaded }` block's `type` won't shadow the outer `type`).
 fn chunk_top_field(chunk: &str, key: &str) -> Option<String> {
     let mut base_indent: Option<usize> = None;
     for line in chunk.lines() {
@@ -167,20 +75,20 @@ fn chunk_top_field(chunk: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Extract a nested `bounds:` block as [left, top, right, bottom]. Supports
-/// `bounds: { x, y, w, h }`, `bounds: { left, top, right, bottom }`, and
-/// inline `bounds: [l, t, r, b]`.
 fn chunk_bounds(chunk: &str) -> Option<[i32; 4]> {
-    // Inline form first.
-    if let Some(line) = chunk.lines().find(|l| l.trim_start().trim_start_matches('-').trim_start().starts_with("bounds:")) {
-        let after = line.split_once("bounds:")?.1.trim();
-        if after.starts_with('[') && after.ends_with(']') {
-            let nums: Vec<i32> = after.trim_start_matches('[').trim_end_matches(']')
-                .split(',').filter_map(|p| p.trim().parse().ok()).collect();
-            if nums.len() == 4 { return Some([nums[0], nums[1], nums[2], nums[3]]); }
+    // Inline `bounds: [l, t, r, b]`
+    if let Some(line) = chunk.lines().find(|l| {
+        l.trim_start().trim_start_matches('-').trim_start().starts_with("bounds:")
+    }) {
+        if let Some(after) = line.split_once("bounds:").map(|(_, v)| v.trim()) {
+            if after.starts_with('[') && after.ends_with(']') {
+                let nums: Vec<i32> = after.trim_start_matches('[').trim_end_matches(']')
+                    .split(',').filter_map(|p| p.trim().parse().ok()).collect();
+                if nums.len() == 4 { return Some([nums[0], nums[1], nums[2], nums[3]]); }
+            }
         }
     }
-    // Nested form: walk lines after the `bounds:` declaration until indent returns to base.
+    // Nested `bounds:\n  x: …\n  y: …\n  w: …\n  h: …`
     let mut in_bounds = false;
     let mut base_indent: Option<usize> = None;
     let mut bounds_indent: Option<usize> = None;
@@ -203,14 +111,8 @@ fn chunk_bounds(chunk: &str) -> Option<[i32; 4]> {
         let key = trimmed.split_once(':').map(|(k, _)| k.trim()).unwrap_or("");
         let val = trimmed.split_once(':').and_then(|(_, v)| v.trim().parse::<i32>().ok());
         match key {
-            "x" => x = val,
-            "y" => y = val,
-            "w" => w = val,
-            "h" => h = val,
-            "left" => l = val,
-            "top" => t = val,
-            "right" => r = val,
-            "bottom" => b = val,
+            "x" => x = val, "y" => y = val, "w" => w = val, "h" => h = val,
+            "left" => l = val, "top" => t = val, "right" => r = val, "bottom" => b = val,
             _ => {}
         }
     }
@@ -219,13 +121,10 @@ fn chunk_bounds(chunk: &str) -> Option<[i32; 4]> {
     None
 }
 
-/// Build CrawlElements from the agent's /semantic body. Uses the shared chunk
-/// splitter so the test runner and crawl agree on element boundaries.
 fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
     let chunks = agent_yaml::split_elements(yaml);
     let mut out = Vec::new();
     for chunk in &chunks {
-        // platform_id wins over id when both present.
         let id = chunk_top_field(chunk, "platform_id")
             .or_else(|| chunk_top_field(chunk, "id"));
         let content = chunk_top_field(chunk, "content").unwrap_or_default();
@@ -233,17 +132,10 @@ fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
         let clickable = chunk_top_field(chunk, "clickable")
             .map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
         let bounds = chunk_bounds(chunk);
-        // Drop wholly empty chunks (the leading prelude before the first `- id:`).
         if id.is_none() && content.is_empty() && etype.is_empty() && bounds.is_none() && !clickable {
             continue;
         }
-        out.push(CrawlElement {
-            content,
-            element_type: etype,
-            id,
-            bounds,
-            clickable,
-        });
+        out.push(CrawlElement { content, element_type: etype, id, bounds, clickable });
     }
     out
 }
@@ -255,31 +147,141 @@ fn element_dedup_key(e: &CrawlElement) -> String {
     format!("type:{}:click:{}", e.element_type, e.clickable)
 }
 
-fn scroll_and_discover(dev: Option<&str>, base: &str, max_depth: usize) -> Vec<CrawlElement> {
-    let mut all_elements = Vec::new();
-    let mut seen_contents: HashSet<String> = HashSet::new();
+// ---------------------------------------------------------------------------
+// Device-side primitives — all delegated to crate::adb
+// ---------------------------------------------------------------------------
 
-    for _ in 0..max_depth {
-        if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
-            let elems = parse_semantic_elements(&sem);
-            let mut new_count = 0;
-            for e in &elems {
-                // Use composite key: id-first, content-second, bounds-third — empty
-                // content alone collides for every unlabeled clickable.
-                if seen_contents.insert(element_dedup_key(e)) {
-                    all_elements.push(e.clone());
-                    new_count += 1;
-                }
-            }
-            if new_count == 0 { break; }
+fn get_activity(dev: Option<&Device>) -> String {
+    // Single source of truth: mResumedActivity / topResumedActivity (Samsung).
+    adb::shell(dev, &["dumpsys", "activity", "activities"])
+        .ok()
+        .and_then(|out| {
+            let line = out.lines().find(|l| {
+                let t = l.trim_start();
+                t.starts_with("mResumedActivity") || t.starts_with("topResumedActivity")
+            })?;
+            let bracket = line.split('{').nth(1)?;
+            let inside = bracket.split('}').next()?;
+            inside.split_whitespace().find(|t| t.contains('/')).map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn current_foreground_pkg(dev: Option<&Device>) -> Option<String> {
+    let out = adb::shell(dev, &["dumpsys", "activity", "activities"]).ok()?;
+    let line = out.lines().find(|l| {
+        let t = l.trim_start();
+        t.starts_with("mResumedActivity") || t.starts_with("topResumedActivity")
+    })?;
+    let bracket = line.split('{').nth(1)?;
+    let inside = bracket.split('}').next()?;
+    let token = inside.split_whitespace().find(|t| t.contains('/'))?;
+    Some(token.split('/').next()?.to_string())
+}
+
+fn is_app_alive(dev: Option<&Device>, pkg: &str) -> bool {
+    adb::shell(dev, &["pidof", pkg]).map(|s| !s.trim().is_empty()).unwrap_or(false)
+}
+
+fn is_launcher_pkg(pkg: &str) -> bool {
+    pkg.ends_with(".launcher") || pkg.contains("nexuslauncher")
+}
+
+fn forward_agent_port(dev: Option<&Device>) {
+    let port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
+    let _ = adb::adb(dev, &["forward", &format!("tcp:{port}"), "tcp:9876"]);
+}
+
+fn wait_for_foreground(dev: Option<&Device>, target: &str, timeout_ms: u64) -> bool {
+    let step_ms = 200u64;
+    let mut elapsed = 0u64;
+    while elapsed < timeout_ms {
+        if let Some(fg) = current_foreground_pkg(dev) {
+            if fg == target { return true; }
         }
-        let _ = adb_shell(dev, &["input", "swipe", "540", "1500", "540", "500", "300"]);
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(std::time::Duration::from_millis(step_ms));
+        elapsed += step_ms;
+    }
+    false
+}
+
+fn take_screenshot(dev: Option<&Device>, path: &str) -> bool {
+    let remote = "/sdcard/crawl_screenshot.png";
+    let _ = adb::shell(dev, &["screencap", "-p", remote]);
+    adb::adb(dev, &["pull", remote, path]).is_ok()
+}
+
+fn launch_app(dev: Option<&Device>, main_activity: &str, pkg: &str) {
+    // -W blocks until activity is fully started + visible.
+    let _ = adb::shell(dev, &[
+        "am", "start", "-W",
+        "-a", "android.intent.action.MAIN",
+        "-c", "android.intent.category.LAUNCHER",
+        "-n", main_activity,
+    ]);
+    let _ = wait_for_foreground(dev, pkg, 5_000);
+    forward_agent_port(dev);
+}
+
+// ---------------------------------------------------------------------------
+// Fingerprint
+// ---------------------------------------------------------------------------
+
+fn fingerprint(activity: &str, elements: &[CrawlElement]) -> String {
+    let mut set: Vec<String> = elements.iter()
+        .map(|e| format!("{}:{}", e.id.as_deref().unwrap_or(&e.content), e.element_type))
+        .collect();
+    set.push(format!("activity:{activity}"));
+    set.sort();
+    let hash = set.join("|");
+    format!("{:x}", fnv_hash(&hash))
+}
+
+fn fnv_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(0x100000001b3); }
+    h
+}
+
+// ---------------------------------------------------------------------------
+// Screen capture (settle via shared wait_idle, then read /semantic)
+// ---------------------------------------------------------------------------
+
+fn settle_timeout_s() -> u64 {
+    std::env::var("DDB_SETTLE_S").ok().and_then(|s| s.parse().ok()).unwrap_or(15)
+}
+
+fn capture_elements(dev: Option<&Device>, base: &str) -> Vec<CrawlElement> {
+    wait_idle(dev, settle_timeout_s());
+    match curl_get(&format!("{base}/semantic")) {
+        Ok(sem) => parse_semantic_elements(&sem),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn scroll_and_discover(dev: Option<&Device>, base: &str, max_depth: usize) -> Vec<CrawlElement> {
+    let mut all_elements = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for _ in 0..max_depth {
+        let elems = capture_elements(dev, base);
+        let mut new_count = 0;
+        for e in &elems {
+            if seen.insert(element_dedup_key(e)) {
+                all_elements.push(e.clone());
+                new_count += 1;
+            }
+        }
+        if new_count == 0 { break; }
+        let _ = adb::shell(dev, &["input", "swipe", "540", "1500", "540", "500", "300"]);
     }
     all_elements
 }
 
-pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
+// ---------------------------------------------------------------------------
+// Run
+// ---------------------------------------------------------------------------
+
+pub fn run(dev_name: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     let out_dir = PathBuf::from(&args.output);
     std::fs::create_dir_all(out_dir.join("screens")).map_err(|e| format!("mkdir: {e}"))?;
     std::fs::create_dir_all(out_dir.join("screenshots")).map_err(|e| format!("mkdir: {e}"))?;
@@ -295,133 +297,65 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
 
     eprintln!("Crawling {} (max {} screens)", args.package, args.max_screens);
 
-    // Resolve device name → serial via Registry (adb -s needs serial, not friendly name)
+    // Resolve device once; pass dev.as_ref() everywhere.
     let devices = Registry::load()?;
-    let serial: Option<String> = if devices.is_empty() && dev_arg.is_none() {
+    let dev: Option<Device> = if devices.is_empty() && dev_name.is_none() {
         None
     } else {
-        let (_, d) = Registry::resolve(dev_arg, &devices)?;
-        Some(d.transport_id())
+        let (_, d) = Registry::resolve(dev_name, &devices)?;
+        Some(d)
     };
-    let dev_arg: Option<&str> = serial.as_deref();
 
-    // Setup: matches ddb test precondition flow (DDB_CLEAN_STATE branches pm clear vs force-stop)
+    // Setup: DDB_CLEAN_STATE branches pm clear+grant vs force-stop.
     let clean_state = std::env::var("DDB_CLEAN_STATE").ok().map(|v| v == "true").unwrap_or(false);
     if clean_state {
-        let _ = adb_shell(dev_arg, &["pm", "clear", &args.package]);
+        let _ = adb::shell(dev.as_ref(), &["pm", "clear", &args.package]);
         let perms = format!(
-            "pm grant {pkg} android.permission.ACCESS_FINE_LOCATION; pm grant {pkg} android.permission.ACCESS_COARSE_LOCATION; pm grant {pkg} android.permission.POST_NOTIFICATIONS",
+            "pm grant {pkg} android.permission.ACCESS_FINE_LOCATION; \
+             pm grant {pkg} android.permission.ACCESS_COARSE_LOCATION; \
+             pm grant {pkg} android.permission.POST_NOTIFICATIONS",
             pkg = args.package
         );
-        let _ = adb_shell(dev_arg, &[&perms]);
+        let _ = adb::shell(dev.as_ref(), &[&perms]);
     } else {
-        let _ = adb_shell(dev_arg, &["am", "force-stop", &args.package]);
+        let _ = adb::shell(dev.as_ref(), &["am", "force-stop", &args.package]);
     }
 
-    // Launch app
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{}/.MainActivity", args.package));
-    // -W blocks until activity is fully started; poll mCurrentFocus as belt+suspenders
-    let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-    if !wait_for_foreground(dev_arg, &args.package, 5_000) {
-        eprintln!("  WARN: target {} did not reach foreground within 5s after launch", args.package);
-    }
+    let main_activity = std::env::var("DDB_MAIN_ACTIVITY")
+        .unwrap_or_else(|_| format!("{}/.MainActivity", args.package));
+    launch_app(dev.as_ref(), &main_activity, &args.package);
 
-    // Port forwarding for agent (re-establish after every launch — dies on pm clear + relaunch)
-    forward_agent_port(dev_arg);
-
-    // Health check: hard fail if agent not ready (10 × 500ms)
+    // Health check — fail fast if agent never comes up.
     let mut ready = false;
     for _ in 0..10 {
-        if curl_get(&format!("{base}/health")).map(|b| b.contains("semantic-agent")).unwrap_or(false) { ready = true; break; }
+        if curl_get(&format!("{base}/health")).map(|b| b.contains("semantic-agent")).unwrap_or(false) {
+            ready = true; break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     if !ready { return Err("agent not ready after 5s".into()); }
-
-    // Content settle: prefer the agent's /idle endpoint (same signal the test
-    // runner uses via query-when-idle — no animations, no pending layouts,
-    // IdleResourceRegistry quiet). Fall back to a (total, clickable) count
-    // settle if /idle isn't available, so the crawl still works against older
-    // agents.
-    //
-    // Tunable via DDB_SETTLE_MS (overall budget) and DDB_SETTLE_TICK_MS (poll).
-    let settle_budget_ms: u64 = std::env::var("DDB_SETTLE_MS")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(15_000);
-    let settle_tick_ms: u64 = std::env::var("DDB_SETTLE_TICK_MS")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(500);
-
-    // Require BOTH signals: /idle reports idle (if endpoint is available) AND
-    // (total, clickable) count is stable across two ticks with total > 0.
-    // Either signal alone has been observed to false-positive on this stack —
-    // /idle when the agent's IdleResourceRegistry doesn't track network calls,
-    // count-tuple when the static skeleton stabilizes before list content
-    // arrives. Requiring both holds the wait until they agree.
-    let mut last_tuple: Option<(usize, usize)> = None;
-    let mut tuple_stable = false;
-    let mut idle_ok = true; // Assume true if /idle is unreachable (older agents).
-    let mut idle_endpoint_seen = false;
-    let mut elapsed = 0u64;
-    loop {
-        // Poll /idle on every tick — its state can flip back to busy.
-        match curl_get(&format!("{base}/idle")) {
-            Ok(body) => {
-                idle_endpoint_seen = true;
-                let body_lc = body.to_ascii_lowercase();
-                idle_ok = body_lc.contains("idle: true")
-                    || body_lc.contains("\"idle\":true")
-                    || body_lc.contains("\"idle\": true")
-                    || body_lc.trim() == "true";
-            }
-            Err(_) => {
-                // Endpoint missing — leave idle_ok at its default (true).
-                idle_ok = true;
-            }
-        }
-
-        if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
-            let elems = parse_semantic_elements(&sem);
-            let tuple = (elems.len(), elems.iter().filter(|e| e.clickable).count());
-            tuple_stable = last_tuple == Some(tuple) && tuple.0 > 0;
-            last_tuple = Some(tuple);
-        }
-
-        if idle_ok && tuple_stable {
-            let (t, c) = last_tuple.unwrap_or((0, 0));
-            eprintln!("Content settled at {} elements ({} clickable) after {}ms (idle_endpoint={})",
-                t, c, elapsed, idle_endpoint_seen);
-            break;
-        }
-
-        if elapsed >= settle_budget_ms {
-            let (t, c) = last_tuple.unwrap_or((0, 0));
-            eprintln!("WARN: settle timeout at {}ms — proceeding with {} elements ({} clickable, idle_ok={}, tuple_stable={})",
-                settle_budget_ms, t, c, idle_ok, tuple_stable);
-            break;
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(settle_tick_ms));
-        elapsed += settle_tick_ms;
-    }
 
     let mut screens_to_explore: Vec<String> = vec!["initial".into()];
 
     while let Some(current_screen) = screens_to_explore.pop() {
         if state.visited.len() >= args.max_screens { break; }
 
-        // Crash detection — re-queue current and retry
-        if !is_app_alive(dev_arg, &args.package) {
+        // Crash detection — re-queue + retry.
+        if !is_app_alive(dev.as_ref(), &args.package) {
             eprintln!("  CRASH detected — relaunching");
-            state.quirks.push(Quirk { screen: "unknown".into(), quirk_type: "crash".into(), description: "app crashed during crawl".into() });
-            let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-            let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
-            forward_agent_port(dev_arg);
+            state.quirks.push(Quirk {
+                screen: "unknown".into(),
+                quirk_type: "crash".into(),
+                description: "app crashed during crawl".into(),
+            });
+            launch_app(dev.as_ref(), &main_activity, &args.package);
             screens_to_explore.push(current_screen);
             continue;
         }
 
-        // Foreground guard: re-queue current screen and retry. Force-stop only third-party
-        // intruders — never force-stop a launcher.
-        if let Some(fg) = current_foreground_pkg(dev_arg) {
+        // Foreground guard — re-queue and retry; never force-stop a launcher.
+        if let Some(fg) = current_foreground_pkg(dev.as_ref()) {
             if fg != args.package {
                 let is_launcher = is_launcher_pkg(&fg);
                 eprintln!("  FG MISMATCH: {} (launcher={}) — relaunching {}", fg, is_launcher, args.package);
@@ -431,57 +365,29 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
                         quirk_type: "foreground_intrusion".into(),
                         description: format!("{} took foreground during crawl", fg),
                     });
-                    let _ = adb_shell(dev_arg, &["am", "force-stop", &fg]);
+                    let _ = adb::shell(dev.as_ref(), &["am", "force-stop", &fg]);
                 }
-                let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-                let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
-                forward_agent_port(dev_arg);
+                launch_app(dev.as_ref(), &main_activity, &args.package);
                 screens_to_explore.push(current_screen);
                 continue;
             }
         }
         let _ = current_screen;
 
-        // Get current screen — retry up to 3× with 1s gap if /semantic returns no elements
-        // (covers the case where activity is resumed but UI hasn't fully rendered yet).
-        let mut semantic = String::new();
-        let mut elements: Vec<CrawlElement> = Vec::new();
-        let mut semantic_ok = false;
-        for attempt in 0..3 {
-            match curl_get(&format!("{base}/semantic")) {
-                Ok(s) => {
-                    let parsed = parse_semantic_elements(&s);
-                    if !parsed.is_empty() {
-                        semantic = s;
-                        elements = parsed;
-                        semantic_ok = true;
-                        break;
-                    }
-                    // Diagnostic: surface raw body so we can tell parser-bug from truly-empty
-                    let preview: String = s.chars().take(200).collect();
-                    eprintln!("  /semantic empty (attempt {}/3) — raw body (len={}, first 200): {:?}",
-                        attempt + 1, s.len(), preview);
-                    if attempt + 1 < 3 {
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                    }
-                }
-                Err(_) => { eprintln!("  /semantic unreachable"); break; }
-            }
-        }
-        if !semantic_ok && elements.is_empty() {
-            eprintln!("  /semantic returned 0 elements after 3 attempts — skipping iteration");
+        // Discover elements (settles via shared wait_idle, scrolls for off-screen content).
+        let all_elements = if args.max_scroll_depth > 0 {
+            scroll_and_discover(dev.as_ref(), &base, args.max_scroll_depth)
+        } else {
+            capture_elements(dev.as_ref(), &base)
+        };
+
+        if all_elements.is_empty() {
+            eprintln!("  /semantic returned 0 elements — skipping iteration");
             continue;
         }
 
-        let activity = get_activity(dev_arg);
+        let activity = get_activity(dev.as_ref());
 
-        // Scroll discovery
-        let all_elements = if args.max_scroll_depth > 0 {
-            scroll_and_discover(dev_arg, &base, args.max_scroll_depth)
-        } else { elements.clone() };
-
-        // Opt-in debug: dump every parsed element on one line. Triggered by
-        // DDB_CRAWL_DEBUG=1 so it doesn't pollute normal runs.
         if std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1") {
             for (i, e) in all_elements.iter().enumerate() {
                 eprintln!("  [DBG {:03}] click={} id={:?} type={:?} content={:?} bounds={:?}",
@@ -494,45 +400,44 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         *count += 1;
         if *count > 3 { continue; }
 
-        // WebView detection
         if all_elements.iter().any(|e| e.element_type.contains("WebView")) {
-            state.quirks.push(Quirk { screen: screen_id.clone(), quirk_type: "webview".into(), description: "screen contains WebView — opaque to crawler".into() });
+            state.quirks.push(Quirk {
+                screen: screen_id.clone(),
+                quirk_type: "webview".into(),
+                description: "screen contains WebView — opaque to crawler".into(),
+            });
         }
 
         if !state.visited.contains_key(&screen_id) {
             eprintln!("  NEW: {} [{}] ({} elements)", screen_id, activity, all_elements.len());
-
-            // Screenshot
             let ss_path = out_dir.join("screenshots").join(format!("{screen_id}.png"));
-            let ss_name = if take_screenshot(dev_arg, ss_path.to_str().unwrap_or("")) {
+            let ss_name = if take_screenshot(dev.as_ref(), ss_path.to_str().unwrap_or("")) {
                 Some(format!("screenshots/{screen_id}.png"))
             } else { None };
-
             let snapshot = ScreenSnapshot {
-                screen_id: screen_id.clone(), activity: activity.clone(),
-                elements: all_elements.clone(), scroll_depth: args.max_scroll_depth,
-                tapped: Vec::new(), screenshot: ss_name,
+                screen_id: screen_id.clone(),
+                activity: activity.clone(),
+                elements: all_elements.clone(),
+                scroll_depth: args.max_scroll_depth,
+                tapped: Vec::new(),
+                screenshot: ss_name,
             };
-            let _ = std::fs::write(out_dir.join("screens").join(format!("{screen_id}.yaml")),
-                serde_yaml::to_string(&snapshot).unwrap_or_default());
+            let _ = std::fs::write(
+                out_dir.join("screens").join(format!("{screen_id}.yaml")),
+                serde_yaml::to_string(&snapshot).unwrap_or_default(),
+            );
             state.visited.insert(screen_id.clone(), snapshot);
         }
 
-        // Find untapped clickable elements — must be clickable AND addressable
-        // (either content text OR a stable id). Touch targets like 'discoverTouch'
-        // have id but no content; bottom-nav text labels have content but no id.
-        // Tappable = clickable + addressable. Addressable means we have at least
-        // one of: stable id, content text, or bounds (for unlabeled touch zones).
+        // Tappable = clickable + addressable (id | content | bounds), not excluded, not already tapped.
         let total = all_elements.len();
         let after_clickable: Vec<&CrawlElement> = all_elements.iter()
             .filter(|e| e.clickable && (e.id.is_some() || !e.content.is_empty() || e.bounds.is_some()))
             .collect();
-        let after_exclude: Vec<&CrawlElement> = after_clickable.iter()
-            .copied()
+        let after_exclude: Vec<&CrawlElement> = after_clickable.iter().copied()
             .filter(|e| !exclude.iter().any(|p| e.content.to_lowercase().contains(p)))
             .collect();
-        let tappable: Vec<&CrawlElement> = after_exclude.iter()
-            .copied()
+        let tappable: Vec<&CrawlElement> = after_exclude.iter().copied()
             .filter(|e| {
                 let key = element_dedup_key(e);
                 state.visited.get(&screen_id).map_or(true, |s| !s.tapped.contains(&key))
@@ -543,7 +448,6 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             total, after_clickable.len(), after_exclude.len(), tappable.len());
 
         if tappable.is_empty() {
-            // Visit-count cap also forces a continue. Note it for the operator.
             eprintln!("  SKIP: no tappable on screen {} (visit {}/3)", screen_id, count);
             continue;
         }
@@ -560,49 +464,47 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         };
         eprintln!("  TAP: '{}'", label);
 
-        // Record as tapped using the same key
         let key = element_dedup_key(elem);
         if let Some(s) = state.visited.get_mut(&screen_id) { s.tapped.push(key); }
 
-        // Execute tap. Precedence: resource_id (id) > content_fuzzy > center-of-bounds.
+        // Tap precedence: resource_id (id) > content_fuzzy > center-of-bounds (raw input tap).
         let click_body = if let Some(ref id) = elem.id {
-            serde_json::json!({"resource_id": id}).to_string()
+            Some(serde_json::json!({"resource_id": id}).to_string())
         } else if !elem.content.is_empty() {
-            serde_json::json!({"content_fuzzy": elem.content}).to_string()
+            Some(serde_json::json!({"content_fuzzy": elem.content}).to_string())
         } else if let Some(b) = elem.bounds {
             let cx = (b[0] + b[2]) / 2;
             let cy = (b[1] + b[3]) / 2;
-            // Fall back to raw input tap — agent /click may not accept bounds directly.
-            let _ = adb_shell(dev_arg, &["input", "tap", &cx.to_string(), &cy.to_string()]);
-            String::new()
+            let _ = adb::shell(dev.as_ref(), &["input", "tap", &cx.to_string(), &cy.to_string()]);
+            None
         } else {
-            String::new()
+            None
         };
-        if !click_body.is_empty() {
-            let _ = curl_post(&format!("{base}/click"), &click_body);
+        if let Some(body) = click_body {
+            let _ = curl_post(&format!("{base}/click"), &body);
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
 
-        // Crash check after tap
-        if !is_app_alive(dev_arg, &args.package) {
-            eprintln!("  CRASH after tapping '{}'", elem.content);
+        // Wait for the app to settle after the tap before sampling the new screen.
+        wait_idle(dev.as_ref(), settle_timeout_s());
+
+        // Crash check after tap.
+        if !is_app_alive(dev.as_ref(), &args.package) {
+            eprintln!("  CRASH after tapping '{}'", label);
             state.quirks.push(Quirk {
-                screen: screen_id.clone(), quirk_type: "crash".into(),
-                description: format!("crash after tapping '{}'", elem.content),
+                screen: screen_id.clone(),
+                quirk_type: "crash".into(),
+                description: format!("crash after tapping '{}'", label),
             });
-            let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-            let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
-            forward_agent_port(dev_arg);
+            launch_app(dev.as_ref(), &main_activity, &args.package);
             screens_to_explore.push(screen_id);
             continue;
         }
 
-        // Check what screen we're on now
-        let new_activity = get_activity(dev_arg);
+        // Did this tap move us to a new screen?
+        let new_activity = get_activity(dev.as_ref());
         if let Ok(new_sem) = curl_get(&format!("{base}/semantic")) {
             let new_elems = parse_semantic_elements(&new_sem);
             let new_id = fingerprint(&new_activity, &new_elems);
-
             let debug = std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1");
             if debug {
                 eprintln!("  [TAP-CMP] before={} after={} new_activity={} same={}",
@@ -610,29 +512,33 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             }
             if new_id != screen_id {
                 eprintln!("  EDGE: '{}' -> {}", label, new_id);
-                state.edges.push(NavEdge { from: screen_id.clone(), element: elem.content.clone(), to: new_id.clone() });
+                state.edges.push(NavEdge {
+                    from: screen_id.clone(),
+                    element: label.clone(),
+                    to: new_id.clone(),
+                });
                 screens_to_explore.push(new_id);
             } else if debug {
                 eprintln!("  NO-NAV: tap on '{}' did not change screen fingerprint", label);
             }
         }
 
-        // Navigate back
-        let _ = adb_shell(dev_arg, &["input", "keyevent", "KEYCODE_BACK"]);
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        // Navigate back via adb keyevent (a single-shot, no execute_action ceremony needed).
+        let _ = adb::shell(dev.as_ref(), &["input", "keyevent", "KEYCODE_BACK"]);
+        wait_idle(dev.as_ref(), settle_timeout_s());
 
-        // Re-queue current screen for more tapping
         screens_to_explore.push(screen_id);
-
-        // Save state
         let _ = std::fs::write(&state_path, serde_yaml::to_string(&state).unwrap_or_default());
     }
 
-    // Write outputs
-    let _ = std::fs::write(out_dir.join("navigation-graph.yaml"), serde_yaml::to_string(&state.edges).unwrap_or_default());
-    let _ = std::fs::write(out_dir.join("quirks.yaml"), serde_yaml::to_string(&state.quirks).unwrap_or_default());
+    // Final outputs.
+    let _ = std::fs::write(out_dir.join("navigation-graph.yaml"),
+        serde_yaml::to_string(&state.edges).unwrap_or_default());
+    let _ = std::fs::write(out_dir.join("quirks.yaml"),
+        serde_yaml::to_string(&state.quirks).unwrap_or_default());
     let _ = std::fs::write(&state_path, serde_yaml::to_string(&state).unwrap_or_default());
 
-    eprintln!("Crawl done: {} screens, {} edges, {} quirks", state.visited.len(), state.edges.len(), state.quirks.len());
+    eprintln!("Crawl done: {} screens, {} edges, {} quirks",
+        state.visited.len(), state.edges.len(), state.quirks.len());
     Ok(())
 }
