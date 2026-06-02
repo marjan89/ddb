@@ -275,6 +275,30 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     }
     if !ready { return Err("agent not ready after 5s".into()); }
 
+    // Content settle: after launch the app's chrome appears immediately but
+    // dynamic content (lists, network-driven views) renders asynchronously.
+    // Poll /semantic until the parsed element count is stable across two
+    // consecutive ticks (or timeout). Generic — no app strings, no element
+    // names. Tunable via DDB_SETTLE_MS / DDB_SETTLE_TICK_MS.
+    let settle_budget_ms: u64 = std::env::var("DDB_SETTLE_MS")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(8_000);
+    let settle_tick_ms: u64 = std::env::var("DDB_SETTLE_TICK_MS")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(500);
+    let mut last_count: Option<usize> = None;
+    let mut elapsed = 0u64;
+    while elapsed < settle_budget_ms {
+        if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
+            let n = parse_semantic_elements(&sem).len();
+            if last_count == Some(n) && n > 0 {
+                eprintln!("Content settled at {} elements after {}ms", n, elapsed);
+                break;
+            }
+            last_count = Some(n);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(settle_tick_ms));
+        elapsed += settle_tick_ms;
+    }
+
     let mut screens_to_explore: Vec<String> = vec!["initial".into()];
 
     while let Some(current_screen) = screens_to_explore.pop() {
