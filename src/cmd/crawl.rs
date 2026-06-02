@@ -275,40 +275,58 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     }
     if !ready { return Err("agent not ready after 5s".into()); }
 
-    // Content settle: after launch the app's chrome appears immediately but
-    // dynamic content (lists, network-driven views, async image loads) renders
-    // asynchronously. Static skeletons frequently have a stable total element
-    // count even before clickables arrive, so settling on total-count alone
-    // exits the wait too early.
+    // Content settle: prefer the agent's /idle endpoint (same signal the test
+    // runner uses via query-when-idle — no animations, no pending layouts,
+    // IdleResourceRegistry quiet). Fall back to a (total, clickable) count
+    // settle if /idle isn't available, so the crawl still works against older
+    // agents.
     //
-    // Track the (total_count, clickable_count) tuple. Settle when the tuple
-    // is unchanged across two consecutive ticks AND total > 0. If a screen
-    // genuinely has no clickables the tuple still stabilizes on (n, 0) and
-    // we exit. If clickables arrive late, the changing tuple keeps the wait
-    // alive until they too settle.
-    //
-    // Tunable via DDB_SETTLE_MS / DDB_SETTLE_TICK_MS.
+    // Tunable via DDB_SETTLE_MS (overall budget) and DDB_SETTLE_TICK_MS (poll).
     let settle_budget_ms: u64 = std::env::var("DDB_SETTLE_MS")
         .ok().and_then(|s| s.parse().ok()).unwrap_or(15_000);
     let settle_tick_ms: u64 = std::env::var("DDB_SETTLE_TICK_MS")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(1_000);
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(500);
+
+    let mut idle_available = false;
+    let mut idle_seen_idle = false;
     let mut last_tuple: Option<(usize, usize)> = None;
     let mut elapsed = 0u64;
     while elapsed < settle_budget_ms {
-        if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
-            let elems = parse_semantic_elements(&sem);
-            let total = elems.len();
-            let clickable = elems.iter().filter(|e| e.clickable).count();
-            let tuple = (total, clickable);
-            if last_tuple == Some(tuple) && total > 0 {
-                eprintln!("Content settled at {} elements ({} clickable) after {}ms",
-                    total, clickable, elapsed);
-                break;
+        // Try /idle first.
+        match curl_get(&format!("{base}/idle")) {
+            Ok(body) => {
+                idle_available = true;
+                let body_lc = body.to_ascii_lowercase();
+                // Match common shapes: "idle: true", "{\"idle\":true}", bare "true".
+                let is_idle = body_lc.contains("idle: true")
+                    || body_lc.contains("\"idle\":true")
+                    || body_lc.contains("\"idle\": true")
+                    || body_lc.trim() == "true";
+                if is_idle {
+                    idle_seen_idle = true;
+                    eprintln!("Content settled via /idle after {}ms", elapsed);
+                    break;
+                }
             }
-            last_tuple = Some(tuple);
+            Err(_) => {
+                // Fall back to count-tuple settle on this tick.
+                if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
+                    let elems = parse_semantic_elements(&sem);
+                    let tuple = (elems.len(), elems.iter().filter(|e| e.clickable).count());
+                    if last_tuple == Some(tuple) && tuple.0 > 0 {
+                        eprintln!("Content settled (count-tuple fallback) at {} elements ({} clickable) after {}ms",
+                            tuple.0, tuple.1, elapsed);
+                        break;
+                    }
+                    last_tuple = Some(tuple);
+                }
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(settle_tick_ms));
         elapsed += settle_tick_ms;
+    }
+    if idle_available && !idle_seen_idle {
+        eprintln!("WARN: /idle never reported idle within {}ms budget", settle_budget_ms);
     }
 
     let mut screens_to_explore: Vec<String> = vec!["initial".into()];
