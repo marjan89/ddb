@@ -106,6 +106,10 @@ fn current_foreground_pkg(dev: Option<&str>) -> Option<String> {
     Some(pkg.to_string())
 }
 
+fn is_launcher_pkg(pkg: &str) -> bool {
+    pkg.ends_with(".launcher") || pkg.contains("nexuslauncher")
+}
+
 fn take_screenshot(dev: Option<&str>, path: &str) -> bool {
     let remote = "/sdcard/crawl_screenshot.png";
     let _ = adb_shell(dev, &["screencap", "-p", remote]);
@@ -227,8 +231,8 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     // Launch app
     std::thread::sleep(std::time::Duration::from_millis(500));
     let main_activity = std::env::var("DDB_MAIN_ACTIVITY").unwrap_or_else(|_| format!("{}/.MainActivity", args.package));
-    let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // -W blocks until activity is fully started + visible
+    let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
 
     // Port forwarding for agent (uses resolved serial)
     let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
@@ -255,24 +259,26 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         if !is_app_alive(dev_arg, &args.package) {
             eprintln!("  CRASH detected — relaunching");
             state.quirks.push(Quirk { screen: "unknown".into(), quirk_type: "crash".into(), description: "app crashed during crawl".into() });
-            let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             continue;
         }
 
-        // Foreground guard: if another app stole focus (e.g. Bluetooth companion app),
-        // force-stop the intruder and relaunch target. Record as quirk.
+        // Foreground guard: if another app holds focus (Bluetooth companion app, system launcher
+        // mid-transition, etc.), bring target back. Force-stop only third-party intruders —
+        // never force-stop a launcher.
         if let Some(fg) = current_foreground_pkg(dev_arg) {
             if fg != args.package {
-                eprintln!("  INTRUSION: {} took foreground — force-stopping + relaunching {}", fg, args.package);
-                state.quirks.push(Quirk {
-                    screen: "unknown".into(),
-                    quirk_type: "foreground_intrusion".into(),
-                    description: format!("{} took foreground during crawl", fg),
-                });
-                let _ = adb_shell(dev_arg, &["am", "force-stop", &fg]);
-                let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-                std::thread::sleep(std::time::Duration::from_secs(2));
+                let is_launcher = is_launcher_pkg(&fg);
+                eprintln!("  FG MISMATCH: {} (launcher={}) — relaunching {}", fg, is_launcher, args.package);
+                if !is_launcher {
+                    state.quirks.push(Quirk {
+                        screen: "unknown".into(),
+                        quirk_type: "foreground_intrusion".into(),
+                        description: format!("{} took foreground during crawl", fg),
+                    });
+                    let _ = adb_shell(dev_arg, &["am", "force-stop", &fg]);
+                }
+                let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
                 continue;
             }
         }
@@ -351,8 +357,7 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
                 screen: screen_id.clone(), quirk_type: "crash".into(),
                 description: format!("crash after tapping '{}'", elem.content),
             });
-            let _ = adb_shell(dev_arg, &["am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             screens_to_explore.push(screen_id);
             continue;
         }
