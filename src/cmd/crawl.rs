@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::adb;
-use crate::agent_yaml;
+use crate::agent_yaml::{self, chunk_bounds, chunk_top_field};
 use crate::cmd::test::wait_idle;
 use crate::cmd::test_element::{agent_base_url, curl_get, curl_post};
 use crate::registry::{Device, Registry};
@@ -59,83 +59,6 @@ struct CrawlState {
 // ---------------------------------------------------------------------------
 // Field extraction from /semantic chunks (parser shared via agent_yaml::split_elements)
 // ---------------------------------------------------------------------------
-
-fn chunk_top_field(chunk: &str, key: &str) -> Option<String> {
-    // After agent_yaml::split_elements consumes the leading `\n- ` delimiter,
-    // the first line of a chunk is at column 0 (the leading dash + space was
-    // stripped) while subsequent top-level fields keep their original 2-space
-    // indent. Treat both column 0 AND the post-first-line indent as top-level.
-    // Nested children (e.g. bounds.{x,y,w,h}) sit one level deeper than that.
-    let mut field_indent: Option<usize> = None;
-    let mut seen_first = false;
-    for line in chunk.lines() {
-        if line.trim().is_empty() { continue; }
-        let indent = line.chars().take_while(|c| *c == ' ').count();
-        if !seen_first {
-            seen_first = true;
-        } else if field_indent.is_none() {
-            field_indent = Some(indent);
-        }
-        let is_top = indent == 0 || Some(indent) == field_indent;
-        if !is_top { continue; }
-        let trimmed = line.trim_start().trim_start_matches('-').trim_start();
-        if let Some(rest) = trimmed.strip_prefix(&format!("{key}:")) {
-            return Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
-        }
-    }
-    None
-}
-
-fn chunk_bounds(chunk: &str) -> Option<[i32; 4]> {
-    // Inline `bounds: [l, t, r, b]`
-    if let Some(line) = chunk.lines().find(|l| {
-        l.trim_start().trim_start_matches('-').trim_start().starts_with("bounds:")
-    }) {
-        if let Some(after) = line.split_once("bounds:").map(|(_, v)| v.trim()) {
-            if after.starts_with('[') && after.ends_with(']') {
-                let nums: Vec<i32> = after.trim_start_matches('[').trim_end_matches(']')
-                    .split(',').filter_map(|p| p.trim().parse().ok()).collect();
-                if nums.len() == 4 { return Some([nums[0], nums[1], nums[2], nums[3]]); }
-            }
-        }
-    }
-    // Nested `bounds:\n  x: …\n  y: …\n  w: …\n  h: …`.
-    // Same baseline asymmetry as chunk_top_field: first line at column 0
-    // (post split), subsequent top-level fields at field_indent.
-    let mut in_bounds = false;
-    let mut field_indent: Option<usize> = None;
-    let mut seen_first = false;
-    let mut bounds_indent: Option<usize> = None;
-    let mut x = None; let mut y = None; let mut w = None; let mut h = None;
-    let mut l = None; let mut t = None; let mut r = None; let mut b = None;
-    for line in chunk.lines() {
-        if line.trim().is_empty() { continue; }
-        let indent = line.chars().take_while(|c| *c == ' ').count();
-        if !seen_first { seen_first = true; }
-        else if field_indent.is_none() { field_indent = Some(indent); }
-        let trimmed = line.trim_start();
-        if !in_bounds {
-            let is_top = indent == 0 || Some(indent) == field_indent;
-            if is_top && trimmed.trim_start_matches('-').trim_start().starts_with("bounds:") {
-                in_bounds = true;
-                bounds_indent = Some(indent);
-            }
-            continue;
-        }
-        let b_ind = bounds_indent.unwrap();
-        if indent <= b_ind { break; }
-        let key = trimmed.split_once(':').map(|(k, _)| k.trim()).unwrap_or("");
-        let val = trimmed.split_once(':').and_then(|(_, v)| v.trim().parse::<i32>().ok());
-        match key {
-            "x" => x = val, "y" => y = val, "w" => w = val, "h" => h = val,
-            "left" => l = val, "top" => t = val, "right" => r = val, "bottom" => b = val,
-            _ => {}
-        }
-    }
-    if let (Some(l), Some(t), Some(r), Some(b)) = (l, t, r, b) { return Some([l, t, r, b]); }
-    if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) { return Some([x, y, x + w, y + h]); }
-    None
-}
 
 fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
     let chunks = agent_yaml::split_elements(yaml);
