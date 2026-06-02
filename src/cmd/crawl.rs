@@ -139,8 +139,8 @@ mod is_launcher_tests {
     #[test] fn matches_aosp_versioned() { assert!(is_launcher_pkg("com.android.launcher3")); }
     #[test] fn matches_pixel() { assert!(is_launcher_pkg("com.google.android.apps.nexuslauncher")); }
     #[test] fn rejects_third_party() {
-        assert!(!is_launcher_pkg("com.bose.app.staging"));
-        assert!(!is_launcher_pkg("se.naturkartan.android"));
+        assert!(!is_launcher_pkg("com.example.someapp"));
+        assert!(!is_launcher_pkg("com.example.target"));
         assert!(!is_launcher_pkg("com.google.android.apps.maps"));
     }
 }
