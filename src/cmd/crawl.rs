@@ -336,8 +336,11 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
                         semantic_ok = true;
                         break;
                     }
+                    // Diagnostic: surface raw body so we can tell parser-bug from truly-empty
+                    let preview: String = s.chars().take(200).collect();
+                    eprintln!("  /semantic empty (attempt {}/3) — raw body (len={}, first 200): {:?}",
+                        attempt + 1, s.len(), preview);
                     if attempt + 1 < 3 {
-                        eprintln!("  /semantic empty (attempt {}/3), retrying in 1s", attempt + 1);
                         std::thread::sleep(std::time::Duration::from_secs(1));
                     }
                 }
