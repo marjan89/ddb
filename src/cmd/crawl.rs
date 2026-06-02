@@ -120,6 +120,17 @@ fn is_launcher_pkg(pkg: &str) -> bool {
     pkg.ends_with(".launcher") || pkg.contains("nexuslauncher")
 }
 
+fn forward_agent_port(dev: Option<&str>) {
+    // adb forward dies after pm clear + relaunch (new app PID + new socket).
+    // Cheap to re-establish; call after every launch/relaunch.
+    if let Some(s) = dev {
+        let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
+        let mut fwd = std::process::Command::new("adb");
+        fwd.args(["-s", s]).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
+        let _ = fwd.output();
+    }
+}
+
 fn wait_for_foreground(dev: Option<&str>, target: &str, timeout_ms: u64) -> bool {
     let step_ms = 200u64;
     let mut elapsed = 0u64;
@@ -260,13 +271,8 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
         eprintln!("  WARN: target {} did not reach foreground within 5s after launch", args.package);
     }
 
-    // Port forwarding for agent (uses resolved serial)
-    let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
-    if let Some(s) = dev_arg {
-        let mut fwd = std::process::Command::new("adb");
-        fwd.args(["-s", s]).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
-        let _ = fwd.output();
-    }
+    // Port forwarding for agent (re-establish after every launch — dies on pm clear + relaunch)
+    forward_agent_port(dev_arg);
 
     // Health check: hard fail if agent not ready (10 × 500ms)
     let mut ready = false;
@@ -287,6 +293,7 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             state.quirks.push(Quirk { screen: "unknown".into(), quirk_type: "crash".into(), description: "app crashed during crawl".into() });
             let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
+            forward_agent_port(dev_arg);
             screens_to_explore.push(current_screen);
             continue;
         }
@@ -307,6 +314,7 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
                 }
                 let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
                 let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
+                forward_agent_port(dev_arg);
                 screens_to_explore.push(current_screen);
                 continue;
             }
@@ -410,6 +418,7 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
             });
             let _ = adb_shell(dev_arg, &["am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", &main_activity]);
             let _ = wait_for_foreground(dev_arg, &args.package, 5_000);
+            forward_agent_port(dev_arg);
             screens_to_explore.push(screen_id);
             continue;
         }
