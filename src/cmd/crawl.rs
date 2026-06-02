@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::agent_yaml::{self, ElementRecord};
+use crate::agent_yaml;
+use crate::cmd::test_element::{agent_base_url, curl_get, curl_post};
 use crate::registry::Registry;
 
 #[derive(clap::Args)]
@@ -40,18 +41,6 @@ struct CrawlElement {
     clickable: bool,
 }
 
-impl From<&ElementRecord> for CrawlElement {
-    fn from(r: &ElementRecord) -> Self {
-        CrawlElement {
-            content: r.content.clone(),
-            element_type: r.etype.clone(),
-            id: r.id.clone(),
-            bounds: r.bounds,
-            clickable: r.clickable,
-        }
-    }
-}
-
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct NavEdge { from: String, element: String, to: String }
 
@@ -63,27 +52,6 @@ struct CrawlState {
     visited: HashMap<String, ScreenSnapshot>,
     edges: Vec<NavEdge>,
     quirks: Vec<Quirk>,
-}
-
-fn agent_base_url() -> String {
-    let port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
-    format!("http://127.0.0.1:{port}")
-}
-
-fn curl_get(url: &str) -> Result<String, String> {
-    let output = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "10", url])
-        .output().map_err(|e| format!("curl: {e}"))?;
-    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).to_string()) }
-    else { Err("curl non-zero".into()) }
-}
-
-fn curl_post(url: &str, body: &str) -> Result<String, String> {
-    let output = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "10", "-X", "POST", "-d", body, url])
-        .output().map_err(|e| format!("curl: {e}"))?;
-    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).to_string()) }
-    else { Err("curl non-zero".into()) }
 }
 
 fn adb_shell(dev: Option<&str>, args: &[&str]) -> Result<String, String> {
@@ -181,8 +149,103 @@ fn fnv_hash(s: &str) -> u64 {
     h
 }
 
+/// Extract a top-level `key: value` from a chunk (string value, quote-stripped).
+/// Top-level only: ignores keys appearing inside nested blocks of higher indent
+/// (e.g. an `image: { type: loaded }` block's `type` won't shadow the outer `type`).
+fn chunk_top_field(chunk: &str, key: &str) -> Option<String> {
+    let mut base_indent: Option<usize> = None;
+    for line in chunk.lines() {
+        if line.trim().is_empty() { continue; }
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        let base = *base_indent.get_or_insert(indent);
+        if indent != base { continue; }
+        let trimmed = line.trim_start().trim_start_matches('-').trim_start();
+        if let Some(rest) = trimmed.strip_prefix(&format!("{key}:")) {
+            return Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
+        }
+    }
+    None
+}
+
+/// Extract a nested `bounds:` block as [left, top, right, bottom]. Supports
+/// `bounds: { x, y, w, h }`, `bounds: { left, top, right, bottom }`, and
+/// inline `bounds: [l, t, r, b]`.
+fn chunk_bounds(chunk: &str) -> Option<[i32; 4]> {
+    // Inline form first.
+    if let Some(line) = chunk.lines().find(|l| l.trim_start().trim_start_matches('-').trim_start().starts_with("bounds:")) {
+        let after = line.split_once("bounds:")?.1.trim();
+        if after.starts_with('[') && after.ends_with(']') {
+            let nums: Vec<i32> = after.trim_start_matches('[').trim_end_matches(']')
+                .split(',').filter_map(|p| p.trim().parse().ok()).collect();
+            if nums.len() == 4 { return Some([nums[0], nums[1], nums[2], nums[3]]); }
+        }
+    }
+    // Nested form: walk lines after the `bounds:` declaration until indent returns to base.
+    let mut in_bounds = false;
+    let mut base_indent: Option<usize> = None;
+    let mut bounds_indent: Option<usize> = None;
+    let mut x = None; let mut y = None; let mut w = None; let mut h = None;
+    let mut l = None; let mut t = None; let mut r = None; let mut b = None;
+    for line in chunk.lines() {
+        if line.trim().is_empty() { continue; }
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        let base = *base_indent.get_or_insert(indent);
+        let trimmed = line.trim_start();
+        if !in_bounds {
+            if indent == base && trimmed.trim_start_matches('-').trim_start().starts_with("bounds:") {
+                in_bounds = true;
+                bounds_indent = Some(indent);
+            }
+            continue;
+        }
+        let b_ind = bounds_indent.unwrap();
+        if indent <= b_ind { break; }
+        let key = trimmed.split_once(':').map(|(k, _)| k.trim()).unwrap_or("");
+        let val = trimmed.split_once(':').and_then(|(_, v)| v.trim().parse::<i32>().ok());
+        match key {
+            "x" => x = val,
+            "y" => y = val,
+            "w" => w = val,
+            "h" => h = val,
+            "left" => l = val,
+            "top" => t = val,
+            "right" => r = val,
+            "bottom" => b = val,
+            _ => {}
+        }
+    }
+    if let (Some(l), Some(t), Some(r), Some(b)) = (l, t, r, b) { return Some([l, t, r, b]); }
+    if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) { return Some([x, y, x + w, y + h]); }
+    None
+}
+
+/// Build CrawlElements from the agent's /semantic body. Uses the shared chunk
+/// splitter so the test runner and crawl agree on element boundaries.
 fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
-    agent_yaml::parse_elements(yaml).iter().map(CrawlElement::from).collect()
+    let chunks = agent_yaml::split_elements(yaml);
+    let mut out = Vec::new();
+    for chunk in &chunks {
+        // platform_id wins over id when both present.
+        let id = chunk_top_field(chunk, "platform_id")
+            .or_else(|| chunk_top_field(chunk, "id"));
+        let content = chunk_top_field(chunk, "content").unwrap_or_default();
+        let etype = chunk_top_field(chunk, "type").unwrap_or_default();
+        let clickable = chunk_top_field(chunk, "clickable")
+            .map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        let bounds = chunk_bounds(chunk);
+        // Drop wholly empty chunks (the leading prelude before the first `- id:`).
+        if id.is_none() && content.is_empty() && etype.is_empty() && bounds.is_none() && !clickable {
+            continue;
+        }
+        out.push(CrawlElement {
+            content,
+            element_type: etype,
+            id,
+            bounds,
+            clickable,
+        });
+    }
+    out
 }
 
 fn element_dedup_key(e: &CrawlElement) -> String {
@@ -287,46 +350,57 @@ pub fn run(dev_arg: Option<&str>, args: CrawlArgs) -> Result<(), String> {
     let settle_tick_ms: u64 = std::env::var("DDB_SETTLE_TICK_MS")
         .ok().and_then(|s| s.parse().ok()).unwrap_or(500);
 
-    let mut idle_available = false;
-    let mut idle_seen_idle = false;
+    // Require BOTH signals: /idle reports idle (if endpoint is available) AND
+    // (total, clickable) count is stable across two ticks with total > 0.
+    // Either signal alone has been observed to false-positive on this stack —
+    // /idle when the agent's IdleResourceRegistry doesn't track network calls,
+    // count-tuple when the static skeleton stabilizes before list content
+    // arrives. Requiring both holds the wait until they agree.
     let mut last_tuple: Option<(usize, usize)> = None;
+    let mut tuple_stable = false;
+    let mut idle_ok = true; // Assume true if /idle is unreachable (older agents).
+    let mut idle_endpoint_seen = false;
     let mut elapsed = 0u64;
-    while elapsed < settle_budget_ms {
-        // Try /idle first.
+    loop {
+        // Poll /idle on every tick — its state can flip back to busy.
         match curl_get(&format!("{base}/idle")) {
             Ok(body) => {
-                idle_available = true;
+                idle_endpoint_seen = true;
                 let body_lc = body.to_ascii_lowercase();
-                // Match common shapes: "idle: true", "{\"idle\":true}", bare "true".
-                let is_idle = body_lc.contains("idle: true")
+                idle_ok = body_lc.contains("idle: true")
                     || body_lc.contains("\"idle\":true")
                     || body_lc.contains("\"idle\": true")
                     || body_lc.trim() == "true";
-                if is_idle {
-                    idle_seen_idle = true;
-                    eprintln!("Content settled via /idle after {}ms", elapsed);
-                    break;
-                }
             }
             Err(_) => {
-                // Fall back to count-tuple settle on this tick.
-                if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
-                    let elems = parse_semantic_elements(&sem);
-                    let tuple = (elems.len(), elems.iter().filter(|e| e.clickable).count());
-                    if last_tuple == Some(tuple) && tuple.0 > 0 {
-                        eprintln!("Content settled (count-tuple fallback) at {} elements ({} clickable) after {}ms",
-                            tuple.0, tuple.1, elapsed);
-                        break;
-                    }
-                    last_tuple = Some(tuple);
-                }
+                // Endpoint missing — leave idle_ok at its default (true).
+                idle_ok = true;
             }
         }
+
+        if let Ok(sem) = curl_get(&format!("{base}/semantic")) {
+            let elems = parse_semantic_elements(&sem);
+            let tuple = (elems.len(), elems.iter().filter(|e| e.clickable).count());
+            tuple_stable = last_tuple == Some(tuple) && tuple.0 > 0;
+            last_tuple = Some(tuple);
+        }
+
+        if idle_ok && tuple_stable {
+            let (t, c) = last_tuple.unwrap_or((0, 0));
+            eprintln!("Content settled at {} elements ({} clickable) after {}ms (idle_endpoint={})",
+                t, c, elapsed, idle_endpoint_seen);
+            break;
+        }
+
+        if elapsed >= settle_budget_ms {
+            let (t, c) = last_tuple.unwrap_or((0, 0));
+            eprintln!("WARN: settle timeout at {}ms — proceeding with {} elements ({} clickable, idle_ok={}, tuple_stable={})",
+                settle_budget_ms, t, c, idle_ok, tuple_stable);
+            break;
+        }
+
         std::thread::sleep(std::time::Duration::from_millis(settle_tick_ms));
         elapsed += settle_tick_ms;
-    }
-    if idle_available && !idle_seen_idle {
-        eprintln!("WARN: /idle never reported idle within {}ms budget", settle_budget_ms);
     }
 
     let mut screens_to_explore: Vec<String> = vec!["initial".into()];

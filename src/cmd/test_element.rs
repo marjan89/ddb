@@ -255,6 +255,26 @@ pub fn agent_base_url() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+/// Tiny shared curl GET — used by crawl and any caller that wants the same
+/// HTTP semantics test_element uses internally (short connect timeout, 10s cap).
+pub fn curl_get(url: &str) -> Result<String, String> {
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--connect-timeout", "2", "--max-time", "10", url])
+        .output().map_err(|e| format!("curl: {e}"))?;
+    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).to_string()) }
+    else { Err("curl non-zero".into()) }
+}
+
+/// Tiny shared curl POST — JSON body.
+pub fn curl_post(url: &str, body: &str) -> Result<String, String> {
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--connect-timeout", "2", "--max-time", "10",
+               "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url])
+        .output().map_err(|e| format!("curl: {e}"))?;
+    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).to_string()) }
+    else { Err("curl non-zero".into()) }
+}
+
 pub fn fetch_ui_dump(dev: Option<&Device>) -> String {
     let _ = adb::shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
     match adb::shell(dev, &["cat", "/sdcard/ui.xml"]) {
