@@ -105,21 +105,7 @@ fn record_from_value(v: &Value) -> Option<ElementRecord> {
             "platform_id" => { if let Some(s) = as_string(val) { if !s.is_empty() { platform_id_val = Some(s); } } }
             "content" => { if let Some(s) = as_string(val) { content = s; } }
             "type" => { if let Some(s) = as_string(val) { etype = s; } }
-            "clickable" => {
-                if std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1") {
-                    let dump = match val {
-                        Value::Bool(b) => format!("Bool({b})"),
-                        Value::String(s) => format!("String({s:?})"),
-                        Value::Number(n) => format!("Number({n})"),
-                        Value::Null => "Null".into(),
-                        Value::Sequence(_) => "Sequence(..)".into(),
-                        Value::Mapping(_) => "Mapping(..)".into(),
-                        other => format!("Other({other:?})"),
-                    };
-                    eprintln!("    [CLICK-RAW] {}", dump);
-                }
-                clickable = as_bool(val);
-            }
+            "clickable" => { clickable = as_bool(val); }
             "bounds" => { bounds = extract_bounds(val); }
             _ => {}
         }
@@ -137,23 +123,54 @@ fn record_from_value(v: &Value) -> Option<ElementRecord> {
     Some(ElementRecord { raw, content, etype, id, bounds, clickable })
 }
 
-/// Recursively walk a parsed YAML value, collecting every mapping that looks
-/// like an element (has `id`, `platform_id`, `content`, `type`, `bounds`, or
-/// `clickable`). Robust to whether the agent wraps the list under a top-level
-/// key or returns it bare.
+/// Heuristic: does this mapping look like an element record (vs. a structural
+/// container like {x,y,w,h} for bounds or {type: loaded} for an image stanza)?
+fn looks_like_element(v: &Value) -> bool {
+    let m = match v {
+        Value::Mapping(m) => m,
+        _ => return false,
+    };
+    let mut has_id = false;
+    let mut has_clickable = false;
+    let mut has_bounds = false;
+    let mut has_type = false;
+    for (k, _) in m {
+        if let Value::String(s) = k {
+            match s.as_str() {
+                "id" | "platform_id" | "a11y_id" => has_id = true,
+                "clickable" => has_clickable = true,
+                "bounds" => has_bounds = true,
+                "type" => has_type = true,
+                _ => {}
+            }
+        }
+    }
+    // An element has either an explicit id field OR clickable+bounds OR
+    // type+bounds. Bare {type: loaded} or {x,y,w,h} do NOT qualify.
+    has_id || (has_clickable && has_bounds) || (has_type && has_bounds)
+}
+
+/// Recursively walk a parsed YAML value, emitting an ElementRecord for every
+/// mapping that looks like an element (anywhere in the tree). De-duplication
+/// happens at parse_elements level via the raw text key.
 fn walk(v: &Value, out: &mut Vec<ElementRecord>) {
     match v {
         Value::Sequence(seq) => {
             for item in seq {
-                if let Some(rec) = record_from_value(item) {
-                    out.push(rec);
+                if looks_like_element(item) {
+                    if let Some(rec) = record_from_value(item) {
+                        out.push(rec);
+                    }
                 }
-                // Always recurse — items may themselves contain child lists
-                // (the agent flattens these but we don't rely on that).
                 walk(item, out);
             }
         }
         Value::Mapping(m) => {
+            if looks_like_element(v) {
+                if let Some(rec) = record_from_value(v) {
+                    out.push(rec);
+                }
+            }
             for (_, val) in m {
                 walk(val, out);
             }
@@ -167,16 +184,17 @@ fn walk(v: &Value, out: &mut Vec<ElementRecord>) {
 pub fn parse_elements(yaml: &str) -> Vec<ElementRecord> {
     use serde::Deserialize;
     let debug = std::env::var("DDB_CRAWL_DEBUG").ok().as_deref() == Some("1");
-    let mut out = Vec::new();
+    let mut raw_out: Vec<ElementRecord> = Vec::new();
     let mut doc_count = 0usize;
     for doc in serde_yaml::Deserializer::from_str(yaml) {
         match Value::deserialize(doc) {
             Ok(root) => {
                 doc_count += 1;
-                let before = out.len();
-                walk(&root, &mut out);
+                let before = raw_out.len();
+                walk(&root, &mut raw_out);
                 if debug {
-                    eprintln!("  [PARSE doc {}] +{} records (total {})", doc_count, out.len() - before, out.len());
+                    eprintln!("  [PARSE doc {}] +{} records (raw total {})",
+                        doc_count, raw_out.len() - before, raw_out.len());
                 }
             }
             Err(e) if debug => {
@@ -185,8 +203,27 @@ pub fn parse_elements(yaml: &str) -> Vec<ElementRecord> {
             Err(_) => {}
         }
     }
+
+    // Dedup by (id, bounds) — Mapping-in-Sequence is emitted twice by walk()
+    // (once by Sequence branch, once by Mapping branch). Equivalent records
+    // collapse to one. Records lacking both id and bounds dedupe by content+type.
+    let mut out: Vec<ElementRecord> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for r in raw_out {
+        let key = format!("{}|{}|{:?}|{}",
+            r.id.clone().unwrap_or_default(),
+            r.content,
+            r.bounds,
+            r.etype,
+        );
+        if seen.insert(key) {
+            out.push(r);
+        }
+    }
+
     if debug {
-        eprintln!("  [PARSE total] {} docs, {} records, {} bytes input", doc_count, out.len(), yaml.len());
+        eprintln!("  [PARSE total] {} docs, {} unique records, {} bytes input",
+            doc_count, out.len(), yaml.len());
         for (i, r) in out.iter().take(3).enumerate() {
             eprintln!("    [REC {}] id={:?} content={:?} etype={:?} clickable={} bounds={:?}",
                 i, r.id, r.content, r.etype, r.clickable, r.bounds);
