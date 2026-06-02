@@ -169,6 +169,16 @@ fn fnv_hash(s: &str) -> u64 {
 }
 
 fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
+    // Each element is a YAML list item; field order is not guaranteed.
+    // A new element begins on any line whose trimmed form starts with "- "
+    // and contains ":". Fields can be `id` or `platform_id`, in any order.
+    fn extract_value(s: &str) -> String {
+        s.split_once(':').map(|(_, v)| v).unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_string()
+    }
+    fn field_key(s: &str) -> &str {
+        s.split_once(':').map(|(k, _)| k).unwrap_or("").trim_start_matches('-').trim()
+    }
+
     let mut elements = Vec::new();
     let mut content = String::new();
     let mut etype = String::new();
@@ -176,27 +186,56 @@ fn parse_semantic_elements(yaml: &str) -> Vec<CrawlElement> {
     let mut clickable = false;
     let mut in_element = false;
 
+    let flush = |elements: &mut Vec<CrawlElement>, content: &mut String, etype: &mut String, eid: &mut Option<String>, clickable: &mut bool| {
+        if !content.is_empty() || !etype.is_empty() || eid.is_some() {
+            elements.push(CrawlElement {
+                content: std::mem::take(content),
+                element_type: std::mem::take(etype),
+                id: eid.take(),
+                bounds: None,
+                clickable: *clickable,
+            });
+        }
+        *clickable = false;
+    };
+
     for line in yaml.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("- content:") {
-            if in_element && (!content.is_empty() || !etype.is_empty()) {
-                elements.push(CrawlElement { content: content.clone(), element_type: etype.clone(), id: eid.take(), bounds: None, clickable });
+        if trimmed.is_empty() { continue; }
+
+        let is_item_start = trimmed.starts_with("- ") && trimmed.contains(':');
+        if is_item_start {
+            if in_element {
+                flush(&mut elements, &mut content, &mut etype, &mut eid, &mut clickable);
             }
-            content = trimmed.strip_prefix("- content:").unwrap_or("").trim().trim_matches('"').to_string();
-            etype.clear(); eid = None; clickable = false; in_element = true;
-        } else if in_element {
-            if trimmed.starts_with("type:") {
-                etype = trimmed.strip_prefix("type:").unwrap_or("").trim().trim_matches('"').to_string();
-            } else if trimmed.starts_with("platform_id:") {
-                let v = trimmed.split(':').nth(1).unwrap_or("").trim().trim_matches('"');
-                if !v.is_empty() { eid = Some(v.to_string()); }
-            } else if trimmed.starts_with("clickable:") {
-                clickable = trimmed.contains("true");
+            in_element = true;
+            // The first field on this line may be id/content/type/clickable — parse it.
+            let key = field_key(trimmed);
+            let val = extract_value(trimmed);
+            match key {
+                "content" => content = val,
+                "type" => etype = val,
+                "id" | "platform_id" => { if !val.is_empty() { eid = Some(val); } }
+                "clickable" => clickable = val == "true",
+                _ => {}
+            }
+            continue;
+        }
+
+        if in_element {
+            let key = field_key(trimmed);
+            let val = extract_value(trimmed);
+            match key {
+                "content" => content = val,
+                "type" => etype = val,
+                "id" | "platform_id" => { if !val.is_empty() { eid = Some(val); } }
+                "clickable" => clickable = val == "true",
+                _ => {}
             }
         }
     }
-    if in_element && (!content.is_empty() || !etype.is_empty()) {
-        elements.push(CrawlElement { content, element_type: etype, id: eid, bounds: None, clickable });
+    if in_element {
+        flush(&mut elements, &mut content, &mut etype, &mut eid, &mut clickable);
     }
     elements
 }
