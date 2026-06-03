@@ -354,7 +354,13 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         .ok_or("DDB_EXPECTED_HASH not set. Run: export DDB_EXPECTED_HASH=$(git -C /path/to/app rev-parse --short HEAD)")?;
     {
         let base = agent_base_url();
-        let version_result = util_runner.curl_with_deadline(&format!("{base}/version"), "GET", None);
+        // #43 — /version is a sanity check, not the agent-ready gate.
+        // Bound at 5s so a wedged forward (port accepts but agent
+        // doesn't respond) doesn't burn util_runner's full 300s
+        // budget. derived_with_deadline (#41) gives us a fresh
+        // 5s-capped runner for this single probe.
+        let version_probe = util_runner.derived_with_deadline(5);
+        let version_result = version_probe.curl_with_deadline(&format!("{base}/version"), "GET", None);
         if let Ok(body) = version_result {
             if let Some(hash_start) = body.find("\"git_hash\":\"") {
                 let rest = &body[hash_start + 12..];
