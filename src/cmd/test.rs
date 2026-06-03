@@ -430,6 +430,12 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     });
     unsafe { std::env::set_var("DDB_AGENT_PORT", &agent_port); }
     if let Some(ref d) = dev {
+        // Remove stale 9876 forward if device uses a different port
+        if agent_port != "9876" {
+            let mut rm_cmd = std::process::Command::new("adb");
+            rm_cmd.arg("-s").arg(d.transport_id()).args(["forward", "--remove", "tcp:9876"]);
+            let _ = rm_cmd.output(); // ignore errors (forward may not exist)
+        }
         let mut fwd_cmd = std::process::Command::new("adb");
         fwd_cmd.arg("-s").arg(d.transport_id()).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
         let _ = util_runner.run_with_deadline(&mut fwd_cmd);
@@ -1059,20 +1065,59 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     ]);
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // 3. Health check — hard fail if agent not ready
+    // 3. Health check — hard fail if agent not ready.
+    //
+    // Two-phase gate when DDB_SEMANTIC_GATE=true (#39 — Flutter VM
+    // ready). The Flutter agent's HTTP server binds before runApp(),
+    // so /health goes OK while the widget tree is still nil. /semantic
+    // walks an empty rootElement and the first wait_until in the TC
+    // (e.g. "Get Started") times out even though the element is one
+    // frame away. Phase 1 stays /health (existing behavior, default
+    // for native Android). Phase 2 polls /semantic and waits for any
+    // element to appear (`- id:` line — every record emits it). Shares
+    // the same DDB_AGENT_READY_TIMEOUT budget.
     let agent_ready_timeout_s: u64 = std::env::var("DDB_AGENT_READY_TIMEOUT")
         .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
-    let agent_ready_polls = (agent_ready_timeout_s * 2).max(1);
-    let mut agent_ready = false;
-    for _ in 0..agent_ready_polls {
-        if setup_runner.expired() { break; }
+    let semantic_gate = std::env::var("DDB_SEMANTIC_GATE")
+        .ok().map(|v| v == "true").unwrap_or(false);
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(agent_ready_timeout_s);
+
+    let mut health_ok = false;
+    while std::time::Instant::now() < deadline && !setup_runner.expired() {
         if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
             if body.contains("semantic-agent") {
-                agent_ready = true;
+                health_ok = true;
                 break;
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if !health_ok {
+        return (TestResult {
+            id: spec.id.clone(), name: spec.name.clone(),
+            status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
+            failure: Some(FailureDetail {
+                step: 0,
+                description: format!("agent /health not ready after {}s", agent_ready_timeout_s),
+                screenshot: None,
+            }),
+            log: logger.entries(),
+        }, step_logs);
+    }
+
+    let mut agent_ready = true;
+    if semantic_gate {
+        agent_ready = false;
+        while std::time::Instant::now() < deadline && !setup_runner.expired() {
+            if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
+                if body.contains("- id:") {
+                    agent_ready = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
     }
     if !agent_ready {
         return (TestResult {
@@ -1080,7 +1125,10 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
             failure: Some(FailureDetail {
                 step: 0,
-                description: format!("agent not ready after {}s", agent_ready_timeout_s),
+                description: format!(
+                    "agent /semantic empty after {}s (DDB_SEMANTIC_GATE)",
+                    agent_ready_timeout_s
+                ),
                 screenshot: None,
             }),
             log: logger.entries(),
