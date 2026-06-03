@@ -1835,23 +1835,36 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
             let fuzzy = fuzzy_resolved.as_deref();
             let id = target.and_then(|t| t.id.as_deref());
 
-            // Assertions are snapshot queries — skip idle barrier (dialogs keep /idle busy)
+            // #41 — Assert snapshot queries get a TIGHT 5s per-probe
+            // deadline so a single stalled uiautomator dump / dumpsys
+            // can't burn the full step budget (which on the last step
+            // of a 120s TC can be ~110s). The outer `runner` budget
+            // still governs how long the poll loop is allowed to wait
+            // overall; this inner runner just caps each underlying
+            // probe.
+            let probe = runner.derived_with_deadline(5);
+
+            // Assertions are snapshot queries — skip idle barrier
+            // (dialogs keep /idle busy).
             if let Some(target) = target {
-                if let Ok((_, _, desc)) = find_element_unified(dev, target, &[], Some(runner)) {
+                if let Ok((_, _, desc)) = find_element_unified(dev, target, &[], Some(&probe)) {
                     return Ok(desc);
                 }
             }
 
-            // Quick check: one pass through all sources
-            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text, Some(runner)) {
+            // Quick check: one pass through all sources.
+            if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text, Some(&probe)) {
                 return Ok(result);
             }
 
-            // Poll-based wait: check element sources every 500ms until timeout
+            // Poll-based wait: check element sources every 500ms until
+            // timeout. Each iteration spins up a fresh tight probe so
+            // the per-call cap renews.
             let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout.min(15));
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
-                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text, Some(runner)) {
+                let probe = runner.derived_with_deadline(5);
+                if let Some(result) = check_element_sources(dev, fuzzy, id, expected_text, Some(&probe)) {
                     return Ok(result);
                 }
                 if std::time::Instant::now() > poll_deadline {

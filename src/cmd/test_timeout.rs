@@ -155,6 +155,27 @@ impl StepRunner {
         Instant::now() > self.deadline
     }
 
+    /// New runner with a tight deadline (max `secs` seconds from now).
+    /// Used by assert snapshot-query paths that need to bound each
+    /// underlying probe (adb shell uiautomator dump, dumpsys, curl) so
+    /// a single stalled call can't burn the outer step budget. The
+    /// returned runner runs in the Execute phase with the same secs as
+    /// the phase budget, so `time_remaining()` and `run_with_deadline`
+    /// both honor the cap.
+    pub fn derived_with_deadline(&self, secs: u64) -> StepRunner {
+        let now = Instant::now();
+        let cap = Duration::from_secs(secs);
+        let outer = self.deadline.saturating_duration_since(now);
+        let bound = cap.min(outer);
+        let new_deadline = now + bound;
+        StepRunner {
+            deadline: new_deadline,
+            phase: StepPhase::Execute,
+            budgets: PhaseBudgets { pre_idle_s: 0, execute_s: secs, post_idle_s: 0 },
+            phase_deadline: new_deadline,
+        }
+    }
+
     pub fn time_remaining(&self) -> Duration {
         let step_rem = self.deadline.saturating_duration_since(Instant::now());
         let phase_rem = self.phase_deadline.saturating_duration_since(Instant::now());
