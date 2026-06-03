@@ -187,6 +187,8 @@ struct StepRaw {
     click_after: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    max_attempts: Option<u32>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -224,6 +226,7 @@ struct ActionStep {
     wait_timeout: Option<u64>,
     click_after: Option<String>,
     source: Option<String>,
+    max_attempts: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -259,6 +262,7 @@ impl StepRaw {
                 wait_timeout: self.wait_timeout,
                 click_after: self.click_after,
                 source: self.source,
+                max_attempts: self.max_attempts,
             }))
         } else if let Some(assert) = self.assert {
             Ok(Step::Assert(AssertStep {
@@ -1557,8 +1561,15 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
         }
         "scroll" | "scroll_to" => {
             if let Some(ref target) = action.target {
+                // #42 — bumped outer attempts from 5 to 10. Per-call
+                // `max_scroll` stays at 15 (15 individual scroll gestures
+                // per attempt). Total reach = 10 × 15 = 150 scrolls,
+                // covering long RecyclerViews where Q&A / late sections
+                // sit 20+ items below the fold. TC author can still
+                // override via `action.max_attempts` (action wraps).
+                let max_attempts: u32 = action.max_attempts.unwrap_or(10);
                 let mut result = None;
-                for attempt in 0..5 {
+                for attempt in 0..max_attempts {
                     // Check if element is already visible before scrolling
                     if let Ok((x, y, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner)) {
                         result = Some(format!("already visible: {} at ({},{})", desc, x, y));
@@ -1568,11 +1579,11 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                         result = Some(desc);
                         break;
                     }
-                    if attempt < 4 {
+                    if attempt + 1 < max_attempts {
                         std::thread::sleep(std::time::Duration::from_secs(5));
                     }
                 }
-                result.ok_or_else(|| "scroll_to: element not found after 3 attempts".to_string())
+                result.ok_or_else(|| format!("scroll_to: element not found after {} attempts", max_attempts))
             } else {
                 let dir = action.direction.as_deref().unwrap_or("down");
                 let times = action.times.unwrap_or(1);
