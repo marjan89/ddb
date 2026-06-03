@@ -440,6 +440,12 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     });
     unsafe { std::env::set_var("DDB_AGENT_PORT", &agent_port); }
     if let Some(ref d) = dev {
+        // #44 — adb zombie pre-check. After repeated pm clear cycles
+        // the host-side adb server wedges (Google issuetracker
+        // 36920010). Probe `adb get-state` with a 3s cap; if it hangs
+        // or returns garbage, kill+start the server so the forward
+        // setup below isn't queued behind a dead daemon.
+        recover_adb_if_zombie(d, &util_runner);
         // Remove stale 9876 forward if device uses a different port
         if agent_port != "9876" {
             let mut rm_cmd = std::process::Command::new("adb");
@@ -490,7 +496,19 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     let mut pass = 0;
     let mut fail = 0;
 
-    for spec_path in &specs {
+    let clean_state = std::env::var("DDB_CLEAN_STATE").ok().map(|v| v == "true").unwrap_or(false);
+    for (tc_index, spec_path) in specs.iter().enumerate() {
+        // #44 — Proactive adb zombie sweep between TCs on cold-state
+        // suites. The host adb server wedges after ~5 repeated pm
+        // clear cycles; restarting every 5 TCs keeps suites moving
+        // without per-TC overhead. First TC (tc_index 0) already
+        // handled by the setup-phase pre-check above.
+        if clean_state && tc_index > 0 && tc_index % 5 == 0 {
+            if let Some(ref d) = dev {
+                eprintln!("  [#44] periodic adb sweep (TC {}/{})", tc_index + 1, specs.len());
+                recover_adb_if_zombie(d, &util_runner);
+            }
+        }
         let raw_content = match std::fs::read_to_string(spec_path) {
             Ok(c) => c,
             Err(e) => {
@@ -997,6 +1015,50 @@ fn dismiss_permission_dialog(dev: Option<&Device>, runner: &StepRunner) {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
+}
+
+/// #44 — Detect a wedged host-side adb server and restart it.
+///
+/// Probes `adb -s <transport> get-state` with a 3s deadline. A healthy
+/// adb returns either `device` (ok) or a clear failure within
+/// milliseconds; a zombie server hangs or returns unknown. On hang /
+/// non-ok we run `adb kill-server` + `adb start-server` and probe
+/// once more to confirm recovery.
+///
+/// Returns true when a restart actually happened.
+fn recover_adb_if_zombie(dev: &Device, runner: &StepRunner) -> bool {
+    fn probe(dev: &Device, runner: &StepRunner) -> Option<String> {
+        let probe_runner = runner.derived_with_deadline(3);
+        let mut cmd = std::process::Command::new("adb");
+        cmd.arg("-s").arg(dev.transport_id()).arg("get-state");
+        let out = probe_runner.run_with_deadline(&mut cmd).ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }
+
+    let healthy = matches!(probe(dev, runner).as_deref(), Some("device"));
+    if healthy {
+        return false;
+    }
+
+    eprintln!("  [#44] adb server appears wedged — restarting");
+    let _ = std::process::Command::new("adb").arg("kill-server").output();
+    // start-server is a fast no-op if already running; safe to chain.
+    let _ = std::process::Command::new("adb").arg("start-server").output();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    if matches!(probe(dev, runner).as_deref(), Some("device")) {
+        eprintln!("  [#44] adb server recovered");
+    } else {
+        eprintln!(
+            "  [#44] adb server restarted but device {} still not reporting 'device' — continuing",
+            dev.transport_id()
+        );
+    }
+    true
 }
 
 fn dismiss_keyboard_if_visible(dev: Option<&Device>, runner: &StepRunner) {
