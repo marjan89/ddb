@@ -423,8 +423,12 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         return Err("no test spec files provided".to_string());
     }
 
-    // Set up port forwarding for agent (DDB_AGENT_PORT overrides local port)
-    let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| "9876".into());
+    // Set up port forwarding for agent
+    // Priority: DDB_AGENT_PORT env var > device registry agent_port > default 9876
+    let agent_port = std::env::var("DDB_AGENT_PORT").unwrap_or_else(|_| {
+        dev.as_ref().map(|d| d.agent_port().to_string()).unwrap_or_else(|| "9876".into())
+    });
+    unsafe { std::env::set_var("DDB_AGENT_PORT", &agent_port); }
     if let Some(ref d) = dev {
         let mut fwd_cmd = std::process::Command::new("adb");
         fwd_cmd.arg("-s").arg(d.transport_id()).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
@@ -703,7 +707,54 @@ fn step_target_desc(step: &Step) -> Option<String> {
 
 fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) {
     if let Ok(out) = runner.adb_shell(dev, &["dumpsys", "input_method"]) {
-        if out.contains("mServedView=null") || !out.contains("mServedView=") {
+        let served_null = out.contains("mServedView=null") || !out.contains("mServedView=");
+        let served_not_edittext = !served_null
+            && !out.contains("mServedView=android.widget.EditText")
+            && !out.contains("mServedView=androidx.appcompat.widget.AppCompatEditText");
+        let ime_hidden = out.contains("mInputShown=false");
+        // Extract mServedView value for debugging
+        if let Some(pos) = out.find("mServedView=") {
+            let val = &out[pos..std::cmp::min(pos + 80, out.len())];
+            let val_line = val.lines().next().unwrap_or("");
+            eprintln!("  ensure_input_focus: {val_line} | null={served_null} not_edit={served_not_edittext} ime_hidden={ime_hidden}");
+        }
+        if served_null || (served_not_edittext && ime_hidden) {
+            // Try UIAutomator with retry (3× with 200ms backoff)
+            let mut tapped = false;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+                if let Ok(xml) = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]) {
+                    if let Some(caps) = xml.find("EditText") {
+                        let after = &xml[caps..];
+                        if let Some(b_start) = after.find("bounds=\"[") {
+                            let bounds_str = &after[b_start + 8..];
+                            if let Some(b_end) = bounds_str.find(']') {
+                                let first = &bounds_str[1..b_end];
+                                let rest = &bounds_str[b_end + 2..];
+                                if let Some(b_end2) = rest.find(']') {
+                                    let second = &rest[..b_end2];
+                                    let c1: Vec<i32> = first.split(',').filter_map(|s| s.parse().ok()).collect();
+                                    let c2: Vec<i32> = second.split(',').filter_map(|s| s.parse().ok()).collect();
+                                    if c1.len() == 2 && c2.len() == 2 {
+                                        let cx = (c1[0] + c2[0]) / 2;
+                                        let cy = (c1[1] + c2[1]) / 2;
+                                        eprintln!("  ensure_input_focus: tapping EditText at ({cx}, {cy}) via UIAutomator (attempt {attempt})");
+                                        let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+                                        std::thread::sleep(std::time::Duration::from_millis(500));
+                                        tapped = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback to /semantic if UIAutomator didn't find anything
+            if !tapped {
             if let Ok(yaml) = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None) {
                 for chunk in yaml.split("\n- ") {
                     if chunk.contains("type: input") || chunk.contains("type: text_field") || chunk.contains("EditText") {
@@ -721,6 +772,7 @@ fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) {
                     }
                 }
             }
+            } // if !tapped
         }
     }
 }
@@ -1717,9 +1769,9 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
             let fuzzy = fuzzy_resolved.as_deref();
             let id = target.and_then(|t| t.id.as_deref());
 
-            // Idle barrier: ask agent to wait for idle, then query
+            // Assertions are snapshot queries — skip idle barrier (dialogs keep /idle busy)
             if let Some(target) = target {
-                if let Ok((_, _, desc)) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner)) {
+                if let Ok((_, _, desc)) = find_element_unified(dev, target, &[], Some(runner)) {
                     return Ok(desc);
                 }
             }
