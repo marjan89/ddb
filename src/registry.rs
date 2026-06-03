@@ -14,6 +14,7 @@ pub struct Device {
     pub sdk: u32,
     pub wifi_ip: Option<String>,
     pub adb_port: Option<u16>,
+    pub agent_port: Option<u16>,
     pub enrolled: String,
 }
 
@@ -31,6 +32,10 @@ impl Device {
             (Some(ip), Some(port)) => Some(format!("{ip}:{port}")),
             _ => None,
         }
+    }
+
+    pub fn agent_port(&self) -> u16 {
+        self.agent_port.unwrap_or(9876)
     }
 }
 
@@ -62,6 +67,20 @@ impl Registry {
         let text =
             toml::to_string_pretty(devices).map_err(|e| format!("serialize devices: {e}"))?;
         fs::write(&path, text).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    }
+
+    const AGENT_PORT_BASE: u16 = 19876;
+
+    pub fn next_agent_port(devices: &DeviceMap) -> u16 {
+        let used: std::collections::HashSet<u16> = devices
+            .values()
+            .filter_map(|d| d.agent_port)
+            .collect();
+        let mut port = Self::AGENT_PORT_BASE;
+        while used.contains(&port) {
+            port += 1;
+        }
+        port
     }
 
     /// Resolve a device by name. If name is None, auto-select if exactly one device exists.

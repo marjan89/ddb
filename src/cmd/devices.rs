@@ -94,16 +94,17 @@ fn list() -> Result<(), String> {
     }
 
     println!(
-        "{:<12} {:<35} {:<18} {}",
-        "Name", "Model", "IP", "Serial"
+        "{:<12} {:<35} {:<18} {:<7} {}",
+        "Name", "Model", "IP", "Port", "Serial"
     );
-    println!("{}", "-".repeat(85));
+    println!("{}", "-".repeat(92));
     for (name, dev) in &devices {
         let addr = match dev.wifi_addr() {
             Some(a) => a,
             None => "-".to_string(),
         };
-        println!("{name:<12} {:<35} {addr:<18} {}", dev.model, dev.serial);
+        let port = dev.agent_port().to_string();
+        println!("{name:<12} {:<35} {addr:<18} {port:<7} {}", dev.model, dev.serial);
     }
     Ok(())
 }
@@ -197,6 +198,10 @@ fn add(
         .as_ref()
         .map(|d| d.enrolled.clone())
         .unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
+    let agent_port = existing
+        .as_ref()
+        .and_then(|d| d.agent_port)
+        .unwrap_or_else(|| Registry::next_agent_port(&devices));
     let dev = Device {
         serial,
         model,
@@ -204,6 +209,7 @@ fn add(
         sdk,
         wifi_ip,
         adb_port,
+        agent_port: Some(agent_port),
         enrolled,
     };
 

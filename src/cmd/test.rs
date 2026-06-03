@@ -718,61 +718,69 @@ fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) {
             let val_line = val.lines().next().unwrap_or("");
             eprintln!("  ensure_input_focus: {val_line} | null={served_null} not_edit={served_not_edittext} ime_hidden={ime_hidden}");
         }
-        if served_null || (served_not_edittext && ime_hidden) {
-            // Try UIAutomator with retry (3× with 200ms backoff)
+        if served_null || served_not_edittext {
             let mut tapped = false;
-            for attempt in 0..3 {
+            // Primary: /semantic (faster than UIAutomator on WiFi, 5× retry with 500ms backoff)
+            for attempt in 0..5 {
                 if attempt > 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-                let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
-                if let Ok(xml) = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]) {
-                    if let Some(caps) = xml.find("EditText") {
-                        let after = &xml[caps..];
-                        if let Some(b_start) = after.find("bounds=\"[") {
-                            let bounds_str = &after[b_start + 8..];
-                            if let Some(b_end) = bounds_str.find(']') {
-                                let first = &bounds_str[1..b_end];
-                                let rest = &bounds_str[b_end + 2..];
-                                if let Some(b_end2) = rest.find(']') {
-                                    let second = &rest[..b_end2];
-                                    let c1: Vec<i32> = first.split(',').filter_map(|s| s.parse().ok()).collect();
-                                    let c2: Vec<i32> = second.split(',').filter_map(|s| s.parse().ok()).collect();
-                                    if c1.len() == 2 && c2.len() == 2 {
-                                        let cx = (c1[0] + c2[0]) / 2;
-                                        let cy = (c1[1] + c2[1]) / 2;
-                                        eprintln!("  ensure_input_focus: tapping EditText at ({cx}, {cy}) via UIAutomator (attempt {attempt})");
-                                        let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
-                                        std::thread::sleep(std::time::Duration::from_millis(500));
-                                        tapped = true;
-                                        break;
+                if let Ok(yaml) = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None) {
+                    for chunk in yaml.split("\n- ") {
+                        if chunk.contains("type: input") || chunk.contains("type: text_field") || chunk.contains("EditText") {
+                            let x = extract_yaml_int(chunk, "x: ");
+                            let y = extract_yaml_int(chunk, "y: ");
+                            let w = extract_yaml_int(chunk, "w: ");
+                            let h = extract_yaml_int(chunk, "h: ");
+                            if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
+                                let cx = x + w / 2;
+                                let cy = y + h / 2;
+                                eprintln!("  ensure_input_focus: tapping EditText at ({cx}, {cy}) via /semantic (attempt {attempt})");
+                                let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                tapped = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if tapped { break; }
+            }
+            // Fallback: UIAutomator (screen-absolute coords, 5× retry with 500ms backoff)
+            if !tapped {
+                for attempt in 0..5 {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                    let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+                    if let Ok(xml) = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]) {
+                        if let Some(caps) = xml.find("EditText") {
+                            let after = &xml[caps..];
+                            if let Some(b_start) = after.find("bounds=\"[") {
+                                let bounds_str = &after[b_start + 8..];
+                                if let Some(b_end) = bounds_str.find(']') {
+                                    let first = &bounds_str[1..b_end];
+                                    let rest = &bounds_str[b_end + 2..];
+                                    if let Some(b_end2) = rest.find(']') {
+                                        let second = &rest[..b_end2];
+                                        let c1: Vec<i32> = first.split(',').filter_map(|s| s.parse().ok()).collect();
+                                        let c2: Vec<i32> = second.split(',').filter_map(|s| s.parse().ok()).collect();
+                                        if c1.len() == 2 && c2.len() == 2 {
+                                            let cx = (c1[0] + c2[0]) / 2;
+                                            let cy = (c1[1] + c2[1]) / 2;
+                                            eprintln!("  ensure_input_focus: tapping EditText at ({cx}, {cy}) via UIAutomator (attempt {attempt})");
+                                            let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+                                            std::thread::sleep(std::time::Duration::from_millis(500));
+                                            tapped = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-            // Fallback to /semantic if UIAutomator didn't find anything
-            if !tapped {
-            if let Ok(yaml) = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None) {
-                for chunk in yaml.split("\n- ") {
-                    if chunk.contains("type: input") || chunk.contains("type: text_field") || chunk.contains("EditText") {
-                        let x = extract_yaml_int(chunk, "x: ");
-                        let y = extract_yaml_int(chunk, "y: ");
-                        let w = extract_yaml_int(chunk, "w: ");
-                        let h = extract_yaml_int(chunk, "h: ");
-                        if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                            let cx = x + w / 2;
-                            let cy = y + h / 2;
-                            let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
-                            std::thread::sleep(std::time::Duration::from_millis(300));
-                            break;
-                        }
-                    }
-                }
-            }
-            } // if !tapped
+            } // if !tapped (UIAutomator fallback)
         }
     }
 }
@@ -1052,8 +1060,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // 3. Health check — hard fail if agent not ready
+    let agent_ready_timeout_s: u64 = std::env::var("DDB_AGENT_READY_TIMEOUT")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let agent_ready_polls = (agent_ready_timeout_s * 2).max(1);
     let mut agent_ready = false;
-    for _ in 0..10 {
+    for _ in 0..agent_ready_polls {
         if setup_runner.expired() { break; }
         if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
             if body.contains("semantic-agent") {
@@ -1069,7 +1080,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             status: "FAIL".to_string(), steps_run: 0, steps_total: spec.steps.len(),
             failure: Some(FailureDetail {
                 step: 0,
-                description: "agent not ready after 5s".into(),
+                description: format!("agent not ready after {}s", agent_ready_timeout_s),
                 screenshot: None,
             }),
             log: logger.entries(),
