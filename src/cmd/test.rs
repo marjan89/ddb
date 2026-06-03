@@ -1063,7 +1063,10 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
         "-c", "android.intent.category.LAUNCHER",
         "-n", &main_activity,
     ]);
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Settle wait — cold launches after pm clear are slow (dex/oat
+    // optimization on first invocation). Warm launches go fast.
+    let settle_s = if clean_state { 5 } else { 2 };
+    std::thread::sleep(std::time::Duration::from_secs(settle_s));
 
     // 3. Health check — hard fail if agent not ready.
     //
@@ -1076,8 +1079,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     // for native Android). Phase 2 polls /semantic and waits for any
     // element to appear (`- id:` line — every record emits it). Shares
     // the same DDB_AGENT_READY_TIMEOUT budget.
+    // Default timeout — 120s on cold (#40, Flutter cold launches post
+    // pm clear hit dex/oat opt + first-frame jank), 5s on warm. Either
+    // can be overridden explicitly via DDB_AGENT_READY_TIMEOUT.
+    let agent_ready_timeout_default: u64 = if clean_state { 120 } else { 5 };
     let agent_ready_timeout_s: u64 = std::env::var("DDB_AGENT_READY_TIMEOUT")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(agent_ready_timeout_default);
     let semantic_gate = std::env::var("DDB_SEMANTIC_GATE")
         .ok().map(|v| v == "true").unwrap_or(false);
     let deadline = std::time::Instant::now()
