@@ -1036,29 +1036,51 @@ fn dismiss_permission_dialog(dev: Option<&Device>, runner: &StepRunner) {
     }
 }
 
+/// TD-24 — Thread-local flag signalling that wait_idle observed a
+/// zombie adb mid-TC. Read+cleared when constructing the next step
+/// FailureDetail so the failure description gets an ADB_ZOMBIE_DETECTED
+/// prefix, distinguishing infra wedge from real product flake in
+/// post-run triage. Per-thread so concurrent test runs don't bleed.
+thread_local! {
+    static ADB_ZOMBIE_FLAG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn set_adb_zombie_flag() {
+    ADB_ZOMBIE_FLAG.with(|f| f.set(true));
+}
+
+fn take_adb_zombie_flag() -> bool {
+    ADB_ZOMBIE_FLAG.with(|f| { let v = f.get(); f.set(false); v })
+}
+
+/// TD-24 — Detect-only probe of host-side adb (no recovery). Bounded
+/// 3s. Returns the adb get-state string ("device" on healthy) or None
+/// when the transport is wedged / errored / empty. Shared between
+/// recover_adb_if_zombie (per-TC sweep, then recovers) and wait_idle
+/// (mid-TC detect, then signals + lets the next step fail cleanly via
+/// TD-25 caps — no mid-step recovery, doctrine: TC state consistency).
+fn probe_adb_state(dev: &Device) -> Option<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let runner = StepRunner::new(deadline, PhaseBudgets { pre_idle_s: 3, execute_s: 3, post_idle_s: 3 });
+    let mut cmd = std::process::Command::new("adb");
+    cmd.arg("-s").arg(dev.transport_id()).arg("get-state");
+    let out = runner.run_with_deadline(&mut cmd).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
 /// #44 — Detect a wedged host-side adb server and restart it.
 ///
-/// Probes `adb -s <transport> get-state` with a 3s deadline. A healthy
-/// adb returns either `device` (ok) or a clear failure within
-/// milliseconds; a zombie server hangs or returns unknown. On hang /
-/// non-ok we run `adb kill-server` + `adb start-server` and probe
-/// once more to confirm recovery.
+/// Probes via probe_adb_state (3s). On hang / non-ok we run
+/// `adb kill-server` + `adb start-server` and probe once more to
+/// confirm recovery.
 ///
 /// Returns true when a restart actually happened.
-fn recover_adb_if_zombie(dev: &Device, runner: &StepRunner) -> bool {
-    fn probe(dev: &Device, runner: &StepRunner) -> Option<String> {
-        let probe_runner = runner.derived_with_deadline(3);
-        let mut cmd = std::process::Command::new("adb");
-        cmd.arg("-s").arg(dev.transport_id()).arg("get-state");
-        let out = probe_runner.run_with_deadline(&mut cmd).ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if s.is_empty() { None } else { Some(s) }
-    }
-
-    let healthy = matches!(probe(dev, runner).as_deref(), Some("device"));
+fn recover_adb_if_zombie(dev: &Device, _runner: &StepRunner) -> bool {
+    let healthy = matches!(probe_adb_state(dev).as_deref(), Some("device"));
     if healthy {
         return false;
     }
@@ -1069,7 +1091,7 @@ fn recover_adb_if_zombie(dev: &Device, runner: &StepRunner) -> bool {
     let _ = std::process::Command::new("adb").arg("start-server").output();
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    if matches!(probe(dev, runner).as_deref(), Some("device")) {
+    if matches!(probe_adb_state(dev).as_deref(), Some("device")) {
         eprintln!("  [#44] adb server recovered");
     } else {
         eprintln!(
@@ -1516,6 +1538,12 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 };
 
                 hb_running.store(false, std::sync::atomic::Ordering::Relaxed);
+                // TD-24: classify infra zombie distinct from product flake.
+                let description = if take_adb_zombie_flag() {
+                    format!("[ADB_ZOMBIE_DETECTED] {}", err)
+                } else {
+                    err.clone()
+                };
                 return (TestResult {
                     id: spec.id.clone(),
                     name: spec.name.clone(),
@@ -1524,7 +1552,7 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                     steps_total: spec.steps.len(),
                     failure: Some(FailureDetail {
                         step: i + 1,
-                        description: err.clone(),
+                        description,
                         screenshot,
                     }),
                     log: logger.entries(),
@@ -2069,12 +2097,32 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
-pub fn wait_idle(_dev: Option<&Device>, timeout: u64) {
+pub fn wait_idle(dev: Option<&Device>, timeout: u64) {
     let base = agent_base_url();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     eprintln!("    wait_idle: polling {base}/idle for {timeout}s");
+    let mut iter: u32 = 0;
     loop {
         if std::time::Instant::now() > deadline { eprintln!("    wait_idle: deadline"); break; }
+
+        // TD-24: every 5th iteration (~1.5s of polling) probe adb
+        // transport health. If the host-side adb server has wedged
+        // mid-TC, short-circuit the wait so the next step fails fast at
+        // the TD-25 caps rather than blocking on adb for the rest of
+        // the timeout. Recovery is deferred to the per-5-TC sweep in
+        // the outer test loop — mid-step recovery would risk TC state
+        // inconsistency.
+        if iter > 0 && iter % 5 == 0 {
+            if let Some(d) = dev {
+                if !matches!(probe_adb_state(d).as_deref(), Some("device")) {
+                    eprintln!("    wait_idle: adb zombie detected — short-circuiting");
+                    set_adb_zombie_flag();
+                    break;
+                }
+            }
+        }
+        iter += 1;
+
         if let Ok(out) = std::process::Command::new("curl")
             .args(["-s", "--connect-timeout", "1", "--max-time", "2", &format!("{base}/idle")])
             .stdout(std::process::Stdio::piped())
@@ -2094,6 +2142,44 @@ pub fn wait_idle(_dev: Option<&Device>, timeout: u64) {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+
+    #[test]
+    fn test_td24_zombie_flag_take_clears() {
+        // Pre-condition: flag is per-thread; ensure clean slate.
+        let _ = take_adb_zombie_flag();
+        assert!(!take_adb_zombie_flag(), "fresh flag should be false");
+
+        set_adb_zombie_flag();
+        assert!(take_adb_zombie_flag(), "after set, take should observe true");
+        assert!(!take_adb_zombie_flag(), "take clears — second take returns false");
+    }
+
+    #[test]
+    fn test_td24_probe_adb_state_bounded_on_bogus_device() {
+        // adb get-state against a non-existent transport returns failure
+        // fast — proves the probe doesn't hang on an unhealthy device.
+        // Wall <3s (the runner deadline).
+        let bogus = crate::registry::Device {
+            serial: "bogus-td24-zombie-9999999999".to_string(),
+            model: "bogus".to_string(),
+            android: "0".to_string(),
+            sdk: 0,
+            wifi_ip: None,
+            adb_port: None,
+            agent_port: None,
+            enrolled: "test".to_string(),
+        };
+        let start = std::time::Instant::now();
+        let result = probe_adb_state(&bogus);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(4),
+            "probe must be bounded by 3s deadline; took {:?}",
+            elapsed
+        );
+        // Non-existent device → adb errors → None.
+        assert!(result.is_none(), "bogus device should return None, got {:?}", result);
+    }
 
     #[test]
     fn test_platform_fork_parsing() {
