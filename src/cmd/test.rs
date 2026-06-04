@@ -2042,15 +2042,32 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
             }
         }
         "element_state" => {
+            // TD-29: cross-platform parity with iOS idb (SHA 2e3bf05).
+            // Accept content_fuzzy as a fallback when target.id is
+            // absent or empty so cross-platform TCs that key off the
+            // visible label (production NK Android catalogue convention)
+            // can assert state without needing a platform_id.
             let target = assert.target.as_ref().ok_or("assert element_state: no target")?;
             let elements = get_semantic_elements(dev)?;
-            let id = target.id.as_deref().unwrap_or("");
+            let id = target.id.as_deref().filter(|s| !s.is_empty());
+            let fuzzy_raw = target.content_fuzzy.as_deref();
+            let fuzzy_resolved = fuzzy_raw.map(|f| ctx.interpolate(f));
+            let fuzzy = fuzzy_resolved.as_deref();
 
-            let elem = elements.iter().find(|e| {
-                e.contains(&format!("platform_id: \"{}\"", id)) || e.contains(&format!("id: \"{}\"", id))
-            });
+            let elem = if let Some(id) = id {
+                elements.iter().find(|e| {
+                    e.contains(&format!("platform_id: \"{}\"", id))
+                        || e.contains(&format!("id: \"{}\"", id))
+                })
+            } else if let Some(f) = fuzzy {
+                let lo = f.to_lowercase();
+                elements.iter().find(|e| e.to_lowercase().contains(&lo))
+            } else {
+                return Err("assert element_state: needs id or content_fuzzy".to_string());
+            };
 
-            let elem = elem.ok_or_else(|| format!("element not found: {id}"))?;
+            let descriptor = id.or(fuzzy).unwrap_or("");
+            let elem = elem.ok_or_else(|| format!("element not found: {descriptor}"))?;
 
             if let Some(expected_enabled) = assert.enabled {
                 let is_clickable = elem.contains("clickable: true");
@@ -2059,7 +2076,7 @@ fn execute_assert(dev: Option<&Device>, assert: &AssertStep, timeout: u64, ctx: 
                 }
             }
 
-            Ok(format!("element state OK: {id}"))
+            Ok(format!("element state OK: {descriptor}"))
         }
         other => Err(format!("unknown assert: {other}")),
     }
