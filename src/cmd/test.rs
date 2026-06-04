@@ -2329,7 +2329,7 @@ oscar:
     fn test_fixture_precedence_api_over_file() {
         let mut file_fixtures = std::collections::HashMap::new();
         file_fixtures.insert("{{fixtures.key}}".to_string(), "file_value".to_string());
-        let mut ctx = RunContext::new(file_fixtures);
+        let mut ctx = RunContext::new(file_fixtures, std::path::PathBuf::from("."));
         ctx.add_api_response("api_result", serde_json::json!({"key": "api_value"}));
 
         let file_result = ctx.interpolate("{{fixtures.key}}");
