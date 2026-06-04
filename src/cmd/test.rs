@@ -309,9 +309,16 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         Some(d)
     };
 
-    // Utility runner for pre-TC operations (build, install, version check, port forward)
-    let util_deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-    let util_runner = StepRunner::new(util_deadline, PhaseBudgets { pre_idle_s: 300, execute_s: 300, post_idle_s: 3 });
+    // TD-25: util_runner for short pre-TC operations (version check, port
+    // forward, animations toggle, recover_adb_if_zombie probe). Default
+    // 30s deadline matches industry adb-call caps (Appium adbExecTimeout
+    // 20s, uiautomator2 60s); the prior 300s outer deadline let any
+    // single derived call inherit 5 minutes, which masked the /version
+    // hang fixed in #43 and surfaces no usable signal otherwise. Build
+    // and install are long ops; they wrap themselves in fresh longer-
+    // deadline runners below rather than inheriting from util_runner.
+    let util_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let util_runner = StepRunner::new(util_deadline, PhaseBudgets { pre_idle_s: 30, execute_s: 30, post_idle_s: 3 });
 
     // Build + install if --build flag
     if args.build {
@@ -325,7 +332,11 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 "--no-daemon",
             ])
             .current_dir(project_dir);
-        let build_output = util_runner.run_with_deadline(&mut build_cmd)
+        // TD-25: build wraps in its own 600s runner — gradle cold builds
+        // routinely exceed 5 min on a non-warm daemon.
+        let build_deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+        let build_runner = StepRunner::new(build_deadline, PhaseBudgets { pre_idle_s: 600, execute_s: 600, post_idle_s: 3 });
+        let build_output = build_runner.run_with_deadline(&mut build_cmd)
             .map_err(|e| format!("build failed: {e}"))?;
         if !build_output.status.success() {
             return Err("APK build failed".into());
@@ -339,7 +350,12 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let mut install_cmd = std::process::Command::new("adb");
         if let Some(ref d) = dev { install_cmd.arg("-s").arg(d.transport_id()); }
         install_cmd.args(["install", "-r", &apk_dst]);
-        let install_result = util_runner.run_with_deadline(&mut install_cmd).map(|_| String::new());
+        // TD-25: install wraps in its own 120s runner (Appium
+        // installApkTimeout default is 90s; 120s matches our prior
+        // behavior on large APKs).
+        let install_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let install_runner = StepRunner::new(install_deadline, PhaseBudgets { pre_idle_s: 120, execute_s: 120, post_idle_s: 3 });
+        let install_result = install_runner.run_with_deadline(&mut install_cmd).map(|_| String::new());
         if install_result.is_err() {
             return Err("APK install failed".into());
         }
@@ -454,7 +470,10 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         }
         let mut fwd_cmd = std::process::Command::new("adb");
         fwd_cmd.arg("-s").arg(d.transport_id()).args(["forward", &format!("tcp:{agent_port}"), "tcp:9876"]);
-        let _ = util_runner.run_with_deadline(&mut fwd_cmd);
+        // TD-25: forward is a one-shot adb call; cap tightly so it
+        // surfaces as a hard error rather than absorbing 30s.
+        let fwd_probe = util_runner.derived_with_deadline(5);
+        let _ = fwd_probe.run_with_deadline(&mut fwd_cmd);
     }
     if agent_port != "9876" {
         eprintln!("  agent port: {agent_port} (forwarded to device 9876)");
@@ -1164,7 +1183,11 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
 
     let mut health_ok = false;
     while std::time::Instant::now() < deadline && !setup_runner.expired() {
-        if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/health"), "GET", None) {
+        // TD-25: per-probe 5s cap so a single hung curl (port forward
+        // accepted but agent unresponsive) cannot burn the full
+        // setup_runner budget.
+        let probe = setup_runner.derived_with_deadline(5);
+        if let Ok(body) = probe.curl_with_deadline(&format!("{base}/health"), "GET", None) {
             if body.contains("semantic-agent") {
                 health_ok = true;
                 break;
@@ -1189,7 +1212,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     if semantic_gate {
         agent_ready = false;
         while std::time::Instant::now() < deadline && !setup_runner.expired() {
-            if let Ok(body) = setup_runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
+            // TD-25: per-probe 5s cap.
+            let probe = setup_runner.derived_with_deadline(5);
+            if let Ok(body) = probe.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
                 if body.contains("- id:") {
                     agent_ready = true;
                     break;
@@ -1238,7 +1263,9 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     // 5. Register mocks — fail TC if error
     if let Some(body) = mock_body {
         let mock_url = format!("{base}/mock");
-        match setup_runner.curl_with_deadline(&mock_url, "POST", Some(body)) {
+        // TD-25: mock registration is a single POST; 10s cap.
+        let mock_probe = setup_runner.derived_with_deadline(10);
+        match mock_probe.curl_with_deadline(&mock_url, "POST", Some(body)) {
             Ok(_) => {},
             Err(e) => {
                 return (TestResult {
