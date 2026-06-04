@@ -44,7 +44,20 @@ pub fn run(dev_name: Option<&str>, args: UiArgs) -> Result<(), String> {
         Some(d)
     };
 
-    // Dump UI hierarchy
+    // TD-33: --semantic short-circuits the uiautomator dump when the
+    // in-process agent is available. The dump is ~2s on a non-trivial
+    // tree and is unused on the agent-success path; only the fallback
+    // (uiautomator+resource resolution) consumes the xml.
+    if args.semantic && !args.no_agent {
+        if let Some(agent_yaml) = try_agent(dev.as_ref()) {
+            let yaml = apply_source_resolution(&agent_yaml, &args)?;
+            return write_or_print_semantic(&yaml, &args);
+        }
+        // Agent unavailable — fall through to dump + fallback path.
+    }
+
+    // Dump UI hierarchy (needed for --raw, --json, default compact view,
+    // and the --semantic fallback when agent is unavailable / --no-agent).
     adb::shell(dev.as_ref(), &["uiautomator", "dump", "/sdcard/ui.xml"])?;
     let xml = adb::shell(dev.as_ref(), &["cat", "/sdcard/ui.xml"])?;
 
@@ -58,55 +71,11 @@ pub fn run(dev_name: Option<&str>, args: UiArgs) -> Result<(), String> {
     }
 
     if args.semantic {
-        let yaml = run_semantic(dev.as_ref(), &xml, &args)?;
-        if let Some(ref path) = args.output {
-            let output_path = std::path::Path::new(path);
-
-            // Detect catalogue path from output or explicit flag
-            let cat_info = args
-                .catalogue
-                .as_deref()
-                .map(|c| {
-                    let key = crate::catalogue::detect_catalogue_path(path)
-                        .map(|(_, k)| k);
-                    (std::path::PathBuf::from(c), key)
-                })
-                .or_else(|| {
-                    crate::catalogue::detect_catalogue_path(path)
-                        .map(|(root, key)| (root, Some(key)))
-                });
-
-            // Archive existing artifact before overwriting
-            let history_count = if output_path.exists() {
-                crate::catalogue::archive_existing(output_path)?
-            } else {
-                if let Some(parent) = output_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("create dirs: {e}"))?;
-                }
-                0
-            };
-
-            std::fs::write(path, &yaml).map_err(|e| format!("write error: {e}"))?;
-            eprintln!("wrote {}", path);
-
-            // Update manifest if catalogue path detected
-            if let Some((cat_root, Some(entry_key))) = cat_info {
-                let schema: crate::semantic::SemanticSchema =
-                    serde_yaml::from_str(&yaml)
-                        .map_err(|e| format!("count elements: {e}"))?;
-                let count = schema.elements.len() as u64;
-                crate::catalogue::update_manifest_semantic(
-                    &cat_root,
-                    &entry_key,
-                    count,
-                    history_count,
-                )?;
-            }
-        } else {
-            print!("{yaml}");
-        }
-        return Ok(());
+        // Agent-unavailable fallback: uiautomator + resource resolution.
+        eprintln!("source: uiautomator + resource resolution");
+        let schema = crate::semantic::extract(dev.as_ref(), &xml, args.source_root.as_deref())?;
+        let yaml = serde_yaml::to_string(&schema).map_err(|e| format!("yaml error: {e}"))?;
+        return write_or_print_semantic(&yaml, &args);
     }
 
     let elements = ui_parser::parse(&xml);
@@ -130,70 +99,103 @@ pub fn run(dev_name: Option<&str>, args: UiArgs) -> Result<(), String> {
     Ok(())
 }
 
-fn run_semantic(dev: Option<&Device>, xml: &str, args: &UiArgs) -> Result<String, String> {
-    let agent_yaml = if args.no_agent {
-        None
-    } else {
-        try_agent(dev)
-    };
+/// Apply source-tree resource resolution on top of the agent yaml when
+/// --source-root is set; otherwise return the agent yaml unchanged.
+fn apply_source_resolution(agent_yaml: &str, args: &UiArgs) -> Result<String, String> {
+    if args.source_root.is_none() {
+        eprintln!("source: semantic-agent");
+        return Ok(agent_yaml.to_string());
+    }
 
-    if let Some(ref agent_yaml) = agent_yaml {
-        if args.source_root.is_some() {
-            // Hybrid: agent data + source resolution for font family and icons
-            eprintln!("source: hybrid (agent + source resolution)");
-            let mut agent_schema: crate::semantic::SemanticSchema =
-                serde_yaml::from_str(agent_yaml)
-                    .map_err(|e| format!("parse agent yaml: {e}"))?;
+    eprintln!("source: hybrid (agent + source resolution)");
+    let mut agent_schema: crate::semantic::SemanticSchema =
+        serde_yaml::from_str(agent_yaml)
+            .map_err(|e| format!("parse agent yaml: {e}"))?;
 
-            let res_ctx = args
-                .source_root
-                .as_deref()
-                .map(crate::semantic::resource::ResourceContext::load);
+    let res_ctx = args
+        .source_root
+        .as_deref()
+        .map(crate::semantic::resource::ResourceContext::load);
 
-            if let Some(ref ctx) = res_ctx {
-                for elem in &mut agent_schema.elements {
-                    if let Some(ref pid) = elem.platform_id {
-                        if let Some(attrs) = ctx.resolve_view(pid) {
-                            // Font family from source (agent returns "sans-serif")
-                            if let Some(ref src_font) = attrs.font {
-                                if let Some(ref mut ef) = elem.font {
-                                    if ef.family == "sans-serif" || ef.family.is_empty() {
-                                        ef.family = src_font.family.clone();
-                                    }
-                                } else {
-                                    elem.font = Some(src_font.clone());
-                                }
+    if let Some(ref ctx) = res_ctx {
+        for elem in &mut agent_schema.elements {
+            if let Some(ref pid) = elem.platform_id {
+                if let Some(attrs) = ctx.resolve_view(pid) {
+                    if let Some(ref src_font) = attrs.font {
+                        if let Some(ref mut ef) = elem.font {
+                            if ef.family == "sans-serif" || ef.family.is_empty() {
+                                ef.family = src_font.family.clone();
                             }
-                            // Icons from source (agent has none)
-                            if elem.icon.is_none() {
-                                elem.icon = attrs.icon;
-                            }
-                            // Background from source if agent doesn't have it
-                            if elem.background.is_none() {
-                                elem.background = attrs.background_color;
-                            }
-                            // Corner radius from source if agent doesn't have it
-                            if elem.corner_radius.is_none() {
-                                elem.corner_radius = attrs.corner_radius;
-                            }
+                        } else {
+                            elem.font = Some(src_font.clone());
                         }
+                    }
+                    if elem.icon.is_none() {
+                        elem.icon = attrs.icon;
+                    }
+                    if elem.background.is_none() {
+                        elem.background = attrs.background_color;
+                    }
+                    if elem.corner_radius.is_none() {
+                        elem.corner_radius = attrs.corner_radius;
                     }
                 }
             }
-
-            return serde_yaml::to_string(&agent_schema)
-                .map_err(|e| format!("yaml error: {e}"));
         }
-
-        // Agent only, no source resolution
-        eprintln!("source: semantic-agent");
-        return Ok(agent_yaml.clone());
     }
 
-    // Fallback: uiautomator + source resolution
-    eprintln!("source: uiautomator + resource resolution");
-    let schema = crate::semantic::extract(dev, xml, args.source_root.as_deref())?;
-    serde_yaml::to_string(&schema).map_err(|e| format!("yaml error: {e}"))
+    serde_yaml::to_string(&agent_schema).map_err(|e| format!("yaml error: {e}"))
+}
+
+/// Write the semantic yaml to --output (with catalogue manifest update
+/// when applicable) or print to stdout.
+fn write_or_print_semantic(yaml: &str, args: &UiArgs) -> Result<(), String> {
+    let Some(ref path) = args.output else {
+        print!("{yaml}");
+        return Ok(());
+    };
+
+    let output_path = std::path::Path::new(path);
+
+    let cat_info = args
+        .catalogue
+        .as_deref()
+        .map(|c| {
+            let key = crate::catalogue::detect_catalogue_path(path)
+                .map(|(_, k)| k);
+            (std::path::PathBuf::from(c), key)
+        })
+        .or_else(|| {
+            crate::catalogue::detect_catalogue_path(path)
+                .map(|(root, key)| (root, Some(key)))
+        });
+
+    let history_count = if output_path.exists() {
+        crate::catalogue::archive_existing(output_path)?
+    } else {
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create dirs: {e}"))?;
+        }
+        0
+    };
+
+    std::fs::write(path, yaml).map_err(|e| format!("write error: {e}"))?;
+    eprintln!("wrote {}", path);
+
+    if let Some((cat_root, Some(entry_key))) = cat_info {
+        let schema: crate::semantic::SemanticSchema =
+            serde_yaml::from_str(yaml)
+                .map_err(|e| format!("count elements: {e}"))?;
+        let count = schema.elements.len() as u64;
+        crate::catalogue::update_manifest_semantic(
+            &cat_root,
+            &entry_key,
+            count,
+            history_count,
+        )?;
+    }
+    Ok(())
 }
 
 fn try_agent(dev: Option<&Device>) -> Option<String> {
