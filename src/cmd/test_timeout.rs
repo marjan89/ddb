@@ -67,39 +67,15 @@ impl TimeoutManager {
     }
 }
 
-pub struct SubprocessGuard {
-    pid: u32,
-    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl SubprocessGuard {
-    pub fn arm(pid: u32, timeout: Duration) -> Self {
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let done2 = done.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(timeout);
-            if !done2.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = std::process::Command::new("kill")
-                    .arg("-9")
-                    .arg(pid.to_string())
-                    .output();
-            }
-        });
-        Self { pid, done }
-    }
-
-    pub fn disarm(&self) {
-        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl Drop for SubprocessGuard {
-    fn drop(&mut self) {
-        self.disarm();
-    }
-}
+// SubprocessGuard removed — consolidated into crate::subprocess::Watchdog
+// (reintegration of TD-32 watchdog primitive across adb.rs +
+// test_timeout.rs). The Condvar-based Watchdog notifies on disarm so
+// the timer thread exits immediately rather than sleeping the full
+// timeout in the background, eliminating thread-pool pressure under
+// high adb-call volume.
 
 use crate::adb;
+use crate::subprocess::Watchdog;
 use crate::registry::Device;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,6 +114,18 @@ impl StepRunner {
             budgets,
             phase_deadline: phase_end.min(step_deadline),
         }
+    }
+
+    /// Construct a fresh StepRunner that ignores any outer budget — used
+    /// for long-running standalone operations (gradle build, apk install,
+    /// set_animations) where derived_with_deadline would clamp to the
+    /// caller's smaller cap. PhaseBudgets are set uniformly to `secs`
+    /// across pre_idle/execute, with a 3s post_idle settle. Consolidates
+    /// the 3 inline `let d = now + ...; let r = StepRunner::new(d, ...);`
+    /// sites introduced in TD-25.
+    pub fn fresh_with_budget(secs: u64) -> Self {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        Self::new(deadline, PhaseBudgets { pre_idle_s: secs, execute_s: secs, post_idle_s: 3 })
     }
 
     pub fn advance(&mut self, phase: StepPhase) {
@@ -196,8 +184,8 @@ impl StepRunner {
             return Err("step deadline exceeded before subprocess".into());
         }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
-        let _guard = SubprocessGuard::arm(child.id(), timeout);
+        let child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let _wd = Watchdog::arm(child.id(), timeout);
         let output = child.wait_with_output().map_err(|e| format!("wait failed: {e}"))?;
         #[cfg(unix)]
         {
@@ -319,11 +307,8 @@ mod tests {
         assert!(result.unwrap_err().contains("killed"));
     }
 
-    #[test]
-    fn test_subprocess_guard_disarms() {
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let guard = SubprocessGuard { pid: 999999, done: done.clone() };
-        guard.disarm();
-        assert!(done.load(std::sync::atomic::Ordering::Relaxed));
-    }
+    // SubprocessGuard test removed — Watchdog is exercised by
+    // subprocess::tests (watchdog_disarm_completes_fast_after_drop +
+    // watchdog_kills_hung_subprocess). Equivalent coverage at the
+    // consolidated layer.
 }

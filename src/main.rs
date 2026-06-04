@@ -3,9 +3,11 @@ mod agent_yaml;
 mod catalogue;
 mod cmd;
 mod config;
+mod debug;
 mod install_check;
 mod registry;
 mod semantic;
+mod subprocess;
 mod ui_parser;
 
 use clap::Parser;

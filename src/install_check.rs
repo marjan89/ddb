@@ -11,11 +11,19 @@
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::ddb_debug;
+
+/// Location of the per-user mtime sentinel. Co-located with ddb config
+/// (~/.config/ddb/) — no new dir creation since `ddb doctor` already
+/// expects this layout.
 fn sentinel_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(".config/ddb/last-installed-mtime"))
 }
 
+/// Unix-seconds mtime of `p`, or None if the file is missing / stat
+/// fails. Used to compare the current binary's mtime against the
+/// stored sentinel.
 fn mtime_secs(p: &Path) -> Option<i64> {
     let meta = std::fs::metadata(p).ok()?;
     let mt = meta.modified().ok()?;
@@ -30,6 +38,9 @@ enum CheckOutcome {
     Skipped,
 }
 
+/// Compare binary mtime against sentinel; write new sentinel either
+/// way; return the outcome. Pure file-IO, deterministic — testable
+/// without needing a real binary or HOME dir.
 fn check_against(binary: &Path, sentinel: &Path) -> CheckOutcome {
     let Some(current) = mtime_secs(binary) else {
         return CheckOutcome::Skipped;
@@ -48,18 +59,35 @@ fn check_against(binary: &Path, sentinel: &Path) -> CheckOutcome {
     }
 }
 
+/// Entry point called from main() before Cli::parse(). Best-effort —
+/// silently no-ops if current_exe() / HOME / FS operations fail.
 pub fn check_binary_mtime() {
     let Ok(binary) = std::env::current_exe() else {
+        ddb_debug!("[TD-26][install] skipped reason=no-current-exe");
         return;
     };
     let Some(sentinel) = sentinel_path() else {
+        ddb_debug!("[TD-26][install] skipped reason=no-home-dir");
         return;
     };
 
-    if let CheckOutcome::Changed { prev, current } = check_against(&binary, &sentinel) {
-        eprintln!(
-            "note: ddb binary updated since last invocation (mtime {prev} -> {current}). If your shell hangs on subsequent invocations, run: hash -r"
-        );
+    ddb_debug!("[TD-26][install] binary={} sentinel={}", binary.display(), sentinel.display());
+
+    match check_against(&binary, &sentinel) {
+        CheckOutcome::FirstRun => {
+            ddb_debug!("[TD-26][install] first-run — sentinel created");
+        }
+        CheckOutcome::Unchanged => {
+            ddb_debug!("[TD-26][install] unchanged");
+        }
+        CheckOutcome::Changed { prev, current } => {
+            eprintln!(
+                "note: ddb binary updated since last invocation (mtime {prev} -> {current}). If your shell hangs on subsequent invocations, run: hash -r"
+            );
+        }
+        CheckOutcome::Skipped => {
+            ddb_debug!("[TD-26][install] skipped reason=stat-failed");
+        }
     }
 }
 
@@ -81,23 +109,11 @@ mod tests {
         f.write_all(b"x").unwrap();
     }
 
-    fn set_mtime(p: &Path, secs: i64) {
-        // touch -t style via filetime crate? Avoid extra dep: re-create
-        // the file then nudge by sleeping. For deterministic mtimes we
-        // use the `touch` shell command (POSIX guaranteed on darwin).
-        let _ = std::process::Command::new("touch")
-            .arg("-t")
-            .arg(format!("197001{:02}{:02}{:02}.{:02}", 1, ((secs / 60) % 24).abs(), (secs % 60).abs(), 0))
-            .arg(p)
-            .output();
-    }
-
     #[test]
-    fn td26_first_run_writes_sentinel_no_change_signal() {
+    fn first_run_writes_sentinel_no_change_signal() {
         let bin = tmp_file("first-run-bin");
         let sentinel = tmp_file("first-run-sentinel");
         touch(&bin);
-        // sentinel intentionally absent
         let _ = std::fs::remove_file(&sentinel);
 
         let outcome = check_against(&bin, &sentinel);
@@ -106,27 +122,23 @@ mod tests {
     }
 
     #[test]
-    fn td26_unchanged_when_binary_mtime_matches() {
+    fn unchanged_when_binary_mtime_matches() {
         let bin = tmp_file("unchanged-bin");
         let sentinel = tmp_file("unchanged-sentinel");
         touch(&bin);
-
-        // First call seeds sentinel.
         let _ = check_against(&bin, &sentinel);
-        // Second call without modifying binary: unchanged.
         let outcome = check_against(&bin, &sentinel);
         assert_eq!(outcome, CheckOutcome::Unchanged);
     }
 
     #[test]
-    fn td26_changed_when_binary_mtime_advances() {
+    fn changed_when_binary_mtime_advances() {
         let bin = tmp_file("changed-bin");
         let sentinel = tmp_file("changed-sentinel");
         touch(&bin);
-
         let _ = check_against(&bin, &sentinel);
 
-        // Re-touch the binary to advance mtime past the 1s FS resolution.
+        // Advance past the 1s FS mtime resolution.
         std::thread::sleep(Duration::from_secs(2));
         touch(&bin);
 
@@ -137,14 +149,5 @@ mod tests {
             }
             other => panic!("expected Changed, got {:?}", other),
         }
-    }
-
-    #[test]
-    fn td26_unused_set_mtime_helper_compiles() {
-        // The helper is only used by debug exploration; reference it so
-        // dead-code analysis doesn't flag it during full builds.
-        let p = tmp_file("set-mtime-noop");
-        touch(&p);
-        set_mtime(&p, 0);
     }
 }
