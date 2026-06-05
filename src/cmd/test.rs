@@ -752,84 +752,113 @@ fn step_target_desc(step: &Step) -> Option<String> {
     }
 }
 
-fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) {
-    if let Ok(out) = runner.adb_shell(dev, &["dumpsys", "input_method"]) {
-        let served_null = out.contains("mServedView=null") || !out.contains("mServedView=");
-        let served_not_edittext = !served_null
-            && !out.contains("mServedView=android.widget.EditText")
-            && !out.contains("mServedView=androidx.appcompat.widget.AppCompatEditText");
-        let ime_hidden = out.contains("mInputShown=false");
-        // Extract mServedView value for debugging
-        if let Some(pos) = out.find("mServedView=") {
-            let val = &out[pos..std::cmp::min(pos + 80, out.len())];
-            let val_line = val.lines().next().unwrap_or("");
-            eprintln!("  ensure_input_focus: {val_line} | null={served_null} not_edit={served_not_edittext} ime_hidden={ime_hidden}");
+fn ensure_input_focus(dev: Option<&Device>, runner: &StepRunner) -> Result<(), String> {
+    let out = runner.adb_shell(dev, &["dumpsys", "input_method"])
+        .map_err(|e| format!("ensure_input_focus: dumpsys input_method failed: {e}"))?;
+
+    // TD-C: dumpsys always emits mServedView=<value> (value is 'null' or
+    // a class name). The prior !contains("mServedView=") OR clause was
+    // a dead-code defensive fallback for malformed dumps — drop it for
+    // cleaner reasoning.
+    let served_null = out.contains("mServedView=null");
+    let served_not_edittext = !served_null
+        && !out.contains("mServedView=android.widget.EditText")
+        && !out.contains("mServedView=androidx.appcompat.widget.AppCompatEditText");
+    let ime_hidden = out.contains("mInputShown=false");
+
+    let val_line = if let Some(pos) = out.find("mServedView=") {
+        let val = &out[pos..std::cmp::min(pos + 80, out.len())];
+        val.lines().next().unwrap_or("").to_string()
+    } else {
+        String::new()
+    };
+    crate::ddb_debug!("[TD-C][focus] {} null={} not_edit={} ime_hidden={}",
+        val_line, served_null, served_not_edittext, ime_hidden);
+
+    if !(served_null || served_not_edittext) {
+        return Ok(());
+    }
+
+    let mut tapped = false;
+    // Primary: /semantic (faster than UIAutomator on WiFi, 5× retry with
+    // 500ms backoff). TD-C: extended type matcher to cover Compose
+    // TextField alongside UIKit-era 'input' / 'text_field' / EditText.
+    for attempt in 0..5 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        if served_null || served_not_edittext {
-            let mut tapped = false;
-            // Primary: /semantic (faster than UIAutomator on WiFi, 5× retry with 500ms backoff)
-            for attempt in 0..5 {
-                if attempt > 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                }
-                if let Ok(yaml) = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None) {
-                    for chunk in yaml.split("\n- ") {
-                        if chunk.contains("type: input") || chunk.contains("type: text_field") || chunk.contains("EditText") {
-                            let x = extract_yaml_int(chunk, "x: ");
-                            let y = extract_yaml_int(chunk, "y: ");
-                            let w = extract_yaml_int(chunk, "w: ");
-                            let h = extract_yaml_int(chunk, "h: ");
-                            if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
-                                let cx = x + w / 2;
-                                let cy = y + h / 2;
-                                eprintln!("  ensure_input_focus: tapping EditText at ({cx}, {cy}) via /semantic (attempt {attempt})");
-                                let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
-                                std::thread::sleep(std::time::Duration::from_millis(500));
-                                tapped = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if tapped { break; }
-            }
-            // Fallback: UIAutomator (screen-absolute coords, 5× retry with 500ms backoff)
-            if !tapped {
-                for attempt in 0..5 {
-                    if attempt > 0 {
+        if let Ok(yaml) = runner.curl_with_deadline(&format!("{}/semantic", agent_base_url()), "GET", None) {
+            for chunk in yaml.split("\n- ") {
+                if chunk.contains("type: input")
+                    || chunk.contains("type: text_field")
+                    || chunk.contains("type: TextField")
+                    || chunk.contains("EditText") {
+                    let x = extract_yaml_int(chunk, "x: ");
+                    let y = extract_yaml_int(chunk, "y: ");
+                    let w = extract_yaml_int(chunk, "w: ");
+                    let h = extract_yaml_int(chunk, "h: ");
+                    if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) {
+                        let cx = x + w / 2;
+                        let cy = y + h / 2;
+                        crate::ddb_debug!("[TD-C][focus] tap via /semantic cx={} cy={} attempt={}", cx, cy, attempt);
+                        let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
                         std::thread::sleep(std::time::Duration::from_millis(500));
+                        tapped = true;
+                        break;
                     }
-                    let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
-                    if let Ok(xml) = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]) {
-                        if let Some(caps) = xml.find("EditText") {
-                            let after = &xml[caps..];
-                            if let Some(b_start) = after.find("bounds=\"[") {
-                                let bounds_str = &after[b_start + 8..];
-                                if let Some(b_end) = bounds_str.find(']') {
-                                    let first = &bounds_str[1..b_end];
-                                    let rest = &bounds_str[b_end + 2..];
-                                    if let Some(b_end2) = rest.find(']') {
-                                        let second = &rest[..b_end2];
-                                        let c1: Vec<i32> = first.split(',').filter_map(|s| s.parse().ok()).collect();
-                                        let c2: Vec<i32> = second.split(',').filter_map(|s| s.parse().ok()).collect();
-                                        if c1.len() == 2 && c2.len() == 2 {
-                                            let cx = (c1[0] + c2[0]) / 2;
-                                            let cy = (c1[1] + c2[1]) / 2;
-                                            eprintln!("  ensure_input_focus: tapping EditText at ({cx}, {cy}) via UIAutomator (attempt {attempt})");
-                                            let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
-                                            std::thread::sleep(std::time::Duration::from_millis(500));
-                                            tapped = true;
-                                            break;
-                                        }
-                                    }
+                }
+            }
+        }
+        if tapped { break; }
+    }
+    // Fallback: UIAutomator (screen-absolute coords, 5× retry with 500ms backoff)
+    if !tapped {
+        for attempt in 0..5 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let _ = runner.adb_shell(dev, &["uiautomator", "dump", "/sdcard/ui.xml"]);
+            if let Ok(xml) = runner.adb_shell(dev, &["cat", "/sdcard/ui.xml"]) {
+                if let Some(caps) = xml.find("EditText") {
+                    let after = &xml[caps..];
+                    if let Some(b_start) = after.find("bounds=\"[") {
+                        let bounds_str = &after[b_start + 8..];
+                        if let Some(b_end) = bounds_str.find(']') {
+                            let first = &bounds_str[1..b_end];
+                            let rest = &bounds_str[b_end + 2..];
+                            if let Some(b_end2) = rest.find(']') {
+                                let second = &rest[..b_end2];
+                                let c1: Vec<i32> = first.split(',').filter_map(|s| s.parse().ok()).collect();
+                                let c2: Vec<i32> = second.split(',').filter_map(|s| s.parse().ok()).collect();
+                                if c1.len() == 2 && c2.len() == 2 {
+                                    let cx = (c1[0] + c2[0]) / 2;
+                                    let cy = (c1[1] + c2[1]) / 2;
+                                    crate::ddb_debug!("[TD-C][focus] tap via UIAutomator cx={} cy={} attempt={}", cx, cy, attempt);
+                                    let _ = runner.adb_shell(dev, &["input", "tap", &cx.to_string(), &cy.to_string()]);
+                                    std::thread::sleep(std::time::Duration::from_millis(500));
+                                    tapped = true;
+                                    break;
                                 }
                             }
                         }
                     }
                 }
-            } // if !tapped (UIAutomator fallback)
+            }
         }
     }
+
+    if !tapped {
+        // TD-C: classified hard-fail. Prior behavior was silent return — type
+        // would proceed and characters went to /dev/null (DecorView focus,
+        // no EditText surfaceable). Include truncated dumpsys snippet for
+        // operator triage.
+        let snippet: String = val_line.chars().take(200).collect();
+        return Err(format!(
+            "ensure_input_focus: no EditText found on /semantic or UIAutomator after 10 attempts (mServedView snippet: {})",
+            snippet
+        ));
+    }
+    Ok(())
 }
 
 fn get_failed_tc_specs(results_dir: &str, tests_dir: &str, runner: &StepRunner) -> Result<Vec<String>, String> {
@@ -1658,7 +1687,7 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
                 runner.adb_shell(dev, &["input", "tap", &x.to_string(), &y.to_string()])?;
                 std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
-                ensure_input_focus(dev, runner);
+                ensure_input_focus(dev, runner)?;
             }
             if action.click_after.is_some() || text.chars().any(|c| !c.is_ascii()) {
                 let mut type_json = serde_json::json!({"text": text, "clear": true});
