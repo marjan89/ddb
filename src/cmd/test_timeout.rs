@@ -116,16 +116,29 @@ impl StepRunner {
         }
     }
 
-    /// Construct a fresh StepRunner that ignores any outer budget — used
-    /// for long-running standalone operations (gradle build, apk install,
-    /// set_animations) where derived_with_deadline would clamp to the
-    /// caller's smaller cap. PhaseBudgets are set uniformly to `secs`
-    /// across pre_idle/execute, with a 3s post_idle settle. Consolidates
-    /// the 3 inline `let d = now + ...; let r = StepRunner::new(d, ...);`
-    /// sites introduced in TD-25.
+    /// Construct a fresh StepRunner with uniform pre/exec budget +
+    /// fixed 3s post_idle settle. Convenience for the 99% case
+    /// (build/install/animations toggle) where the caller only cares
+    /// about the outer budget. Use `fresh_with_phases` when the
+    /// post_idle settle needs to differ.
+    ///
+    /// The 3s post_idle is the empirical settle window we use after
+    /// adb operations (matches the prior inline pattern repeated 3×
+    /// in TD-25). It covers post-`pm clear`/`am start` cooldown plus
+    /// any background pkg-mgr index work. If you discover a workload
+    /// that needs longer, switch to `fresh_with_phases` rather than
+    /// bumping the default (would inflate the build-runner unnecessarily).
     pub fn fresh_with_budget(secs: u64) -> Self {
-        let deadline = Instant::now() + Duration::from_secs(secs);
-        Self::new(deadline, PhaseBudgets { pre_idle_s: secs, execute_s: secs, post_idle_s: 3 })
+        Self::fresh_with_phases(secs, secs, 3)
+    }
+
+    /// Construct a fresh StepRunner with explicit per-phase budgets.
+    /// Use when post_idle needs to differ from the 3s default (e.g.
+    /// uninstall+reinstall with pkg-mgr index settling, or a fast
+    /// one-shot call that doesn't need any settle).
+    pub fn fresh_with_phases(pre: u64, exec: u64, post: u64) -> Self {
+        let deadline = Instant::now() + Duration::from_secs(pre.max(exec).max(post));
+        Self::new(deadline, PhaseBudgets { pre_idle_s: pre, execute_s: exec, post_idle_s: post })
     }
 
     pub fn advance(&mut self, phase: StepPhase) {

@@ -2103,6 +2103,12 @@ fn wait_for_idle_after_navigate(dev: Option<&Device>) {
 }
 
 pub fn wait_idle(dev: Option<&Device>, timeout: u64) {
+    // wait_idle uses raw Command::new("curl") --max-time 2 instead of
+    // StepRunner because this is a high-frequency poll loop (~3
+    // iterations/sec). StepRunner::fresh_with_budget(2) per iteration
+    // would allocate a fresh PhaseBudgets + deadline 3× per sec —
+    // overhead that doesn't earn its keep for a uniform 2s curl cap.
+    // (B4 from c25747d cross-review — the divergence is intentional.)
     let base = agent_base_url();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     eprintln!("    wait_idle: polling {base}/idle for {timeout}s");
