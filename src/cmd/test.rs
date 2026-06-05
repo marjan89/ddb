@@ -1809,12 +1809,21 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             Ok(String::new())
         }
         "wait_idle" => {
-            let timeout = action.seconds.unwrap_or(10);
+            // TD-B: accept either 'seconds' (legacy local idiom) or
+            // 'wait_timeout' (the wait_until idiom). Either works; if
+            // both are set, 'seconds' wins (explicit local over
+            // cross-action convention). Default 10s.
+            let timeout = action.seconds.or(action.wait_timeout).unwrap_or(10);
+            crate::ddb_debug!("[TD-B][wait_idle] timeout={}s seconds={:?} wait_timeout={:?}",
+                timeout, action.seconds, action.wait_timeout);
             wait_idle(dev, timeout);
             Ok("idle".into())
         }
         "wait_event" => {
-            let timeout = action.seconds.unwrap_or(10);
+            // TD-B: same parity as wait_idle.
+            let timeout = action.seconds.or(action.wait_timeout).unwrap_or(10);
+            crate::ddb_debug!("[TD-B][wait_event] timeout={}s seconds={:?} wait_timeout={:?}",
+                timeout, action.seconds, action.wait_timeout);
             wait_idle(dev, timeout);
             Ok("idle".into())
         }
