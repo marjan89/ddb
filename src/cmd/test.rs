@@ -1167,11 +1167,43 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     // ── TC Setup: one clean flow, no branches ──
     // 1. Stop app
     let clean_state = std::env::var("DDB_CLEAN_STATE").ok().map(|v| v == "true").unwrap_or(false);
+    // TD-F: WARN-only runtime assertion that the chosen branch actually
+    // achieved expected state. Catches silent regressions per TD-9 (pm
+    // clear / force-stop succeeding without effect on OEM-protected
+    // packages or non-debuggable APKs).
+    let dev_label = dev.map(|d| d.transport_id()).unwrap_or_else(|| "no-dev".into());
     if clean_state {
-        let _ = setup_runner.adb_shell(dev, &["pm", "clear", pkg]);
+        let clear_result = setup_runner.adb_shell(dev, &["pm", "clear", pkg]);
+        crate::ddb_debug!("[TD-F][clean_state] dev={} pm clear pkg={} -> {:?}",
+            dev_label, pkg, clear_result.as_ref().map(|s| s.trim()));
         grant_all_permissions_with_runner(dev, pkg, &setup_runner);
+        // Post-assert via `run-as pkg ls .` (cwd is /data/data/<pkg>).
+        // Best-effort: SKIP silently when run-as is denied (production
+        // APK without debuggable=true) — emit WARN only on real signal.
+        if let Ok(out) = setup_runner.adb_shell(dev, &["run-as", pkg, "ls", "."]) {
+            let trimmed = out.trim();
+            if trimmed.contains("Permission denied") || trimmed.contains("is not debuggable") {
+                crate::ddb_debug!("[TD-F][clean_state] dev={} post-assert skipped: run-as denied", dev_label);
+            } else {
+                let lines: Vec<&str> = trimmed.lines().filter(|l| !l.is_empty()).collect();
+                if !lines.is_empty() {
+                    eprintln!("[TD-F][clean_state] WARN: dev={} pm clear ran but {} entries remain in /data/data/{}/: {}",
+                        dev_label, lines.len(), pkg, lines.join(","));
+                }
+            }
+        }
     } else {
-        let _ = setup_runner.adb_shell(dev, &["am", "force-stop", pkg]);
+        let stop_result = setup_runner.adb_shell(dev, &["am", "force-stop", pkg]);
+        crate::ddb_debug!("[TD-F][force_stop] dev={} am force-stop pkg={} -> {:?}",
+            dev_label, pkg, stop_result.as_ref().map(|s| s.trim()));
+        // Post-assert via pidof — universal, no root or run-as needed.
+        if let Ok(pid) = setup_runner.adb_shell(dev, &["pidof", pkg]) {
+            let pid_trim = pid.trim();
+            if !pid_trim.is_empty() {
+                eprintln!("[TD-F][force_stop] WARN: dev={} am force-stop ran but pkg={} pid={} still running",
+                    dev_label, pkg, pid_trim);
+            }
+        }
     }
 
     // 2. Launch app
