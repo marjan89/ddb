@@ -973,9 +973,11 @@ fn execute_recipe(recipe_path: &str, dev: Option<&Device>, runner: &StepRunner, 
 
 fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepRunner, fixtures: &std::collections::HashMap<String, String>) -> Result<(), String> {
     let indicator = std::env::var("DDB_LOGGED_IN_INDICATOR").unwrap_or_else(|_| "log out".into());
+    let indicator_lc = indicator.to_lowercase();
     let base = agent_base_url();
+    crate::ddb_debug!("[TD-G][login] pre-check indicator='{}'", indicator);
     if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
-        if body.to_lowercase().contains(&indicator.to_lowercase()) {
+        if body.to_lowercase().contains(&indicator_lc) {
             eprintln!("  already logged in (found '{}' in semantic)", indicator);
             return Ok(());
         }
@@ -984,18 +986,33 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     let recipe_path = std::env::var("DDB_LOGIN_RECIPE").ok().filter(|p| !p.is_empty())
         .ok_or_else(|| "DDB_LOGIN_RECIPE not set — TC requires logged_in:true but no recipe path provided".to_string())?;
 
+    crate::ddb_debug!("[TD-G][login] running recipe path='{}'", recipe_path);
     execute_recipe(&recipe_path, dev, runner, fixtures)
         .map_err(|e| format!("login recipe '{recipe_path}' failed: {e}"))?;
     eprintln!("  login recipe executed successfully");
 
-    // Post-verify: the recipe may report success but auth state can lag the UI.
-    // Re-check the semantic dump for the configured indicator before proceeding.
-    if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
-        if body.to_lowercase().contains(&indicator.to_lowercase()) {
-            return Ok(());
+    // TD-G: post-verify with bounded poll. The recipe may report success
+    // before the UI surfaces the logged-in indicator (async API → state
+    // binding → re-render lag). 5s window matches the wait_until /
+    // element_exists default. 500ms cadence matches the wait_until
+    // convention. Without this poll, fast-path TCs whose recipe
+    // resolves immediately still pass, but TCs with even small UI lag
+    // would false-negative (single-shot pre-fix).
+    let post_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
+            if body.to_lowercase().contains(&indicator_lc) {
+                crate::ddb_debug!("[TD-G][login] post-recipe indicator='{}' found", indicator);
+                return Ok(());
+            }
         }
+        if std::time::Instant::now() > post_deadline {
+            crate::ddb_debug!("[TD-G][login] post-recipe poll exhausted indicator='{}'", indicator);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    Err(format!("login recipe ran but logged-in indicator '{indicator}' not found in /semantic post-recipe"))
+    Err(format!("login recipe ran but logged-in indicator '{indicator}' not found in /semantic post-recipe (5s poll)"))
 }
 
 fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &StepRunner) {
