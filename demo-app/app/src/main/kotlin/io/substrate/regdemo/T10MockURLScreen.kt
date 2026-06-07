@@ -18,6 +18,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import dev.substrate.semantic.MockRegistry
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -26,7 +27,11 @@ fun T10MockURLScreen() {
     var response by remember { mutableStateOf("T10 Awaiting") }
     var trigger by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
-    val client = remember { OkHttpClient() }
+    val client = remember {
+        OkHttpClient.Builder()
+            .addInterceptor(MockRegistry.shared.interceptor)
+            .build()
+    }
     LaunchedEffect(trigger) {
         if (trigger == 0) return@LaunchedEffect
         loading = true
