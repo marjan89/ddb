@@ -250,6 +250,133 @@ class ActivityTransitionIdleResource :
     override fun onActivityDestroyed(activity: android.app.Activity) {}
 }
 
+class RecyclerViewDataIdleResource(
+    private val activityProvider: () -> android.app.Activity?,
+) : IdleResource {
+    override val name = "recycler_data"
+
+    @Volatile private var lastChangeTime = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private val trackedAdapters = java.util.Collections.newSetFromMap(
+        java.util.WeakHashMap<androidx.recyclerview.widget.RecyclerView.Adapter<*>, Boolean>()
+    )
+
+    init {
+        scheduleScan()
+    }
+
+    private fun scheduleScan() {
+        handler.postDelayed({
+            try {
+                val activity = activityProvider()
+                if (activity != null) {
+                    scanForRecyclerViews(activity.window.decorView)
+                }
+            } catch (_: Exception) {}
+            scheduleScan()
+        }, 500)
+    }
+
+    private fun scanForRecyclerViews(view: android.view.View) {
+        if (view is androidx.recyclerview.widget.RecyclerView) {
+            val adapter = view.adapter
+            if (adapter != null && trackedAdapters.add(adapter)) {
+                try {
+                    adapter.registerAdapterDataObserver(object : androidx.recyclerview.widget.RecyclerView.AdapterDataObserver() {
+                        override fun onChanged() { lastChangeTime = System.currentTimeMillis() }
+                        override fun onItemRangeInserted(p: Int, c: Int) { lastChangeTime = System.currentTimeMillis() }
+                        override fun onItemRangeRemoved(p: Int, c: Int) { lastChangeTime = System.currentTimeMillis() }
+                        override fun onItemRangeChanged(p: Int, c: Int) { lastChangeTime = System.currentTimeMillis() }
+                        override fun onItemRangeMoved(f: Int, t: Int, c: Int) { lastChangeTime = System.currentTimeMillis() }
+                    })
+                } catch (_: Exception) {}
+            }
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                scanForRecyclerViews(view.getChildAt(i))
+            }
+        }
+    }
+
+    override fun isIdle(): Boolean {
+        if (lastChangeTime == 0L) return true
+        return (System.currentTimeMillis() - lastChangeTime) > 200
+    }
+}
+
+/**
+ * TD-51: Compose-aware idle resource. Reads Recomposer state reflectively
+ * so the agent does not hard-depend on androidx.compose.runtime. For
+ * non-Compose apps the class lookup fails once and the resource reports
+ * idle=true (no Compose work in flight ever).
+ *
+ * Recomposer.Companion.runningRecomposers : StateFlow<Set<Recomposer>>
+ * Recomposer.currentState : StateFlow<Recomposer.State>
+ * State.PendingWork = not idle. All other states (Idle, Inactive,
+ * InactivePendingWork during teardown, ShuttingDown, ShutDown) = idle.
+ *
+ * 30ms grace window after last non-idle observation guards against the
+ * race where Compose flips to Idle but the AccessibilityNodeInfo tree
+ * has not yet propagated the recomposed nodes (TD-51 root cause).
+ */
+class ComposeIdleResource : IdleResource {
+    override val name = "compose"
+
+    @Volatile private var available = true
+    @Volatile private var lastNonIdleMs = 0L
+    private val graceMs = 30L
+
+    private val recomposerClass: Class<*>? by lazy {
+        try {
+            Class.forName("androidx.compose.runtime.Recomposer")
+        } catch (_: Throwable) {
+            available = false
+            null
+        }
+    }
+
+    private val pendingWorkOrdinal: Int by lazy {
+        try {
+            val stateClass = Class.forName("androidx.compose.runtime.Recomposer\$State")
+            @Suppress("UNCHECKED_CAST")
+            val values = (stateClass.getMethod("values").invoke(null) as Array<Enum<*>>)
+            val pw = values.firstOrNull { it.name == "PendingWork" }
+            pw?.ordinal ?: 5
+        } catch (_: Throwable) {
+            5
+        }
+    }
+
+    override fun isIdle(): Boolean {
+        val cls = recomposerClass ?: return true
+        if (!available) return true
+        return try {
+            val companion = cls.getField("Companion").get(null)
+            val flow = companion.javaClass.getMethod("getRunningRecomposers").invoke(companion)
+            @Suppress("UNCHECKED_CAST")
+            val recomposers = flow.javaClass.getMethod("getValue").invoke(flow) as Set<Any>
+            if (recomposers.isEmpty()) return true
+            val now = System.currentTimeMillis()
+            for (r in recomposers) {
+                val stateFlow = r.javaClass.getMethod("getCurrentState").invoke(r)
+                val state = stateFlow.javaClass.getMethod("getValue").invoke(stateFlow) as Enum<*>
+                if (state.ordinal == pendingWorkOrdinal) {
+                    lastNonIdleMs = now
+                    return false
+                }
+            }
+            // No recomposer in PendingWork. Apply grace window so a11y
+            // tree has time to absorb the recomposition.
+            (now - lastNonIdleMs) >= graceMs
+        } catch (t: Throwable) {
+            android.util.Log.w("SemanticAgent", "ComposeIdleResource reflective probe failed: ${t.message}")
+            available = false
+            true
+        }
+    }
+}
+
 class IdleResourceRegistry {
     private val resources = ConcurrentHashMap<String, IdleResource>()
 
