@@ -333,7 +333,7 @@ layer3_golden() {
     # ddb test does not currently support --catalogue arg the same way idb
     # does; T6 Phase 2 may need a ddb-side analog. For now, fixtures.yaml
     # interpolation lives in ddb via DDB_FIXTURES_PATH env var.
-    if DDB_TEST_PACKAGE="$PACKAGE" DDB_MAIN_ACTIVITY="$MAIN_ACTIVITY" DDB_EXPECTED_HASH="${VERSION_SHA:-ignored}" DDB_FIXTURES_PATH="${DDB_FIXTURES_PATH:-$REGRESSION_ROOT/fixtures.yaml}" DDB_RECIPE_DIR="${DDB_RECIPE_DIR:-$REGRESSION_ROOT/recipes}" ddb test -d "$DEVICE_NAME" "$yaml" >"$log" 2>&1; then
+    if DDB_TEST_PACKAGE="$PACKAGE" DDB_MAIN_ACTIVITY="$MAIN_ACTIVITY" DDB_EXPECTED_HASH="${VERSION_SHA:-ignored}" DDB_FIXTURES_PATH="${DDB_FIXTURES_PATH:-$REGRESSION_ROOT/fixtures.yaml}" DDB_RECIPE_DIR="${DDB_RECIPE_DIR:-$REGRESSION_ROOT/recipes}" DDB_LOGIN_RECIPE="${DDB_LOGIN_RECIPE:-$REGRESSION_ROOT/recipes/login.yaml}" DDB_LOGOUT_RECIPE="${DDB_LOGOUT_RECIPE:-$REGRESSION_ROOT/recipes/logout.yaml}" DDB_LOGGED_IN_INDICATOR="${DDB_LOGGED_IN_INDICATOR:-T13 Unlocked}" ddb test -d "$DEVICE_NAME" "$yaml" >"$log" 2>&1; then
       actual=pass
     else
       actual=fail
