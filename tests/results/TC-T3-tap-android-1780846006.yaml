@@ -1,0 +1,31 @@
+tc_id: TC-T3-tap
+tc_name: 'T3: tap increments counter to 3'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:26:32Z
+finished: 2026-01-01T15:26:46Z
+result: FAIL
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:26:35Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T3 Tap"}'
+  result: PASS
+  element_found: 'content: "T3 Tap" at (540, 553)'
+  timestamp: 2026-01-01T15:26:36Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:26:36Z
+- step: 4
+  action: tap
+  target: '{content_fuzzy: "Increment"}'
+  result: FAIL
+  timestamp: 2026-01-01T15:26:46Z
+  error: 'element not found: Increment'
+  ui_dump: ''

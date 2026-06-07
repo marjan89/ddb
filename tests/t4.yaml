@@ -1,0 +1,21 @@
+id: TC-T4-navigate
+name: "T4: navigate to detail and back"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T4 Navigate"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "Go Detail"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "Detail Visible"}
+  - action: tap
+    target: {content_fuzzy: "Go Back"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T4 Navigate"}

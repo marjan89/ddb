@@ -1,0 +1,11 @@
+id: TC-T17-animations-smoke
+name: "T17: animations screen renders spinner without crash"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T17 Animations"}
+  - action: wait_idle
+    seconds: 3
+  - assert: element_exists
+    target: {content_fuzzy: "T17 Spinner"}

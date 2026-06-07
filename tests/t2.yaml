@@ -1,0 +1,17 @@
+id: TC-T2-type
+name: "T2: type into field, mirror reflects value"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T2 Type"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T2 input"}
+  - action: type
+    text: "hello"
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "hello"}

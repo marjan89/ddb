@@ -1,0 +1,54 @@
+tc_id: TC-T3-tap
+tc_name: 'T3: tap increments counter to 3'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:18:19Z
+finished: 2026-01-01T15:18:35Z
+result: PASS
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:18:22Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T3 Tap"}'
+  result: PASS
+  element_found: 'content: "T3 Tap" at (540, 553)'
+  timestamp: 2026-01-01T15:18:24Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:18:24Z
+- step: 4
+  action: tap
+  target: '{content_fuzzy: "Increment"}'
+  result: PASS
+  element_found: 'content: "Increment" at (188, 332)'
+  timestamp: 2026-01-01T15:18:25Z
+- step: 5
+  action: tap
+  target: '{content_fuzzy: "Increment"}'
+  result: PASS
+  element_found: 'content: "Increment" at (188, 332)'
+  timestamp: 2026-01-01T15:18:26Z
+- step: 6
+  action: tap
+  target: '{content_fuzzy: "Increment"}'
+  result: PASS
+  element_found: 'content: "Increment" at (188, 332)'
+  timestamp: 2026-01-01T15:18:27Z
+- step: 7
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:18:27Z
+- step: 8
+  assert: element_exists
+  target: '{content_fuzzy: "3"}'
+  result: PASS
+  element_found: found in uiautomator
+  timestamp: 2026-01-01T15:18:32Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2337]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][1080,2337]"><node index="0" text="" resource-id="" class="androidx.compose.ui.platform.ComposeView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][376,532]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][376,532]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][376,532]"><node index="0" text="T3 Tap" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,174][180,237]" /><node index="1" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,270][334,396]"><node index="0" text="Increment" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[105,306][271,359]" /><node index="1" text="" resource-id="" class="android.widget.Button" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,280][334,385]" /></node><node index="2" text="3" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,427][69,490]" /></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,132]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2337][1080,2400]" /></node></hierarchy>

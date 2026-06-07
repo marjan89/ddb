@@ -1,0 +1,20 @@
+tc_id: TC-T5-keyboard-dismiss
+tc_name: 'T5: keyboard state toggles via dismiss button'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T17:34:58Z
+finished: 2026-01-01T17:35:11Z
+result: FAIL
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:35:01Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T5 Keyboard Dismiss"}'
+  result: FAIL
+  timestamp: 2026-01-01T17:35:11Z
+  error: 'element not found: T5 Keyboard Dismiss'
+  ui_dump: ''

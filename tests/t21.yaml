@@ -1,0 +1,16 @@
+id: TC-T21-press-back
+name: "T21: press_back pops back to Home"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T21 Press Back"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T21 Inside"}
+  - action: press_back
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T1 Launch"}

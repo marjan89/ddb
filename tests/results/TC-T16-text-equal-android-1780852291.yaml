@@ -1,0 +1,31 @@
+tc_id: TC-T16-text-equal
+tc_name: 'T16: element_exists exact text match'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T17:11:18Z
+finished: 2026-01-01T17:11:31Z
+result: PASS
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:11:21Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T16 Text Equal"}'
+  result: PASS
+  element_found: 'content: "T16 Text Equal" at (805, 1098)'
+  timestamp: 2026-01-01T17:11:23Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:11:23Z
+- step: 4
+  assert: element_exists
+  target: '{content_fuzzy: "T16 expected"}'
+  result: PASS
+  element_found: found in uiautomator
+  timestamp: 2026-01-01T17:11:29Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2337]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][1080,2337]"><node index="0" text="" resource-id="" class="androidx.compose.ui.platform.ComposeView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][471,342]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][471,342]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][471,342]"><node index="0" text="T16 Text Equal" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,174][338,237]" /><node index="1" text="T16 expected value" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,237][429,300]" /></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,132]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2337][1080,2400]" /></node></hierarchy>

@@ -1,0 +1,30 @@
+id: TC-T11-deep-nav
+name: "T11: deep nav stack drill + pop via 3× back"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T11 Deep Nav"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T11 Level 1"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T11 Level 2"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T11 Deep"}
+  - action: press_back
+  - action: wait_idle
+    seconds: 1
+  - action: press_back
+  - action: wait_idle
+    seconds: 1
+  - action: press_back
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T11 Deep Nav"}

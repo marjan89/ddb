@@ -1,0 +1,9 @@
+version: 1
+updated: 2026-06-05T09:42:08Z
+project: regression-android
+entries:
+  android/qa-compare:
+    last_captured: 2026-06-05T09:42:08Z
+    elements: 24
+    state: default
+    history_count: 0

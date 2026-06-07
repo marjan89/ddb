@@ -1,0 +1,8 @@
+tc_id: TC-T8-scroll
+tc_name: 'T8: scroll_to bottom of long list'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:48:48Z
+finished: 2026-01-01T15:49:04Z
+result: FAIL
+steps: []

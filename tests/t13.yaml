@@ -1,0 +1,35 @@
+id: TC-T13-login-gated-screen
+name: "T13: POST /login invokes registered handler, unlocks gated screen"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T13 Login"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T13 Locked"}
+  - action: api_call
+    url: "http://localhost:19878/login"
+    method: "POST"
+    body:
+      email: "wrong@example.com"
+      password: "badpass"
+  - action: wait_idle
+    seconds: 1
+  - assert: element_exists
+    target: {content_fuzzy: "Invalid credentials"}
+  - assert: element_exists
+    target: {content_fuzzy: "T13 Locked"}
+  - action: api_call
+    url: "http://localhost:19878/login"
+    method: "POST"
+    body:
+      email: "t13@example.com"
+      password: "t13pass"
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T13 Unlocked"}
+  - assert: element_not_exists
+    target: {content_fuzzy: "T13 Locked"}

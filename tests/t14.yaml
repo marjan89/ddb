@@ -1,0 +1,21 @@
+id: TC-T14-screen-assert
+name: "T14: navigate to anchor screen and back"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T14 Screen"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "Open T14 Anchor"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T14 Screen Anchor"}
+  - action: tap
+    target: {content_fuzzy: "T14 Back"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "Open T14 Anchor"}

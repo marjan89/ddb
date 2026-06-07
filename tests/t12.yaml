@@ -1,0 +1,22 @@
+id: TC-T12-text-field-set
+name: "T12: agent /text-field/set replaces TextField value atomically"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T12 Paste"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T12 Input"}
+  - action: wait_idle
+    seconds: 1
+  - action: api_call
+    url: "http://localhost:19878/text-field/set"
+    method: "POST"
+    body:
+      value: "T12 pasted content"
+  - action: wait_idle
+    seconds: 1
+  - assert: element_exists
+    target: {content_fuzzy: "T12 pasted content"}

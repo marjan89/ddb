@@ -1,0 +1,13 @@
+id: TC-T24-screenshot
+name: "T24: screenshot marker visible (visual-QA anchor)"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T24 Screenshot"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T24 Screenshot Marker"}
+  - assert: element_exists
+    target: {content_fuzzy: "T24 Marker Circle"}

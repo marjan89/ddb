@@ -1,0 +1,21 @@
+id: TC-T5-keyboard-dismiss
+name: "T5: keyboard state toggles via dismiss button"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T5 Kbd Dismiss"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T5 input"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "shown"}
+  - action: tap
+    target: {content_fuzzy: "Dismiss Keyboard"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "hidden"}

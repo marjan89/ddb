@@ -1,0 +1,43 @@
+tc_id: TC-T9-wait
+tc_name: 'T9: wait_until async-appearing element'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T17:17:39Z
+finished: 2026-01-01T17:17:52Z
+result: PASS
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:17:42Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T9 Wait"}'
+  result: PASS
+  element_found: 'content: "T9 Wait" at (276, 804)'
+  timestamp: 2026-01-01T17:17:42Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:17:42Z
+- step: 4
+  action: tap
+  target: '{content_fuzzy: "T9 Trigger"}'
+  result: PASS
+  element_found: 'content: "T9 Trigger" at (190, 342)'
+  timestamp: 2026-01-01T17:17:43Z
+- step: 5
+  action: wait_until
+  target: '{content_fuzzy: "T9 Delayed Element"}'
+  result: PASS
+  element_found: 'wait_until: found ''T9 Delayed Element'''
+  timestamp: 2026-01-01T17:17:46Z
+- step: 6
+  assert: element_exists
+  target: '{content_fuzzy: "T9 Delayed Element"}'
+  result: PASS
+  element_found: found in uiautomator
+  timestamp: 2026-01-01T17:17:50Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2337]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][1080,2337]"><node index="0" text="" resource-id="" class="androidx.compose.ui.platform.ComposeView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][479,552]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][479,552]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][479,552]"><node index="0" text="T9 Wait" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,174][195,237]" /><node index="1" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,280][338,406]"><node index="0" text="T9 Trigger" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[105,316][275,369]" /><node index="1" text="" resource-id="" class="android.widget.Button" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,290][338,395]" /></node><node index="2" text="T9 Delayed Element" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="T9 Delayed Element" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,447][437,510]" /></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,132]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2337][1080,2400]" /></node></hierarchy>

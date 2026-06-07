@@ -1,0 +1,19 @@
+id: TC-T3-tap
+name: "T3: tap increments counter to 3"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T3 Tap"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "Increment"}
+  - action: tap
+    target: {content_fuzzy: "Increment"}
+  - action: tap
+    target: {content_fuzzy: "Increment"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "3"}

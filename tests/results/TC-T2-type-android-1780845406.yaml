@@ -1,0 +1,8 @@
+tc_id: TC-T2-type
+tc_name: 'T2: type into field, mirror reflects value'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:16:35Z
+finished: 2026-01-01T15:16:46Z
+result: FAIL
+steps: []

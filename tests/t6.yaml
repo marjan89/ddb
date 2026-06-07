@@ -1,0 +1,17 @@
+id: TC-T6-secure-field
+name: "T6: type into SecureField, mirror reflects value"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T6 Secure Field"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T6 password"}
+  - action: type
+    text: "secret"
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "secret"}

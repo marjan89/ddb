@@ -1,0 +1,60 @@
+tc_id: TC-T7-dialog
+tc_name: 'T7: alert open/closed state via show + ok'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T17:35:39Z
+finished: 2026-01-01T17:36:09Z
+result: PASS
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:35:44Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T7 Dialog"}'
+  result: PASS
+  element_found: 'content: "T7 Dialog" at (276, 657)'
+  timestamp: 2026-01-01T17:35:49Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:35:49Z
+- step: 4
+  action: tap
+  target: '{content_fuzzy: "Show Alert"}'
+  result: PASS
+  element_found: 'content: "Show Alert" at (195, 332)'
+  timestamp: 2026-01-01T17:35:51Z
+- step: 5
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:35:52Z
+- step: 6
+  assert: element_exists
+  target: '{content_fuzzy: "open"}'
+  result: PASS
+  element_found: found in activity dump
+  timestamp: 2026-01-01T17:35:58Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[172,1045][907,1423]"><node index="0" text="Alert" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[235,1108][368,1192]" /><node index="1" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[692,1235][844,1361]"><node index="0" text="OK" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[743,1271][793,1324]" /><node index="1" text="" resource-id="" class="android.widget.Button" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[692,1245][844,1350]" /></node></node></node></node></node></node></node></node></node></hierarchy>
+- step: 7
+  action: tap
+  target: '{content_fuzzy: "OK"}'
+  result: PASS
+  element_found: 'uiautomator: OK'
+  timestamp: 2026-01-01T17:36:02Z
+- step: 8
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T17:36:02Z
+- step: 9
+  assert: element_exists
+  target: '{content_fuzzy: "closed"}'
+  result: PASS
+  element_found: found in uiautomator
+  timestamp: 2026-01-01T17:36:07Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2337]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][1080,2337]"><node index="0" text="" resource-id="" class="androidx.compose.ui.platform.ComposeView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][390,532]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][390,532]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][390,532]"><node index="0" text="T7 Dialog" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,174][233,237]" /><node index="1" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,270][348,396]"><node index="0" text="Show Alert" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[105,306][285,359]" /><node index="1" text="" resource-id="" class="android.widget.Button" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,280][348,385]" /></node><node index="2" text="closed" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="closed" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,427][175,490]" /></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,132]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2337][1080,2400]" /></node></hierarchy>
