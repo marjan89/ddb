@@ -419,7 +419,7 @@ object ViewTreeWalker {
             null
         } ?: return false
 
-        walkSemanticsNode(rootNode, density, nextZ, out, log, 0)
+        walkSemanticsNode(rootNode, density, nextZ, out, log, 0, false)
         return true
     }
 
@@ -441,6 +441,7 @@ object ViewTreeWalker {
         out: MutableList<SemanticElement>,
         log: StringBuilder,
         depth: Int,
+        inheritedClickable: Boolean,
     ) {
         val cls = node.javaClass
         // SemanticsNode.boundsInWindow: Rect (composeui Rect, not graphics Rect)
@@ -459,13 +460,25 @@ object ViewTreeWalker {
         val text = extractSemanticsText(config)
         val contentDesc = extractSemanticsContentDesc(config)
         val role = extractSemanticsRole(config)
-        val isClickable = hasSemanticsAction(config, "OnClick")
+        val ownClick = hasSemanticsAction(config, "OnClick")
+        // TD-59: Compose Modifier.clickable installs the OnClick semantics even
+        // when `enabled=false`; the action body is gated separately. Detect the
+        // Disabled semantics key (set by Material/Modifier when enabled=false)
+        // and treat as non-clickable regardless of OnClick presence.
+        val isDisabled = hasSemanticsKey(config, "Disabled")
+        val effectiveOwnClick = ownClick && !isDisabled
+        // In Compose's unmerged tree the clickable Box and its inner Text label
+        // are separate nodes. Propagate clickable from a clickable ancestor so
+        // text leaves inside a Button report clickable=true. Disabled blocks
+        // propagation locally and downstream.
+        val isClickable = effectiveOwnClick || (inheritedClickable && !isDisabled)
         val isInput = hasSemanticsKey(config, "EditableText") || hasSemanticsAction(config, "SetText")
 
         val content = text ?: contentDesc
         if (bounds != null && (content != null || isClickable || isInput || role != null)) {
             val type = when {
                 isInput -> "input"
+                isClickable && !content.isNullOrEmpty() -> "button"
                 isClickable -> "button"
                 !content.isNullOrEmpty() -> "text"
                 else -> "view"
@@ -497,7 +510,7 @@ object ViewTreeWalker {
         } catch (_: Throwable) { null }
         if (children != null) {
             for (child in children) {
-                if (child != null) walkSemanticsNode(child, density, nextZ, out, log, depth + 1)
+                if (child != null) walkSemanticsNode(child, density, nextZ, out, log, depth + 1, isClickable)
             }
         }
     }
@@ -727,10 +740,20 @@ object ViewTreeWalker {
 
         val className = info.className?.toString() ?: ""
         val isInput = className.endsWith("EditText") || info.isEditable
+        // TD-59: Compose Button doesn't set the legacy info.isClickable bit;
+        // it publishes click affordance via actionList ACTION_CLICK and/or a
+        // "Button" role. Treat either as clickable so element_state assertions
+        // toggle correctly with the enabled= parameter.
+        val hasClickAction = try {
+            info.actionList.any { it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK.id }
+        } catch (_: Throwable) { false }
+        val isComposeButton = className.endsWith("Button") ||
+            className == "android.view.View" && hasClickAction
+        val clickable = info.isClickable || hasClickAction || isComposeButton
         val type = when {
             isInput -> "input"
-            info.isClickable && !content.isNullOrEmpty() -> "button"
-            info.isClickable -> "button"
+            clickable && !content.isNullOrEmpty() -> "button"
+            clickable -> "button"
             !content.isNullOrEmpty() -> "text"
             else -> "view"
         }
@@ -749,7 +772,7 @@ object ViewTreeWalker {
             color = null,
             bounds = Bounds(rect.left, rect.top, rect.width(), rect.height()),
             zIndex = z,
-            clickable = info.isClickable,
+            clickable = clickable,
             enabled = info.isEnabled,
             accessible = info.isImportantForAccessibility,
             a11yLabel = contentDesc,
