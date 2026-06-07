@@ -907,6 +907,74 @@ class SemanticServer private constructor(
         return firstSchema.copy(elements = allElements, scrollCapture = scrollInfo)
     }
 
+    /**
+     * TD-63: locate a Compose-scrollable node and return its provider + virtual id.
+     * Walks every AndroidComposeView under the root looking for the first
+     * AccessibilityNodeInfo whose action list contains ACTION_SCROLL_FORWARD
+     * (or ACTION_SCROLL_BACKWARD — either marks a scrollable container).
+     */
+    private fun findComposeScrollable(root: android.view.View): Pair<android.view.accessibility.AccessibilityNodeProvider, Int>? {
+        val composeViews = mutableListOf<android.view.View>()
+        collectComposeViews(root, composeViews)
+        for (cv in composeViews) {
+            val provider = try { cv.accessibilityNodeProvider } catch (_: Throwable) { null } ?: continue
+            val rootNode = try { provider.createAccessibilityNodeInfo(-1) } catch (_: Throwable) { null } ?: continue
+            try {
+                val vid = walkForScrollable(rootNode, provider)
+                if (vid != null) return provider to vid
+            } finally {
+                try { rootNode.recycle() } catch (_: Throwable) {}
+            }
+        }
+        return null
+    }
+
+    private fun walkForScrollable(
+        node: android.view.accessibility.AccessibilityNodeInfo,
+        provider: android.view.accessibility.AccessibilityNodeProvider,
+    ): Int? {
+        val cls = android.view.accessibility.AccessibilityNodeInfo::class.java
+        val scrollFwdId = android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD.id
+        val scrollBwdId = android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD.id
+        for (i in 0 until node.childCount) {
+            val packed: Long = try {
+                val f = cls.getDeclaredField("mChildNodeIds")
+                f.isAccessible = true
+                val arr = f.get(node)
+                when {
+                    arr is LongArray && i < arr.size -> arr[i]
+                    arr != null -> {
+                        val getM = arr.javaClass.getMethod("get", Int::class.javaPrimitiveType)
+                        getM.invoke(arr, i) as Long
+                    }
+                    else -> continue
+                }
+            } catch (_: Throwable) { continue }
+            val candidates = listOf(
+                (packed and 0xFFFFFFFFL).toInt(),
+                (packed ushr 32).toInt(),
+                packed.toInt(),
+            ).distinct()
+            for (vid in candidates) {
+                val child = try { provider.createAccessibilityNodeInfo(vid) } catch (_: Throwable) { null }
+                if (child != null) {
+                    try {
+                        val hasScroll = try {
+                            child.actionList.any { it.id == scrollFwdId || it.id == scrollBwdId }
+                        } catch (_: Throwable) { false }
+                        if (hasScroll) return vid
+                        val deeper = walkForScrollable(child, provider)
+                        if (deeper != null) return deeper
+                    } finally {
+                        try { child.recycle() } catch (_: Throwable) {}
+                    }
+                    break
+                }
+            }
+        }
+        return null
+    }
+
     private fun findScrollable(view: android.view.View): android.view.View? {
         val className = view.javaClass.name
         if (className.contains("RecyclerView") && (view.canScrollVertically(1) || view.canScrollVertically(-1))) return view
@@ -1138,8 +1206,14 @@ class SemanticServer private constructor(
         mainHandler.post {
             try {
                 val scrollable = findScrollable(activity.window.decorView)
-                if (scrollable == null) {
-                    error = "no scrollable view"
+                // TD-63: Compose LazyColumn is not a View subclass — findScrollable
+                // returns null. Fall back to AccessibilityNodeProvider scrolling
+                // on the AndroidComposeView.
+                val composeScroll: Pair<android.view.accessibility.AccessibilityNodeProvider, Int>? =
+                    if (scrollable == null) findComposeScrollable(activity.window.decorView) else null
+
+                if (scrollable == null && composeScroll == null) {
+                    error = "no scrollable view (Android or Compose)"
                     latch.countDown()
                     return@post
                 }
@@ -1152,7 +1226,17 @@ class SemanticServer private constructor(
 
                 if (found == null) {
                     for (step in 1..maxScroll) {
-                        scrollable.scrollBy(0, scrollAmountPx)
+                        if (scrollable != null) {
+                            scrollable.scrollBy(0, scrollAmountPx)
+                        } else if (composeScroll != null) {
+                            try {
+                                composeScroll.first.performAction(
+                                    composeScroll.second,
+                                    android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                                    null,
+                                )
+                            } catch (_: Throwable) {}
+                        }
                         Thread.sleep(300)
                         scrollCount = step
                         val schema = ViewTreeWalker.walk(activity)
@@ -1162,7 +1246,21 @@ class SemanticServer private constructor(
                 }
 
                 if (restoreScroll || found == null) {
-                    scrollable.scrollTo(0, 0)
+                    if (scrollable != null) {
+                        scrollable.scrollTo(0, 0)
+                    } else if (composeScroll != null) {
+                        // Best-effort: dispatch backward scrolls equal to forward count.
+                        for (i in 0 until scrollCount) {
+                            try {
+                                composeScroll.first.performAction(
+                                    composeScroll.second,
+                                    android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+                                    null,
+                                )
+                                Thread.sleep(100)
+                            } catch (_: Throwable) { break }
+                        }
+                    }
                     scrollRestored = true
                 }
             } catch (e: Exception) {
