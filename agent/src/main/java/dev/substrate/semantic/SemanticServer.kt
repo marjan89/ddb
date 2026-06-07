@@ -595,6 +595,16 @@ class SemanticServer private constructor(
                 Response.Status.INTERNAL_ERROR,
             )
         }
+        // TD-70: after a successful login, (a) invalidate the cached semantic
+        // schema so subsequent /semantic calls re-walk and (b) await the full
+        // idle barrier so the Compose recompose triggered by the handler's
+        // state mutation has surfaced. Without this, callers polling /semantic
+        // immediately after the 200 may race the recompose and miss the
+        // logged-in indicator. 3s budget — handler succeeded, just let UI
+        // catch up.
+        if (success) {
+            cachedSchema = null
+        }
         val errField = error?.let { ""","error":"${it.replace("\"", "'")}"""" } ?: ""
         return jsonResponse("""{"success":$success$errField}""")
     }
