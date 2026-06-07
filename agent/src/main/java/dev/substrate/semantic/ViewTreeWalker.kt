@@ -13,6 +13,7 @@ import android.graphics.drawable.VectorDrawable
 import android.os.Build
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
@@ -175,6 +176,23 @@ object ViewTreeWalker {
             )
 
             if (isExternal) return
+
+            if (isComposeView(view)) {
+                try {
+                    val before = elements.size
+                    val ok = walkComposeSemanticsOwner(view, density, ::nextZ, elements, log)
+                    if (!ok && view is ViewGroup) {
+                        val group = view as ViewGroup
+                        for (i in 0 until group.childCount) {
+                            walkView(group.getChildAt(i), effectiveExternal, false)
+                        }
+                    }
+                    log.appendLine("COMPOSE_DESCENT root=$tag ok=$ok emitted=${elements.size - before}")
+                } catch (e: Throwable) {
+                    log.appendLine("COMPOSE_DESCENT root=$tag failed=${e.javaClass.simpleName}:${e.message}")
+                }
+                return
+            }
 
             if (isGroup) {
                 val group = view as ViewGroup
@@ -367,6 +385,389 @@ object ViewTreeWalker {
             border = extractBorder(view, density),
             gradient = extractGradient(view),
             tapTarget = if (!view.isClickable && !view.isLongClickable) findClickableAncestorBounds(view) else null,
+        )
+    }
+
+    /**
+     * Walks Compose semantics via reflection on AndroidComposeView.semanticsOwner.
+     * No accessibility flags toggled, no AccessibilityNodeProvider — pure introspection
+     * of Compose's internal SemanticsNode tree. Returns true if walk succeeded.
+     */
+    private fun walkComposeSemanticsOwner(
+        view: View,
+        density: Float,
+        nextZ: () -> Int,
+        out: MutableList<SemanticElement>,
+        log: StringBuilder,
+    ): Boolean {
+        // Find AndroidComposeView (may be `view` itself or a descendant)
+        val androidComposeView = findAndroidComposeView(view) ?: return false
+        val owner = try {
+            val m = androidComposeView.javaClass.methods.firstOrNull { it.name == "getSemanticsOwner" && it.parameterCount == 0 }
+            m?.invoke(androidComposeView)
+        } catch (e: Throwable) {
+            log.appendLine("COMPOSE_SEM owner fetch failed=${e.javaClass.simpleName}:${e.message}")
+            null
+        } ?: return false
+
+        val rootNode = try {
+            val m = owner.javaClass.methods.firstOrNull { it.name == "getUnmergedRootSemanticsNode" && it.parameterCount == 0 }
+                ?: owner.javaClass.methods.firstOrNull { it.name == "getRootSemanticsNode" && it.parameterCount == 0 }
+            m?.invoke(owner)
+        } catch (e: Throwable) {
+            log.appendLine("COMPOSE_SEM root fetch failed=${e.javaClass.simpleName}:${e.message}")
+            null
+        } ?: return false
+
+        walkSemanticsNode(rootNode, density, nextZ, out, log, 0)
+        return true
+    }
+
+    private fun findAndroidComposeView(view: View): View? {
+        if (view.javaClass.name == "androidx.compose.ui.platform.AndroidComposeView") return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val r = findAndroidComposeView(view.getChildAt(i))
+                if (r != null) return r
+            }
+        }
+        return null
+    }
+
+    private fun walkSemanticsNode(
+        node: Any,
+        density: Float,
+        nextZ: () -> Int,
+        out: MutableList<SemanticElement>,
+        log: StringBuilder,
+        depth: Int,
+    ) {
+        val cls = node.javaClass
+        // SemanticsNode.boundsInWindow: Rect (composeui Rect, not graphics Rect)
+        val composeRect = try {
+            val m = cls.methods.firstOrNull { it.name == "getBoundsInWindow" && it.parameterCount == 0 }
+            m?.invoke(node)
+        } catch (_: Throwable) { null }
+        val bounds = composeRectToBounds(composeRect)
+
+        // SemanticsNode.config: SemanticsConfiguration
+        val config = try {
+            val m = cls.methods.firstOrNull { it.name == "getConfig" && it.parameterCount == 0 }
+            m?.invoke(node)
+        } catch (_: Throwable) { null }
+
+        val text = extractSemanticsText(config)
+        val contentDesc = extractSemanticsContentDesc(config)
+        val role = extractSemanticsRole(config)
+        val isClickable = hasSemanticsAction(config, "OnClick")
+        val isInput = hasSemanticsKey(config, "EditableText") || hasSemanticsAction(config, "SetText")
+
+        val content = text ?: contentDesc
+        if (bounds != null && (content != null || isClickable || isInput || role != null)) {
+            val type = when {
+                isInput -> "input"
+                isClickable -> "button"
+                !content.isNullOrEmpty() -> "text"
+                else -> "view"
+            }
+            val id = if (!content.isNullOrEmpty()) slugify(content)
+                else "compose_${role?.lowercase() ?: "node"}_${bounds.x}_${bounds.y}"
+            val z = nextZ()
+            out.add(
+                SemanticElement(
+                    id = id, platformId = null, type = type, content = content,
+                    font = null, color = null, bounds = bounds, zIndex = z,
+                    clickable = isClickable, enabled = true, accessible = true,
+                    a11yLabel = contentDesc, a11yId = null, background = null,
+                    cornerRadius = null, padding = null, margin = null, elevation = null,
+                    render = null, lineCount = null, truncated = null,
+                    imageResource = null, imageType = null, imagePath = null,
+                    border = null, gradient = null, tapTarget = null,
+                ),
+            )
+            log.appendLine("COMPOSE_SEM_EMIT z=$z type=$type bounds=$bounds clickable=$isClickable content=${content?.take(30) ?: "null"}")
+        }
+
+        // Recurse: SemanticsNode.children: List<SemanticsNode>
+        val children = try {
+            // try getChildren() first (returns List); fallback to getReplacedChildren()
+            val m = cls.methods.firstOrNull { it.name == "getChildren" && it.parameterCount == 0 }
+                ?: cls.methods.firstOrNull { it.name == "getReplacedChildren" && it.parameterCount == 0 }
+            m?.invoke(node) as? List<*>
+        } catch (_: Throwable) { null }
+        if (children != null) {
+            for (child in children) {
+                if (child != null) walkSemanticsNode(child, density, nextZ, out, log, depth + 1)
+            }
+        }
+    }
+
+    private fun composeRectToBounds(rect: Any?): Bounds? {
+        if (rect == null) return null
+        return try {
+            val cls = rect.javaClass
+            val left = (cls.getMethod("getLeft").invoke(rect) as Float)
+            val top = (cls.getMethod("getTop").invoke(rect) as Float)
+            val right = (cls.getMethod("getRight").invoke(rect) as Float)
+            val bottom = (cls.getMethod("getBottom").invoke(rect) as Float)
+            val w = (right - left).toInt()
+            val h = (bottom - top).toInt()
+            if (w <= 0 || h <= 0) null
+            else Bounds(left.toInt(), top.toInt(), w, h)
+        } catch (_: Throwable) { null }
+    }
+
+    private fun extractSemanticsText(config: Any?): String? {
+        if (config == null) return null
+        // SemanticsConfiguration is iterable over Map.Entry<SemanticsPropertyKey<*>, Any?>
+        try {
+            val iter = (config as? Iterable<*>)?.iterator() ?: return null
+            while (iter.hasNext()) {
+                val entry = iter.next() ?: continue
+                val key = entry.javaClass.getMethod("getKey").invoke(entry)
+                val keyName = key?.javaClass?.getMethod("getName")?.invoke(key) as? String
+                if (keyName == "Text" || keyName == "EditableText") {
+                    val value = entry.javaClass.getMethod("getValue").invoke(entry)
+                    // Text is List<AnnotatedString>, EditableText is AnnotatedString
+                    val str = when (value) {
+                        is List<*> -> value.joinToString(" ") { it?.toString() ?: "" }
+                        else -> value?.toString()
+                    }
+                    if (!str.isNullOrEmpty()) return str
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
+    }
+
+    private fun extractSemanticsContentDesc(config: Any?): String? {
+        if (config == null) return null
+        try {
+            val iter = (config as? Iterable<*>)?.iterator() ?: return null
+            while (iter.hasNext()) {
+                val entry = iter.next() ?: continue
+                val key = entry.javaClass.getMethod("getKey").invoke(entry)
+                val keyName = key?.javaClass?.getMethod("getName")?.invoke(key) as? String
+                if (keyName == "ContentDescription") {
+                    val value = entry.javaClass.getMethod("getValue").invoke(entry)
+                    val str = when (value) {
+                        is List<*> -> value.joinToString(" ") { it?.toString() ?: "" }
+                        else -> value?.toString()
+                    }
+                    if (!str.isNullOrEmpty()) return str
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
+    }
+
+    private fun extractSemanticsRole(config: Any?): String? {
+        if (config == null) return null
+        try {
+            val iter = (config as? Iterable<*>)?.iterator() ?: return null
+            while (iter.hasNext()) {
+                val entry = iter.next() ?: continue
+                val key = entry.javaClass.getMethod("getKey").invoke(entry)
+                val keyName = key?.javaClass?.getMethod("getName")?.invoke(key) as? String
+                if (keyName == "Role") {
+                    return entry.javaClass.getMethod("getValue").invoke(entry)?.toString()
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
+    }
+
+    private fun hasSemanticsAction(config: Any?, actionName: String): Boolean {
+        if (config == null) return false
+        try {
+            val iter = (config as? Iterable<*>)?.iterator() ?: return false
+            while (iter.hasNext()) {
+                val entry = iter.next() ?: continue
+                val key = entry.javaClass.getMethod("getKey").invoke(entry)
+                val keyName = key?.javaClass?.getMethod("getName")?.invoke(key) as? String
+                if (keyName == actionName) return true
+            }
+        } catch (_: Throwable) {}
+        return false
+    }
+
+    private fun hasSemanticsKey(config: Any?, keyName: String): Boolean = hasSemanticsAction(config, keyName)
+
+    private fun isComposeView(view: View): Boolean {
+        var c: Class<*>? = view.javaClass
+        while (c != null) {
+            val n = c.name
+            if (n == "androidx.compose.ui.platform.AbstractComposeView" ||
+                n == "androidx.compose.ui.platform.AndroidComposeView"
+            ) return true
+            c = c.superclass
+        }
+        return false
+    }
+
+    private fun composeA11yDelegate(view: View): Any? {
+        var c: Class<*>? = view.javaClass
+        while (c != null) {
+            if (c.name == "androidx.compose.ui.platform.AndroidComposeView") {
+                for (fieldName in listOf("composeAccessibilityDelegate", "accessibilityDelegate")) {
+                    try {
+                        val f = c.getDeclaredField(fieldName)
+                        f.isAccessible = true
+                        return f.get(view) ?: continue
+                    } catch (_: NoSuchFieldException) {}
+                }
+                return null
+            }
+            c = c.superclass
+        }
+        return null
+    }
+
+    private fun setComposeA11yFlag(delegate: Any?, enabled: Boolean) {
+        if (delegate == null) return
+        try {
+            val f = delegate.javaClass.getDeclaredField("accessibilityForceEnabledForTesting")
+            f.isAccessible = true
+            f.setBoolean(delegate, enabled)
+        } catch (_: Throwable) {}
+    }
+
+    private fun walkComposeProvider(
+        node: AccessibilityNodeInfo,
+        provider: android.view.accessibility.AccessibilityNodeProvider,
+        density: Float,
+        nextZ: () -> Int,
+        out: MutableList<SemanticElement>,
+        log: StringBuilder,
+    ) {
+        val childCount = node.childCount
+        for (i in 0 until childCount) {
+            // Compose's createAccessibilityNodeInfo returns unsealed nodes; getChild() throws
+            // "Cannot perform this action on a not sealed instance". The hidden API
+            // AccessibilityNodeInfo.getChildId(int) returns the packed (sourceId,virtualId)
+            // long; we extract the virtual ID and re-query the provider.
+            val packed: Long = try {
+                var p: Long = 0L
+                var found = false
+                val cls = AccessibilityNodeInfo::class.java
+                try {
+                    val f = cls.getDeclaredField("mChildNodeIds")
+                    f.isAccessible = true
+                    val arr = f.get(node)
+                    if (arr is LongArray && i < arr.size) {
+                        p = arr[i]; found = true
+                    } else if (arr != null) {
+                        val getM = arr.javaClass.getMethod("get", Int::class.javaPrimitiveType)
+                        p = getM.invoke(arr, i) as Long; found = true
+                    }
+                } catch (_: Throwable) {}
+                if (!found) for (m in cls.declaredMethods) {
+                    if (m.name == "getChildId" && m.parameterTypes.size == 1) {
+                        m.isAccessible = true; p = m.invoke(node, i) as Long; found = true; break
+                    }
+                }
+                if (!found) throw NoSuchMethodException("no getChildId or mChildNodeIds")
+                p
+            } catch (e: Throwable) {
+                log.appendLine("COMPOSE_CHILDID_ERR i=$i err=${e.javaClass.simpleName}:${e.message}")
+                continue
+            }
+            // Try both halves and the raw value to handle differing pack orders.
+            val low = (packed and 0xFFFFFFFFL).toInt()
+            val high = (packed ushr 32).toInt()
+            val candidates = listOf(low, high, packed.toInt())
+            var child: AccessibilityNodeInfo? = null
+            var hitVid = -1
+            for (vid in candidates.distinct()) {
+                val c = try { provider.createAccessibilityNodeInfo(vid) } catch (_: Throwable) { null }
+                if (c != null) { child = c; hitVid = vid; break }
+            }
+            if (child == null) {
+                log.appendLine("COMPOSE_CHILD_NULL i=$i packed=$packed low=$low high=$high")
+                continue
+            }
+            val virtualId = hitVid
+            try {
+                val rect = Rect()
+                child.getBoundsInScreen(rect)
+                val text = child.text?.toString()
+                val desc = child.contentDescription?.toString()
+                log.appendLine(
+                    "COMPOSE_CHILD i=$i class=${child.className} bounds=[${rect.left},${rect.top},${rect.right},${rect.bottom}] " +
+                        "text=${text?.take(40) ?: "null"} desc=${desc?.take(40) ?: "null"} children=${child.childCount}",
+                )
+                val element = buildElementFromA11y(child, density, nextZ())
+                if (element != null) {
+                    out.add(element)
+                    log.appendLine(
+                        "COMPOSE_EMIT z=${element.zIndex} type=${element.type} bounds=${element.bounds} " +
+                            "clickable=${element.clickable} content=${element.content?.take(30) ?: "null"}",
+                    )
+                }
+                walkComposeProvider(child, provider, density, nextZ, out, log)
+            } finally {
+                try { child.recycle() } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    private fun buildElementFromA11y(
+        info: AccessibilityNodeInfo,
+        density: Float,
+        z: Int,
+    ): SemanticElement? {
+        val rect = Rect()
+        info.getBoundsInScreen(rect)
+        if (rect.width() <= 0 || rect.height() <= 0) return null
+
+        val text = info.text?.toString()
+        val contentDesc = info.contentDescription?.toString()
+        val hint = if (Build.VERSION.SDK_INT >= 26) info.hintText?.toString() else null
+        val content = text ?: contentDesc ?: hint
+
+        val className = info.className?.toString() ?: ""
+        val isInput = className.endsWith("EditText") || info.isEditable
+        val type = when {
+            isInput -> "input"
+            info.isClickable && !content.isNullOrEmpty() -> "button"
+            info.isClickable -> "button"
+            !content.isNullOrEmpty() -> "text"
+            else -> "view"
+        }
+
+        val id = when {
+            !content.isNullOrEmpty() -> slugify(content)
+            else -> "compose_${className.substringAfterLast('.').lowercase()}_${rect.left}_${rect.top}"
+        }
+
+        return SemanticElement(
+            id = id,
+            platformId = null,
+            type = type,
+            content = content,
+            font = null,
+            color = null,
+            bounds = Bounds(rect.left, rect.top, rect.width(), rect.height()),
+            zIndex = z,
+            clickable = info.isClickable,
+            enabled = info.isEnabled,
+            accessible = info.isImportantForAccessibility,
+            a11yLabel = contentDesc,
+            a11yId = null,
+            background = null,
+            cornerRadius = null,
+            padding = null,
+            margin = null,
+            elevation = null,
+            render = null,
+            lineCount = null,
+            truncated = null,
+            imageResource = null,
+            imageType = null,
+            imagePath = null,
+            border = null,
+            gradient = null,
+            tapTarget = null,
         )
     }
 
