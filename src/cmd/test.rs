@@ -1027,7 +1027,11 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
     // convention. Without this poll, fast-path TCs whose recipe
     // resolves immediately still pass, but TCs with even small UI lag
     // would false-negative (single-shot pre-fix).
-    let post_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let poll_secs: u64 = std::env::var("DDB_LOGGED_IN_INDICATOR_POLL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15);
+    let post_deadline = std::time::Instant::now() + std::time::Duration::from_secs(poll_secs);
     loop {
         if let Ok(body) = runner.curl_with_deadline(&format!("{base}/semantic"), "GET", None) {
             if body.to_lowercase().contains(&indicator_lc) {
@@ -1041,7 +1045,7 @@ fn ensure_logged_in_with_runner(dev: Option<&Device>, _pkg: &str, runner: &StepR
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    Err(format!("login recipe ran but logged-in indicator '{indicator}' not found in /semantic post-recipe (5s poll)"))
+    Err(format!("login recipe ran but logged-in indicator '{indicator}' not found in /semantic post-recipe ({poll_secs}s poll)"))
 }
 
 fn grant_all_permissions_with_runner(dev: Option<&Device>, pkg: &str, runner: &StepRunner) {
