@@ -24,4 +24,32 @@ object SemanticAgent {
     @Volatile
     @JvmField
     var loginHandler: ((email: String, password: String, completion: (Boolean, String?) -> Unit) -> Unit)? = null
+
+    @Volatile
+    private var urlInterceptorInstalled = false
+
+    /**
+     * TD-69: install a JVM-wide URLStreamHandlerFactory that intercepts
+     * http/https URL.openConnection() calls when MockRegistry has a matching
+     * rule. JVM contract: setURLStreamHandlerFactory is one-shot per process —
+     * subsequent calls throw. Call from Application.onCreate BEFORE any host
+     * code touches java.net.URL. No-op on second invocation.
+     *
+     * Does NOT cover OkHttp — OkHttp uses raw sockets, not URLConnection.
+     * Hosts using OkHttp must add MockRegistry.shared.interceptor to their
+     * OkHttpClient.Builder.
+     */
+    @JvmStatic
+    fun installUrlInterceptor() {
+        if (urlInterceptorInstalled) return
+        try {
+            java.net.URL.setURLStreamHandlerFactory(MockUrlStreamHandlerFactory())
+            urlInterceptorInstalled = true
+        } catch (e: Error) {
+            android.util.Log.w(
+                "SemanticAgent",
+                "URLStreamHandlerFactory already set by another component; mock interception unavailable for HttpURLConnection. ${e.message}",
+            )
+        }
+    }
 }

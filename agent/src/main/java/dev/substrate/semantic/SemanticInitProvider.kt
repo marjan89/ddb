@@ -10,6 +10,11 @@ class SemanticInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val app = context?.applicationContext as? Application ?: return false
         try {
+            SemanticAgent.installUrlInterceptor()
+        } catch (e: Throwable) {
+            android.util.Log.w("SemanticAgent", "installUrlInterceptor failed: ${e.message}")
+        }
+        try {
             SemanticServer.install(app)
         } catch (e: Throwable) {
             android.util.Log.e("SemanticAgent", "Failed to start semantic server: ${e.message}", e)
