@@ -141,27 +141,17 @@ class SemanticServer private constructor(
                 handleMockStatus()
             }
 
+            uri == "/login" && session.method == Method.POST -> {
+                handleLogin(session)
+            }
+
             else -> {
                 newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
             }
         }
 
     private fun handleIdle(): Response {
-        val activity =
-            currentActivity?.get()
-                ?: return jsonResponse("""{"idle":true}""")
-        var idle = true
-        val latch = java.util.concurrent.CountDownLatch(1)
-        mainHandler.post {
-            val rootView = activity.window.decorView
-            val layoutIdle = !rootView.isLayoutRequested && !rootView.isDirty
-            val scrollIdle = isScrollIdle(rootView)
-            idle = layoutIdle && scrollIdle
-            latch.countDown()
-        }
-        if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
-            return jsonResponse("""{"idle":false,"reason":"timeout"}""")
-        }
+        val idle = idleRegistry.isIdle()
         return jsonResponse("""{"idle":$idle}""")
     }
 
@@ -468,6 +458,41 @@ class SemanticServer private constructor(
             mockRegistry.clear()
         }
         return jsonResponse("""{"mocked":false}""")
+    }
+
+    private fun handleLogin(session: IHTTPSession): Response {
+        val body = readBody(session)
+        val email = extractJsonString(body, "email") ?: ""
+        val password = extractJsonString(body, "password") ?: ""
+        val handler = SemanticAgent.loginHandler
+            ?: return jsonResponse(
+                """{"success":false,"error":"no loginHandler registered"}""",
+                Response.Status.SERVICE_UNAVAILABLE,
+            )
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var success = false
+        var error: String? = null
+        try {
+            handler(email, password) { ok, err ->
+                success = ok
+                error = err
+                latch.countDown()
+            }
+        } catch (t: Throwable) {
+            return jsonResponse(
+                """{"success":false,"error":"handler threw: ${t.message?.replace("\"", "'") ?: "unknown"}"}""",
+                Response.Status.INTERNAL_ERROR,
+            )
+        }
+        val signalled = latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+        if (!signalled) {
+            return jsonResponse(
+                """{"success":false,"error":"handler did not complete within 5s"}""",
+                Response.Status.INTERNAL_ERROR,
+            )
+        }
+        val errField = error?.let { ""","error":"${it.replace("\"", "'")}"""" } ?: ""
+        return jsonResponse("""{"success":$success$errField}""")
     }
 
     private fun handleMockStatus(): Response {
@@ -908,6 +933,7 @@ class SemanticServer private constructor(
                 )}","status":${e.status},"duration_ms":${e.durationMs},"body_size":${e.bodySize}}"""
             }
         val walkLog = ViewTreeWalker.lastDebugLog.take(500)
+        // NOTE: was take(500); Compose descent generates more lines but truncation is fine for prod.
         val mockActive = !mockRegistry.isEmpty()
         val mockInfo = if (mockActive) ""","mock":{"active":true,"rules":${mockRegistry.ruleCount()}}""" else ""","mock":{"active":false}"""
         return jsonResponse("""{"requests":[${entries.joinToString(",")}],"last_walk":"${escape(walkLog)}"$mockInfo}""")
@@ -1217,8 +1243,10 @@ class SemanticServer private constructor(
             server.idleRegistry.register(UIThreadIdleResource())
             server.idleRegistry.register(LayoutIdleResource { server.currentActivity?.get() })
             server.idleRegistry.register(ScrollIdleResource { server.currentActivity?.get() })
+            server.idleRegistry.register(ComposeIdleResource())
             server.idleRegistry.register(NetworkIdleResource(app))
             server.idleRegistry.register(DialogIdleResource { server.currentActivity?.get() })
+            server.idleRegistry.register(RecyclerViewDataIdleResource { server.currentActivity?.get() })
             val activityTransition = ActivityTransitionIdleResource()
             server.idleRegistry.register(activityTransition)
 

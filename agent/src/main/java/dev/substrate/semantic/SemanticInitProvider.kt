@@ -9,7 +9,11 @@ import android.net.Uri
 class SemanticInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val app = context?.applicationContext as? Application ?: return false
-        SemanticServer.install(app)
+        try {
+            SemanticServer.install(app)
+        } catch (e: Throwable) {
+            android.util.Log.e("SemanticAgent", "Failed to start semantic server: ${e.message}", e)
+        }
         return true
     }
 
