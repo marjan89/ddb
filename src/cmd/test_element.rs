@@ -211,7 +211,10 @@ pub fn parse_bounds_center(chunk: &str) -> Option<(i32, i32)> {
     if coords.len() != 2 { return None; }
     let x1: i32 = coords[0].parse().ok()?;
     let y1: i32 = coords[1].parse().ok()?;
-    let rest = &bounds_str[b_end + 2..];
+    // TD-52: bounds tuples may be single-rect ("[x,y]") on non-UIAutomator
+    // inputs (semantic-agent yaml fall-through). Guard the offset and yield
+    // None instead of panicking so the caller's None-path runs.
+    let rest = bounds_str.get(b_end + 2..)?;
     let b2 = rest.find(']')?;
     let c2: Vec<&str> = rest[..b2].split(',').collect();
     if c2.len() != 2 { return None; }
