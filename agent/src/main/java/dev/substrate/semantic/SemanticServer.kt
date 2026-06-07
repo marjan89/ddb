@@ -298,8 +298,10 @@ class SemanticServer private constructor(
                     focused.setText(value)
                     focused.setSelection(focused.text.length)
                     success = true
+                } else if (setComposeFocusedText(activity, value)) {
+                    success = true
                 } else {
-                    error = "no focused EditText"
+                    error = "no focused EditText (View or Compose)"
                 }
             } catch (e: Exception) {
                 error = e.message
@@ -315,6 +317,108 @@ class SemanticServer private constructor(
         } else {
             jsonResponse("""{"set":false,"error":"${escape(error ?: "")}"}""", Response.Status.BAD_REQUEST)
         }
+    }
+
+    /**
+     * TD-58: Compose TextField focus probe. activity.currentFocus returns the
+     * AndroidComposeView (not an EditText) when focus is on a Compose TextField.
+     * Walk every AndroidComposeView's AccessibilityNodeProvider, find the node
+     * with isFocused && isEditable, dispatch ACTION_SET_TEXT via the provider.
+     * Must run on the main thread (caller handles posting).
+     */
+    private fun setComposeFocusedText(activity: Activity, value: String): Boolean {
+        val composeViews = mutableListOf<android.view.View>()
+        collectComposeViews(activity.window.decorView, composeViews)
+        for (cv in composeViews) {
+            val provider = try { cv.accessibilityNodeProvider } catch (_: Throwable) { null } ?: continue
+            val virtualId = findFocusedEditableVirtualId(provider) ?: continue
+            val args = Bundle().apply {
+                putCharSequence(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    value,
+                )
+            }
+            val ok = try {
+                provider.performAction(
+                    virtualId,
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    args,
+                )
+            } catch (_: Throwable) { false }
+            if (ok) return true
+        }
+        return false
+    }
+
+    private fun collectComposeViews(view: android.view.View, out: MutableList<android.view.View>) {
+        var c: Class<*>? = view.javaClass
+        while (c != null) {
+            if (c.name == "androidx.compose.ui.platform.AndroidComposeView") {
+                out.add(view); break
+            }
+            c = c.superclass
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) collectComposeViews(view.getChildAt(i), out)
+        }
+    }
+
+    private fun findFocusedEditableVirtualId(
+        provider: android.view.accessibility.AccessibilityNodeProvider,
+    ): Int? {
+        val root = try { provider.createAccessibilityNodeInfo(-1) } catch (_: Throwable) { null } ?: return null
+        return try { walkForFocusedEditable(root, provider) } finally {
+            try { root.recycle() } catch (_: Throwable) {}
+        }
+    }
+
+    private fun walkForFocusedEditable(
+        node: android.view.accessibility.AccessibilityNodeInfo,
+        provider: android.view.accessibility.AccessibilityNodeProvider,
+    ): Int? {
+        val cls = android.view.accessibility.AccessibilityNodeInfo::class.java
+        for (i in 0 until node.childCount) {
+            val packed: Long = try {
+                val f = cls.getDeclaredField("mChildNodeIds")
+                f.isAccessible = true
+                val arr = f.get(node)
+                when {
+                    arr is LongArray && i < arr.size -> arr[i]
+                    arr != null -> {
+                        val getM = arr.javaClass.getMethod("get", Int::class.javaPrimitiveType)
+                        getM.invoke(arr, i) as Long
+                    }
+                    else -> continue
+                }
+            } catch (_: Throwable) {
+                try {
+                    val m = cls.getDeclaredMethod("getChildId", Int::class.javaPrimitiveType)
+                    m.isAccessible = true
+                    m.invoke(node, i) as Long
+                } catch (_: Throwable) { continue }
+            }
+            val candidates = listOf(
+                (packed and 0xFFFFFFFFL).toInt(),
+                (packed ushr 32).toInt(),
+                packed.toInt(),
+            ).distinct()
+            for (vid in candidates) {
+                val child = try { provider.createAccessibilityNodeInfo(vid) } catch (_: Throwable) { null }
+                if (child != null) {
+                    try {
+                        if (child.isFocused && (child.isEditable || (child.className?.toString()?.endsWith("EditText") == true))) {
+                            return vid
+                        }
+                        val deeper = walkForFocusedEditable(child, provider)
+                        if (deeper != null) return deeper
+                    } finally {
+                        try { child.recycle() } catch (_: Throwable) {}
+                    }
+                    break
+                }
+            }
+        }
+        return null
     }
 
     private fun handleClick(session: IHTTPSession): Response {
