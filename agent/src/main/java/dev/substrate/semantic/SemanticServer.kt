@@ -1003,6 +1003,92 @@ class SemanticServer private constructor(
         return null
     }
 
+    /**
+     * TD-63: locate the AndroidComposeView whose semantics tree contains a
+     * scrollable node. Returns the View itself (not just the provider) so
+     * callers can dispatch MotionEvents on it for synthetic swipe injection
+     * — the only reliable way to drive LazyColumn since ACTION_SCROLL_FORWARD
+     * via AccessibilityNodeProvider doesn't reach LazyList's gesture detector.
+     */
+    private fun findComposeScrollableView(root: android.view.View): android.view.View? {
+        val composeViews = mutableListOf<android.view.View>()
+        collectComposeViews(root, composeViews)
+        for (cv in composeViews) {
+            val provider = try { cv.accessibilityNodeProvider } catch (_: Throwable) { null } ?: continue
+            val rootNode = try { provider.createAccessibilityNodeInfo(-1) } catch (_: Throwable) { null } ?: continue
+            try {
+                val vid = walkForScrollable(rootNode, provider)
+                if (vid != null) return cv
+            } finally {
+                try { rootNode.recycle() } catch (_: Throwable) {}
+            }
+        }
+        return null
+    }
+
+    /**
+     * TD-63: synthesize a vertical swipe gesture on `view` via dispatchTouchEvent.
+     * Compose's drag gesture detector accepts injected MotionEvents as a normal
+     * touch sequence — single downTime across DOWN+MOVE+UP, small ms intervals
+     * between events so the gesture detector treats them as continuous motion.
+     *
+     * Coords are view-local (0,0 is top-left of the view). Use the view's
+     * dimensions to compute centered swipe targets.
+     *
+     * Returns true if all events accepted; false on any dispatch failure.
+     */
+    private fun synthSwipe(
+        view: android.view.View,
+        fromX: Float,
+        fromY: Float,
+        toX: Float,
+        toY: Float,
+        durationMs: Long = 300,
+        steps: Int = 12,
+    ): Boolean {
+        val downTime = android.os.SystemClock.uptimeMillis()
+        val stepMs = (durationMs / steps).coerceAtLeast(8)
+        try {
+            // DOWN
+            val downEvent = android.view.MotionEvent.obtain(
+                downTime, downTime,
+                android.view.MotionEvent.ACTION_DOWN,
+                fromX, fromY, 0,
+            )
+            view.dispatchTouchEvent(downEvent)
+            downEvent.recycle()
+
+            // MOVE chain — interpolated
+            for (i in 1..steps) {
+                val t = i.toFloat() / steps.toFloat()
+                val x = fromX + (toX - fromX) * t
+                val y = fromY + (toY - fromY) * t
+                val eventTime = downTime + (i * stepMs)
+                val moveEvent = android.view.MotionEvent.obtain(
+                    downTime, eventTime,
+                    android.view.MotionEvent.ACTION_MOVE,
+                    x, y, 0,
+                )
+                view.dispatchTouchEvent(moveEvent)
+                moveEvent.recycle()
+            }
+
+            // UP
+            val upTime = downTime + (steps * stepMs)
+            val upEvent = android.view.MotionEvent.obtain(
+                downTime, upTime,
+                android.view.MotionEvent.ACTION_UP,
+                toX, toY, 0,
+            )
+            view.dispatchTouchEvent(upEvent)
+            upEvent.recycle()
+
+            return true
+        } catch (_: Throwable) {
+            return false
+        }
+    }
+
     private fun findScrollable(view: android.view.View): android.view.View? {
         val className = view.javaClass.name
         if (className.contains("RecyclerView") && (view.canScrollVertically(1) || view.canScrollVertically(-1))) return view
@@ -1234,13 +1320,18 @@ class SemanticServer private constructor(
         mainHandler.post {
             try {
                 val scrollable = findScrollable(activity.window.decorView)
-                // TD-63: Compose LazyColumn is not a View subclass — findScrollable
-                // returns null. Fall back to AccessibilityNodeProvider scrolling
-                // on the AndroidComposeView.
+                // TD-63: Compose LazyColumn is not a View subclass. Two Compose
+                // paths: prefer MotionEvent injection on the AndroidComposeView
+                // (drives LazyList's pointer-input gesture detector directly —
+                // the reliable path); fall back to ACTION_SCROLL_FORWARD via
+                // AccessibilityNodeProvider (works for some Compose scrollables
+                // but NOT LazyColumn — kept as backstop for restore + edge cases).
+                val composeView: android.view.View? =
+                    if (scrollable == null) findComposeScrollableView(activity.window.decorView) else null
                 val composeScroll: Pair<android.view.accessibility.AccessibilityNodeProvider, Int>? =
-                    if (scrollable == null) findComposeScrollable(activity.window.decorView) else null
+                    if (scrollable == null && composeView == null) findComposeScrollable(activity.window.decorView) else null
 
-                if (scrollable == null && composeScroll == null) {
+                if (scrollable == null && composeView == null && composeScroll == null) {
                     error = "no scrollable view (Android or Compose)"
                     latch.countDown()
                     return@post
@@ -1256,6 +1347,28 @@ class SemanticServer private constructor(
                     for (step in 1..maxScroll) {
                         if (scrollable != null) {
                             scrollable.scrollBy(0, scrollAmountPx)
+                        } else if (composeView != null) {
+                            // MotionEvent swipe: bottom-third → top-third (centered horizontally).
+                            val w = composeView.width.toFloat()
+                            val h = composeView.height.toFloat()
+                            val cx = w / 2f
+                            val fromY = h * 0.75f
+                            val toY = h * 0.25f
+                            if (!synthSwipe(composeView, cx, fromY, cx, toY)) {
+                                // Fallback to a11y action if swipe fails.
+                                composeView.accessibilityNodeProvider?.let { p ->
+                                    findComposeScrollable(activity.window.decorView)?.let { (prov, vid) ->
+                                        try {
+                                            prov.performAction(
+                                                vid,
+                                                android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                                                null,
+                                            )
+                                        } catch (_: Throwable) {}
+                                    }
+                                    @Suppress("UNUSED_VARIABLE") val _unused = p
+                                }
+                            }
                         } else if (composeScroll != null) {
                             try {
                                 composeScroll.first.performAction(
@@ -1276,8 +1389,18 @@ class SemanticServer private constructor(
                 if (restoreScroll || found == null) {
                     if (scrollable != null) {
                         scrollable.scrollTo(0, 0)
+                    } else if (composeView != null) {
+                        // Best-effort reverse swipes equal to forward count.
+                        val w = composeView.width.toFloat()
+                        val h = composeView.height.toFloat()
+                        val cx = w / 2f
+                        val fromY = h * 0.25f
+                        val toY = h * 0.75f
+                        for (i in 0 until scrollCount) {
+                            if (!synthSwipe(composeView, cx, fromY, cx, toY)) break
+                            Thread.sleep(100)
+                        }
                     } else if (composeScroll != null) {
-                        // Best-effort: dispatch backward scrolls equal to forward count.
                         for (i in 0 until scrollCount) {
                             try {
                                 composeScroll.first.performAction(
