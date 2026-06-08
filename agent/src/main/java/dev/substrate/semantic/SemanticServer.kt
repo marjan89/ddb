@@ -5,6 +5,7 @@ import android.app.Application
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Choreographer
 import fi.iki.elonen.NanoHTTPD
 import java.lang.ref.WeakReference
 
@@ -744,23 +745,50 @@ class SemanticServer private constructor(
         var error: String? = null
         val latch = java.util.concurrent.CountDownLatch(1)
 
+        // TD-71 — replaced Thread.sleep(100) scroll-idle wait with a
+        // Choreographer.postFrameCallback chain. The prior loop blocked the
+        // main thread (Choreographer) for up to 1s, starving Compose's
+        // recompose / layout phases — walker then read a stale tree. The
+        // frame-callback chain re-yields to the frame pipeline between
+        // checks so Compose can settle before walker fires.
+        // Max budget mirrors original: 10 frames (~166ms @ 60Hz / ~83ms @
+        // 120Hz). Subsumes TD-51 (ComposeIdleResource jitter) + TD-70
+        // (cachedSchema race after fast nav).
         mainHandler.post {
-            try {
-                val rootView = activity.window.decorView
-                for (i in 0..10) {
-                    if (isScrollIdle(rootView)) break
-                    Thread.sleep(100)
+            val rootView = activity.window.decorView
+            val choreographer = Choreographer.getInstance()
+            var framesLeft = 10
+
+            fun runWalkerAndComplete() {
+                try {
+                    schema = ViewTreeWalker.walk(activity)
+                    val dialogElements = walkDialogWindows(activity)
+                    if (dialogElements.isNotEmpty()) {
+                        schema = schema!!.copy(elements = schema!!.elements + dialogElements)
+                    }
+                    cachedSchema = schema
+                } catch (e: Exception) {
+                    error = e.message ?: "unknown error"
                 }
-                schema = ViewTreeWalker.walk(activity)
-                val dialogElements = walkDialogWindows(activity)
-                if (dialogElements.isNotEmpty()) {
-                    schema = schema!!.copy(elements = schema!!.elements + dialogElements)
-                }
-                cachedSchema = schema
-            } catch (e: Exception) {
-                error = e.message ?: "unknown error"
+                latch.countDown()
             }
-            latch.countDown()
+
+            val frameCallback = object : Choreographer.FrameCallback {
+                override fun doFrame(frameTimeNanos: Long) {
+                    try {
+                        if (isScrollIdle(rootView) || framesLeft <= 0) {
+                            runWalkerAndComplete()
+                        } else {
+                            framesLeft--
+                            choreographer.postFrameCallback(this)
+                        }
+                    } catch (e: Exception) {
+                        error = e.message ?: "frame-callback error"
+                        latch.countDown()
+                    }
+                }
+            }
+            choreographer.postFrameCallback(frameCallback)
         }
 
         if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
