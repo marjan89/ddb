@@ -13,7 +13,7 @@ use super::test_element::{
     scroll_direction, scroll_search,
 };
 use super::test_fixture::{load_fixtures_map, flatten_fixtures, interpolate_raw, FixtureResolver};
-use super::test_observability::{capture_failure_screenshot, fetch_debug_log};
+use super::test_observability::{capture_failure_screenshot, fetch_debug_log, Observer, LogFormat, spawn_fd_watchdog};
 use super::test_log::Logger;
 use super::test_timeout::{TimeoutManager, TimeoutLevel, StepRunner, PhaseBudgets, StepPhase};
 
@@ -106,6 +106,18 @@ pub struct TestArgs {
     /// Capture semantic agent baseline on PASS (writes to baseline/ next to TC)
     #[arg(long)]
     pub capture_baseline: bool,
+
+    /// Epic K — observability hardening. `on` (default) emits ERROR banners,
+    /// WARNs, heartbeats, FD watchdog, agent health pings, and per-step
+    /// structured logs to stderr. `off` reverts to silent legacy behavior
+    /// (byte-identical stderr for CI back-compat).
+    #[arg(long, default_value = "on")]
+    pub observability: String,
+
+    /// Epic K — output format for observability surfaces. `text` (default)
+    /// is human-readable; `json` emits one JSON object per line to stderr.
+    #[arg(long, default_value = "text")]
+    pub log_format: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -512,8 +524,37 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     let mut pass = 0;
     let mut fail = 0;
 
+    // Epic K — observability context. `--observability=off` produces a
+    // silent observer (no-op emits) for byte-identical-stderr back-compat.
+    let obs_enabled = args.observability != "off";
+    let log_fmt = LogFormat::parse(&args.log_format)?;
+    let observer = std::sync::Arc::new(Observer::new(
+        obs_enabled, log_fmt, agent_base_url().to_string(),
+    ));
+    let _fd_watchdog_stop = spawn_fd_watchdog(observer.clone(), 5);
+    if obs_enabled {
+        eprintln!("  observability: on (format={}, fd_soft_limit={})",
+            if log_fmt == LogFormat::Json { "json" } else { "text" },
+            observer.fd_soft_limit);
+    }
+    let total_specs = specs.len();
+
     let clean_state = std::env::var("DDB_CLEAN_STATE").ok().map(|v| v == "true").unwrap_or(false);
     for (tc_index, spec_path) in specs.iter().enumerate() {
+        // Epic K surface 2: fail-fast — abort if infra error fired.
+        if observer.is_aborted() {
+            eprintln!("  ABORT — observability flagged infra failure (last TC index {tc_index}, spec {spec_path})");
+            break;
+        }
+        // Epic K surface 6: agent health ping between TCs. First TC also
+        // gets a ping so a dead agent surfaces before we burn into setup.
+        let _ = observer.agent_health_ping(&util_runner);
+        if observer.is_aborted() {
+            eprintln!("  ABORT — agent health check failed before TC {} ({spec_path})", tc_index + 1);
+            break;
+        }
+        // Epic K surface 4: heartbeat counter — emits every 5 TCs.
+        observer.maybe_heartbeat(tc_index, total_specs, fail);
         // #44 — Proactive adb zombie sweep between TCs on cold-state
         // suites. The host adb server wedges after ~5 repeated pm
         // clear cycles; restarting every 5 TCs keeps suites moving
@@ -592,9 +633,10 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
         let step_timeout = args.step_timeout;
         let fixtures_clone = fixtures_map.clone();
         let mock_clone = mock_body.clone();
+        let obs_clone = observer.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone, mock_clone.as_deref(), &spec_path_clone);
+            let result = run_spec(&spec_clone, dev_clone.as_ref(), step_timeout, &fixtures_clone, mock_clone.as_deref(), &spec_path_clone, obs_clone);
             let _ = tx.send(result);
         });
         let (result, step_logs) = match rx.recv_timeout(tc_hard_timeout) {
@@ -1175,7 +1217,7 @@ impl RunContext {
     }
 }
 
-fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>, mock_body: Option<&str>, spec_path: &str) -> (TestResult, Vec<StepLogEntry>) {
+fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std::collections::HashMap<String, String>, mock_body: Option<&str>, spec_path: &str, observer: std::sync::Arc<Observer>) -> (TestResult, Vec<StepLogEntry>) {
     let mut step_logs: Vec<StepLogEntry> = Vec::new();
     let tc_dir = std::path::Path::new(spec_path)
         .parent()
@@ -1548,6 +1590,15 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
                 logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, true);
                 let elapsed = tc_start.elapsed().as_secs_f32();
                 eprintln!("  step {}/{}: {} ✓", i + 1, spec.steps.len(), step_desc);
+                // Epic K surface 7: per-step structured logging.
+                let action_name_log = match step {
+                    Step::Action(a) => a.action.clone(),
+                    Step::Assert(a) => format!("assert_{}", a.assert),
+                };
+                observer.step(&spec.id, i + 1, &action_name_log,
+                    step_target_desc(step).as_deref(),
+                    "PASS",
+                    &format!("found={} elapsed_s={:.2}", found_desc, elapsed));
 
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
@@ -1574,6 +1625,17 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
             }
             Err(err) => {
                 logger.step_end(i + 1, &step_desc_log, step_start.elapsed().as_millis() as u64, false);
+                // Epic K surface 7: per-step structured logging on FAIL.
+                // Note: TC-author assertion failures are NOT infra — do
+                // NOT trip the abort flag here (run() owns infra fail-fast).
+                let action_name_log = match step {
+                    Step::Action(a) => a.action.clone(),
+                    Step::Assert(a) => format!("assert_{}", a.assert),
+                };
+                observer.step(&spec.id, i + 1, &action_name_log,
+                    step_target_desc(step).as_deref(),
+                    "FAIL",
+                    err);
                 let (action_name, assert_name) = match step {
                     Step::Action(a) => (Some(a.action.clone()), None),
                     Step::Assert(a) => (None, Some(a.assert.clone())),

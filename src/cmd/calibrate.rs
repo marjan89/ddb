@@ -163,6 +163,8 @@ pub fn run(dev_name: Option<&str>, args: CalibrateArgs) -> Result<(), String> {
             base_branch: "main".into(),
             tc_map: None,
             capture_baseline: false,
+            observability: "off".into(),
+            log_format: "text".into(),
         };
 
         if let Err(e) = test::run(dev_name, test_args) {
