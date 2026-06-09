@@ -621,15 +621,28 @@ class SemanticServer private constructor(
                 Response.Status.INTERNAL_ERROR,
             )
         }
-        // TD-70: after a successful login, (a) invalidate the cached semantic
-        // schema so subsequent /semantic calls re-walk and (b) await the full
-        // idle barrier so the Compose recompose triggered by the handler's
-        // state mutation has surfaced. Without this, callers polling /semantic
-        // immediately after the 200 may race the recompose and miss the
-        // logged-in indicator. 3s budget — handler succeeded, just let UI
-        // catch up.
+        // TD-70 / TD-101: after a successful login, (a) invalidate the cached
+        // semantic schema so subsequent /semantic calls re-walk and (b) await
+        // the Compose recompose + layout idle so the state mutation triggered
+        // by the handler closure has surfaced before the next /semantic call.
+        // Without (b), callers polling /semantic immediately after the 200 may
+        // race the recompose and miss the logged-in indicator (t34 flake).
+        // handleSemantic's own awaitFrame loop only gates on scroll-idle, and
+        // on a static screen it exits at i=0 — so the barrier has to live here.
         if (success) {
             cachedSchema = null
+            val recomposeLatch = java.util.concurrent.CountDownLatch(1)
+            GlobalScope.launch(Dispatchers.Main) {
+                try {
+                    for (i in 0..30) {
+                        if (idleRegistry.isIdle()) break
+                        awaitFrame()
+                    }
+                } finally {
+                    recomposeLatch.countDown()
+                }
+            }
+            recomposeLatch.await(3, java.util.concurrent.TimeUnit.SECONDS)
         }
         val errField = error?.let { ""","error":"${it.replace("\"", "'")}"""" } ?: ""
         return jsonResponse("""{"success":$success$errField}""")
