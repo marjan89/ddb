@@ -1305,9 +1305,16 @@ fn run_spec(spec: &TestSpec, dev: Option<&Device>, timeout: u64, fixtures: &std:
     // element to appear (`- id:` line — every record emits it). Shares
     // the same DDB_AGENT_READY_TIMEOUT budget.
     // Default timeout — 120s on cold (#40, Flutter cold launches post
-    // pm clear hit dex/oat opt + first-frame jank), 5s on warm. Either
+    // pm clear hit dex/oat opt + first-frame jank), 15s on warm. Either
     // can be overridden explicitly via DDB_AGENT_READY_TIMEOUT.
-    let agent_ready_timeout_default: u64 = if clean_state { 120 } else { 5 };
+    //
+    // TD-94: bumped warm 5s→15s. t8 (regression-android AlertDialog
+    // dismiss) intermittently failed when the agent's HTTP server hadn't
+    // re-bound its socket within 5s after pm clear / app restart on
+    // pre-warm runs. 15s covers the slow tail observed in the bucket-2
+    // flake drill without meaningfully delaying the happy path (typical
+    // probe returns sub-second).
+    let agent_ready_timeout_default: u64 = if clean_state { 120 } else { 15 };
     let agent_ready_timeout_s: u64 = std::env::var("DDB_AGENT_READY_TIMEOUT")
         .ok().and_then(|v| v.parse().ok()).unwrap_or(agent_ready_timeout_default);
     let semantic_gate = std::env::var("DDB_SEMANTIC_GATE")
