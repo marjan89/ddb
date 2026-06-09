@@ -37,11 +37,14 @@ VERSION_SHA=""
 # TD-44: visual-QA phase 4 controls (default off; opt-in initially).
 VISUAL_QA=0
 UPDATE_BASELINES=0
-# TD-50: per-TC reset mode + prewarm (Android sibling of iOS TD-49).
-# Default mode=none for back-compat; am-restart force-stops + relaunches
-# the demo before each TC so state from prior TC's navigation doesn't
-# carry over (T2 leaves T2TypeScreen → T1's "T1 Launch" assert fails).
-RESET_MODE="none"
+# TD-50 / TD-93: per-TC reset mode + prewarm (Android sibling of iOS TD-49).
+# am-restart force-stops + relaunches the demo before each TC. Defaults to
+# am-restart per TD-93 drill: process survival across TCs leaves
+# SemanticServer/MockRegistry.shared/T13Store singletons polluted, which
+# produced a deterministic 5-TC fail set in variance×3 r=2/r=3 (t10, t12,
+# t15, t25, t34). am-restart kills the JVM → singletons reborn fresh.
+# Set RESET_MODE=none on the CLI to opt back into the prior behavior.
+RESET_MODE="am-restart"
 PREWARM=0
 # TD-57: peer apps on the device that also embed the semantic-agent and
 # bind canonical port 9876. Whichever process binds first serves /semantic;
