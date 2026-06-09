@@ -150,6 +150,10 @@ class SemanticServer private constructor(
                 handleLogin(session)
             }
 
+            uri == "/debug-reset" && session.method == Method.POST -> {
+                handleDebugReset()
+            }
+
             else -> {
                 newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
             }
@@ -629,6 +633,28 @@ class SemanticServer private constructor(
         }
         val errField = error?.let { ""","error":"${it.replace("\"", "'")}"""" } ?: ""
         return jsonResponse("""{"success":$success$errField}""")
+    }
+
+    // TD-93: per-TC state reset for the agent singleton when the host process
+    // survives across TCs (i.e. when the recipe runner cannot or chooses not
+    // to am-force-stop the app between TCs). Gated by SEMANTIC_DEBUG=1 so
+    // production callers cannot wipe live state by mistake. The runner-side
+    // RESET_MODE=am-restart in regress-android.sh is the primary fix; this
+    // endpoint is defensive depth for the JVM-survives path.
+    private fun handleDebugReset(): Response {
+        if (!debugEnabled) {
+            return jsonResponse(
+                """{"reset":false,"error":"debug disabled; set SEMANTIC_DEBUG=1"}""",
+                Response.Status.FORBIDDEN,
+            )
+        }
+        mockRegistry.clear()
+        eventQueue.clear()
+        requestLog.clear()
+        cachedSchema = null
+        // hitCount intentionally not reset: diagnostic only, has a private
+        // setter, and keeping the lifetime count helps post-mortem analysis.
+        return jsonResponse("""{"reset":true}""")
     }
 
     private fun handleMockStatus(): Response {
@@ -1482,6 +1508,12 @@ class SemanticServer private constructor(
         // cold-init race. Override with SEMANTIC_HANDLER_WAIT_MS for tests.
         private val handlerWaitMs: Long =
             System.getenv("SEMANTIC_HANDLER_WAIT_MS")?.toLongOrNull() ?: 2000L
+
+        // TD-93: gate the /debug-reset endpoint. Off by default; recipes /
+        // test wrappers that need to wipe agent singleton state without
+        // killing the JVM can set SEMANTIC_DEBUG=1 in the app's env.
+        private val debugEnabled: Boolean =
+            System.getenv("SEMANTIC_DEBUG") == "1"
 
         @JvmStatic
         @JvmOverloads
