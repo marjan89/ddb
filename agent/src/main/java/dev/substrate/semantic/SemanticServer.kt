@@ -579,11 +579,22 @@ class SemanticServer private constructor(
         val body = readBody(session)
         val email = extractJsonString(body, "email") ?: ""
         val password = extractJsonString(body, "password") ?: ""
-        val handler = SemanticAgent.loginHandler
-            ?: return jsonResponse(
+        // TD-97: ContentProvider.onCreate (starts listener) runs before
+        // Application.onCreate (registers handler), so during cold init
+        // the handler can be null for ~100s of ms while /login is already
+        // reachable. Wait briefly before failing.
+        val deadline = System.currentTimeMillis() + handlerWaitMs
+        var handler = SemanticAgent.loginHandler
+        while (handler == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50)
+            handler = SemanticAgent.loginHandler
+        }
+        if (handler == null) {
+            return jsonResponse(
                 """{"success":false,"error":"no loginHandler registered"}""",
                 Response.Status.SERVICE_UNAVAILABLE,
             )
+        }
         val latch = java.util.concurrent.CountDownLatch(1)
         var success = false
         var error: String? = null
@@ -1466,6 +1477,11 @@ class SemanticServer private constructor(
 
     companion object {
         private var instance: SemanticServer? = null
+
+        // TD-97: max ms to wait for SemanticAgent.loginHandler during
+        // cold-init race. Override with SEMANTIC_HANDLER_WAIT_MS for tests.
+        private val handlerWaitMs: Long =
+            System.getenv("SEMANTIC_HANDLER_WAIT_MS")?.toLongOrNull() ?: 2000L
 
         @JvmStatic
         @JvmOverloads
