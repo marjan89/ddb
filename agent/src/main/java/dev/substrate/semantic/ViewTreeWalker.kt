@@ -490,7 +490,7 @@ object ViewTreeWalker {
                 SemanticElement(
                     id = id, platformId = null, type = type, content = content,
                     font = null, color = null, bounds = bounds, zIndex = z,
-                    clickable = isClickable, enabled = true, accessible = true,
+                    clickable = isClickable, enabled = !isDisabled, accessible = true,
                     a11yLabel = contentDesc, a11yId = null, background = null,
                     cornerRadius = null, padding = null, margin = null, elevation = null,
                     render = null, lineCount = null, truncated = null,

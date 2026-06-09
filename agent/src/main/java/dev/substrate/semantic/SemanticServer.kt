@@ -7,6 +7,11 @@ import android.os.Handler
 import android.os.Looper
 import fi.iki.elonen.NanoHTTPD
 import java.lang.ref.WeakReference
+// TD-91 + TD-92 — Compose-friendly main-thread waiting via vsync, not Thread.sleep.
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.launch
 
 class SemanticServer private constructor(
     port: Int,
@@ -534,7 +539,13 @@ class SemanticServer private constructor(
                 val method = obj.optString("method", "GET")
                 val respObj = obj.getJSONObject("response")
                 val status = respObj.optInt("status", 200)
-                val respBody = respObj.optString("body", "{}")
+                // TD-95: optString on a JSONObject/JSONArray field returns the
+                // fallback ("{}"), not the JSON-encoded form. t10 sends
+                // `response.body: { text: "..." }` as a nested object — the old
+                // code emitted literal "{}" to the app instead of the JSON
+                // string. Use opt(...).toString() which round-trips: a string
+                // stays a string; an object/array becomes its JSON encoding.
+                val respBody = respObj.opt("body")?.toString() ?: "{}"
                 val headers = mutableMapOf<String, String>()
                 respObj.optJSONObject("headers")?.let { h ->
                     h.keys().forEach { k -> headers[k] = h.getString(k) }
@@ -744,12 +755,22 @@ class SemanticServer private constructor(
         var error: String? = null
         val latch = java.util.concurrent.CountDownLatch(1)
 
-        mainHandler.post {
+        // TD-92 — replaced the Thread.sleep(100) scroll-idle loop with a
+        // coroutine that suspends on kotlinx.coroutines.android.awaitFrame.
+        // awaitFrame() suspends until the NEXT Choreographer vsync — unlike
+        // Thread.sleep, it does NOT block the main thread between frames,
+        // so Compose's recomposition + LazyList realization can complete
+        // between checks. Unlike the TD-71 raw Choreographer.postFrameCallback
+        // chain (which introduced an observer effect — the callback enqueue
+        // itself altered the frame schedule causing fling-decay to look
+        // idle when it wasn't), awaitFrame's suspend semantics piggyback
+        // the existing dispatcher without scheduling extra callbacks.
+        GlobalScope.launch(Dispatchers.Main) {
             try {
                 val rootView = activity.window.decorView
                 for (i in 0..10) {
                     if (isScrollIdle(rootView)) break
-                    Thread.sleep(100)
+                    awaitFrame()
                 }
                 schema = ViewTreeWalker.walk(activity)
                 val dialogElements = walkDialogWindows(activity)
@@ -1203,19 +1224,25 @@ class SemanticServer private constructor(
             return contentMatch && typeMatch
         }
 
-        mainHandler.post {
+        // TD-91 — Compose LazyColumn scroll path keeps ACTION_SCROLL_FORWARD
+        // via AccessibilityNodeProvider (substrate-41c9 7-agent drill
+        // confirmed this DOES drive Compose's nested-scroll consumer; the
+        // missing piece was a frame barrier on resample). awaitFrame() after
+        // each scroll suspends until next vsync so Compose can recompose +
+        // LazyList realizes new items before walker re-samples. Replaces
+        // Thread.sleep(300) which blocked the main thread (no recompose) AND
+        // replaces the TD-63 MotionEvent path that leaked pointer events
+        // into the next TC and broke t10/t12/t15.
+        GlobalScope.launch(Dispatchers.Main) {
             try {
                 val scrollable = findScrollable(activity.window.decorView)
-                // TD-63: Compose LazyColumn is not a View subclass — findScrollable
-                // returns null. Fall back to AccessibilityNodeProvider scrolling
-                // on the AndroidComposeView.
                 val composeScroll: Pair<android.view.accessibility.AccessibilityNodeProvider, Int>? =
                     if (scrollable == null) findComposeScrollable(activity.window.decorView) else null
 
                 if (scrollable == null && composeScroll == null) {
                     error = "no scrollable view (Android or Compose)"
                     latch.countDown()
-                    return@post
+                    return@launch
                 }
                 val density = activity.resources.displayMetrics.density
                 val viewportH = (activity.resources.displayMetrics.heightPixels / density).toInt()
@@ -1237,7 +1264,10 @@ class SemanticServer private constructor(
                                 )
                             } catch (_: Throwable) {}
                         }
-                        Thread.sleep(300)
+                        // Two frames: one for the scroll to apply, one for
+                        // LazyList to realize the now-visible items. Cheap.
+                        awaitFrame()
+                        awaitFrame()
                         scrollCount = step
                         val schema = ViewTreeWalker.walk(activity)
                         found = schema.elements.firstOrNull(matchElement)
@@ -1249,7 +1279,6 @@ class SemanticServer private constructor(
                     if (scrollable != null) {
                         scrollable.scrollTo(0, 0)
                     } else if (composeScroll != null) {
-                        // Best-effort: dispatch backward scrolls equal to forward count.
                         for (i in 0 until scrollCount) {
                             try {
                                 composeScroll.first.performAction(
@@ -1257,7 +1286,7 @@ class SemanticServer private constructor(
                                     android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
                                     null,
                                 )
-                                Thread.sleep(100)
+                                awaitFrame()
                             } catch (_: Throwable) { break }
                         }
                     }
