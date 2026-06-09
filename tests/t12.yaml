@@ -9,8 +9,14 @@ steps:
     seconds: 2
   - action: tap
     target: {content_fuzzy: "T12 Input"}
+  # TD-96: 1s wait_idle was too short for the Compose accessibility tree to
+  # stabilise after the focus tap. The agent's findFocusedEditableVirtualId()
+  # reflective walk would race the IME-visibility / recompose pass, return
+  # null, and POST /text-field/set would 400 with "no focused EditText"
+  # (1/3 fail in the bucket-2 flake drill). 3s covers the slow tail observed.
+  # Structural fix (focus-probe endpoint) tracked separately.
   - action: wait_idle
-    seconds: 1
+    seconds: 3
   - action: api_call
     url: "http://localhost:19878/text-field/set"
     method: "POST"
