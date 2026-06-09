@@ -1506,8 +1506,14 @@ class SemanticServer private constructor(
 
         // TD-97: max ms to wait for SemanticAgent.loginHandler during
         // cold-init race. Override with SEMANTIC_HANDLER_WAIT_MS for tests.
+        // Bumped 2000 → 5000 after the regression-android sweep on
+        // 2026-06-09 (RESET_MODE=am-restart) still hit t34 r=2 with the
+        // 2s budget — full process re-fork from zygote per TC pushes
+        // cold-init beyond 2s on emulators. The wait is bounded and only
+        // costs when the handler is genuinely null; warm-process callers
+        // return on the first read.
         private val handlerWaitMs: Long =
-            System.getenv("SEMANTIC_HANDLER_WAIT_MS")?.toLongOrNull() ?: 2000L
+            System.getenv("SEMANTIC_HANDLER_WAIT_MS")?.toLongOrNull() ?: 5000L
 
         // TD-93: gate the /debug-reset endpoint. Off by default; recipes /
         // test wrappers that need to wipe agent singleton state without
