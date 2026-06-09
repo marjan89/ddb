@@ -1,0 +1,113 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "dev.substrate",
+    "module": "semantic-agent",
+    "version": "0.1.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.13"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.1.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "semantic-agent-0.1.0.aar",
+          "url": "semantic-agent-0.1.0.aar",
+          "size": 109011,
+          "sha512": "0a2a95e7284875c9d9785fe88786f59bdbf610586995edf95174e59e9be4afaeb460691faad024572adee9378854fb6deb5f94b365b09519bf92a06115a2dca0",
+          "sha256": "94f94264bf138adb3e2cf312d66b199b9df6639da98780c1fb56c7e097de5a97",
+          "sha1": "4984c92b19b01a4433e9ada56d7b93d3e101c7ba",
+          "md5": "922ea7e4b01217b9b7a684e9ec489975"
+        }
+      ]
+    },
+    {
+      "name": "releaseRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.nanohttpd",
+          "module": "nanohttpd",
+          "version": {
+            "requires": "2.3.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-android",
+          "version": {
+            "requires": "1.9.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.1.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "semantic-agent-0.1.0.aar",
+          "url": "semantic-agent-0.1.0.aar",
+          "size": 109011,
+          "sha512": "0a2a95e7284875c9d9785fe88786f59bdbf610586995edf95174e59e9be4afaeb460691faad024572adee9378854fb6deb5f94b365b09519bf92a06115a2dca0",
+          "sha256": "94f94264bf138adb3e2cf312d66b199b9df6639da98780c1fb56c7e097de5a97",
+          "sha1": "4984c92b19b01a4433e9ada56d7b93d3e101c7ba",
+          "md5": "922ea7e4b01217b9b7a684e9ec489975"
+        }
+      ]
+    },
+    {
+      "name": "releaseSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "files": [
+        {
+          "name": "semantic-agent-0.1.0-sources.jar",
+          "url": "semantic-agent-0.1.0-sources.jar",
+          "size": 43277,
+          "sha512": "167fe124f6bacd215c1dc86996dd4a99ac85f103c9946118a90b9543ac353fc348686e4850d22b4a82420e8911a32d4d9e3e50d929dd0e3ca4b4bb211b1fb5a3",
+          "sha256": "662c023fcb8ebd566cc77f7da011a91e2250cc15d0995cff0b7a227c97473438",
+          "sha1": "04a4dfefec497ed13d9af61606ce166a3069c55e",
+          "md5": "ec272e11163c7ea1517ae8dd6a1197b8"
+        }
+      ]
+    }
+  ]
+}

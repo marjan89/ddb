@@ -1,107 +1,99 @@
-# Semantic Agent — Android
+# semantic-agent (Android)
 
-Embeddable debug-only HTTP server that exposes the Android view tree as structured YAML for automated QA tooling. Runs on port 9876 inside the app process.
+Debug-only in-process HTTP server exposing the Android view tree, idle state, and tap/type surface for automated QA. Released as `dev.substrate:semantic-agent`.
+
+See [tctl/docs/agent-porting-guide.md](../tctl/docs/agent-porting-guide.md) for the cross-platform contract and [tctl/docs/agent-capability-matrix.md](../tctl/docs/agent-capability-matrix.md) for per-platform feature status.
+
+## Versions
+
+| Version | SHA | Change |
+|---|---|---|
+| 0.4.0 | 25b493b | `POST /text-field/set` atomic value replace |
+| 0.3.0 | 7c8f517 | `IdleResourceRegistry.safeIsIdle` throwable guard |
+| 0.2.0 | 88b7f6f | public `SemanticServer.registerIdleResource(name, lambda)` |
+| 0.1.0 | b57401c | initial publish |
+
+## Consume
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories { mavenLocal() }
+}
+
+// app/build.gradle.kts
+dependencies {
+    debugImplementation("dev.substrate:semantic-agent:0.4.0")
+}
+```
+
+`SemanticInitProvider` auto-starts the server. No `Application.onCreate` boilerplate required for the agent itself.
 
 ## Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Agent identity + version |
-| GET | /version | Git hash + build time |
-| GET | /idle | Layout + scroll idle state |
-| GET | /semantic | Full view tree as YAML |
-| GET | /stream | SSE event stream (activity, idle) |
-| GET | /permissions | App permission status |
-| POST | /auth/login | Login via AgentAuth |
-| POST | /auth/logout | Logout via AgentAuth |
-| GET | /auth/state | Auth status + user ID |
-| POST | /navigate/site/{id} | Navigate to site detail |
-| POST | /navigate/user/{id} | Navigate to user profile |
-| POST | /keyboard/dismiss | Dismiss soft keyboard |
-| POST | /state/reset | Clear app state |
-| DELETE | /question/{id} | Delete a question |
+| Method | Path | Notes |
+|---|---|---|
+| GET  | `/health` | `{"status":"ok","agent":"semantic-agent","version":"3.0.0"}` |
+| GET  | `/version` | git hash + build time when packaged with `gitHash`/`buildTime` to `install()` |
+| GET  | `/semantic` | YAML element list, current screen |
+| GET  | `/semantic?scroll=0` | full-page semantic, ignores viewport |
+| GET  | `/idle` | `{"idle":bool}` — AND of every registered resource (throwable-guarded since 0.3.0) |
+| GET  | `/idle-resources` | list registered resource names |
+| POST | `/query-when-idle` | wait for idle + element match, return coords |
+| POST | `/scroll-search` | scroll within a scrollable to surface an off-screen element |
+| POST | `/click` | tap by `{resource_id|content_fuzzy|bounds}` |
+| POST | `/type` | per-char `commitText` via `InputConnection` — see caveat below |
+| POST | `/text-field/set` (0.4.0+) | atomic `setText` on focused `EditText`, single TextWatcher fire; preferred for login + IME-sensitive paths |
+| POST | `/keyboard/dismiss` | `imm.hideSoftInputFromWindow` |
+| POST | `/mock` | register mock HTTP rules |
+| POST | `/unmock` | clear mock rules |
+| GET  | `/mock-status` | hit counts + registered rules |
+| GET  | `/stream` | SSE event stream |
+| GET  | `/overlay` | optional debug overlay |
+| GET  | `/debug-log` | recent agent log |
+| DELETE | `/debug-log` | clear |
 
-## Integration
+## Idle resource registration
 
-### 1. Add dependency (debug only)
+Built-in resources at `SemanticServer.install()`: `ui_thread`, `layout`, `scroll`, `network`, `dialog`, `activity_transition`.
 
-```kotlin
-// app/build.gradle.kts
-debugImplementation(project(":semantic-agent"))
-// or: debugImplementation("dev.substrate:semantic-agent:1.0.0")
-```
-
-### 2. Implement interfaces
-
-```kotlin
-// AgentNavigator — how to navigate to screens
-class MyNavigator : AgentNavigator {
-    override fun createSiteIntent(activity: Activity, siteId: Int): Intent =
-        SiteDetailActivity.newIntent(activity, siteId)
-
-    override fun createUserIntent(activity: Activity, userId: Int): Intent =
-        UserProfileActivity.newIntent(activity, userId)
-}
-
-// AgentAuth — how to authenticate
-class MyAuth(
-    private val remoteDataSource: RemoteDataSource,
-    private val userRepository: UserRepository,
-) : AgentAuth {
-    override suspend fun login(email: String, password: String): Result<Unit> { /* ... */ }
-    override suspend fun logout() { /* ... */ }
-    override suspend fun isAuthenticated(): Boolean { /* ... */ }
-    override suspend fun getUserId(): Int { /* ... */ }
-    override suspend fun resetState() { /* ... */ }
-    override suspend fun deleteQuestion(questionId: Int): Boolean { /* ... */ }
-}
-```
-
-### 3. Initialize in debug ContentProvider
+`network` uses reflection to find a Hilt-provided OkHttp `Dispatcher`. Apps that don't match that shape (different DI, no Hilt, custom HTTP client) MUST register explicitly:
 
 ```kotlin
-class SemanticInitProvider : ContentProvider() {
-    override fun onCreate(): Boolean {
-        val app = context?.applicationContext as? Application ?: return false
-        SemanticServer.install(
-            app,
-            gitHash = BuildConfig.GIT_HASH,
-            buildTime = BuildConfig.BUILD_TIME,
-            navigator = MyNavigator(),
-            auth = MyAuth(/* inject deps */),
-        )
-        return true
+val lastStart = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+okHttpClientBuilder.eventListener(object : okhttp3.EventListener() {
+    override fun requestHeadersStart(call: okhttp3.Call) {
+        lastStart.set(System.currentTimeMillis())
     }
-    // ... stub methods
+})
+SemanticServer.registerIdleResource("okhttp") {
+    val sinceLast = System.currentTimeMillis() - lastStart.get()
+    dispatcher.runningCallsCount() == 0 && sinceLast > 1500
 }
 ```
 
-Register in `src/debug/AndroidManifest.xml`:
-```xml
-<provider
-    android:name=".SemanticInitProvider"
-    android:authorities="${applicationId}.semantic"
-    android:exported="false" />
+EventListener (not `addInterceptor`) is required so the listener doesn't fire for mocked requests (mock chain short-circuits inside the interceptor stack). 1.5s settle prevents background polling (workers, analytics) from holding `/idle` busy.
+
+Reference integration: nk-android-2026 `app/src/main/java/se/naturkartan/android/di/Module.kt` (c7dc2eb) + eager `@Inject RestApi` in `MainApplication.onCreate` so the provider runs before the agent's first `/idle` probe.
+
+## Publish
+
+```
+nosandbox ./gradlew :agent:publishReleasePublicationToMavenLocal --no-daemon
 ```
 
-### 4. Port forwarding
+Publishes to `~/.m2/repository/dev/substrate/semantic-agent/<version>/`.
 
-```bash
-adb forward tcp:9876 tcp:9876
-curl http://localhost:9876/health
-# {"status":"ok","agent":"semantic-agent","version":"5.0.0"}
-```
+## Endpoint selection guidance
 
-## Architecture
+| Use case | Endpoint | Why |
+|---|---|---|
+| Plain text input, non-secure field | `/type` | per-char keystrokes acceptable; fires standard text events |
+| Password, SecureKeyboard, autofill-prone field | `/text-field/set` | atomic, single TextWatcher fire, bypasses IME/autofill races |
+| Tap addressable element | `/click` with `resource_id` | most stable |
+| Tap text label | `/click` with `content_fuzzy` | fuzzy substring match |
+| Tap unlabeled touch zone | `/click` with `bounds` | last resort |
 
-- **SemanticServer.kt** — NanoHTTPD server, route dispatch, SSE stream
-- **ViewTreeWalker.kt** — Recursive view tree → SemanticElement conversion
-- **SemanticElement.kt** — Data model for UI elements (bounds, text, clickable, etc.)
-- **AgentContracts.kt** — AgentAuth + AgentNavigator interfaces
+## Known limitations
 
-Zero app-specific imports in engine code. All app integration via interfaces.
-
-## Used by
-
-- [ddb](../device-control-android) — Android test runner
-- [vdb](../visual-debug-bridge) — Visual diff + semantic compare
+See [tctl/docs/agent-capability-matrix.md](../tctl/docs/agent-capability-matrix.md) §"Known limitations" rows L2, L5, L6, L7, L8, L9.
