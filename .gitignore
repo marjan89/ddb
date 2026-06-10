@@ -1,2 +1,15 @@
 /target
 firebase-debug.log
+
+# Android Gradle build artifacts (absorbed agent/ + e2e/)
+agent/build/
+agent/.gradle/
+agent/agent/build/
+agent/local.properties
+e2e/build/
+e2e/.gradle/
+e2e/demo-app/build/
+e2e/demo-app/.gradle/
+e2e/local.properties
+**/.idea/
+*.iml
