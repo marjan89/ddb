@@ -1,0 +1,16 @@
+id: TC-T9-wait
+name: "T9: wait_until async-appearing element"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T9 Wait"}
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T9 Trigger"}
+  - action: wait_until
+    target: {content_fuzzy: "T9 Delayed Element"}
+    seconds: 5
+  - assert: element_exists
+    target: {content_fuzzy: "T9 Delayed Element"}

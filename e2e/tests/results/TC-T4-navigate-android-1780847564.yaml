@@ -1,0 +1,60 @@
+tc_id: TC-T4-navigate
+tc_name: 'T4: navigate to detail and back'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:51:48Z
+finished: 2026-01-01T15:52:44Z
+result: PASS
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:51:59Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T4 Navigate"}'
+  result: PASS
+  element_found: 'uiautomator: T4 Navigate'
+  timestamp: 2026-01-01T15:52:04Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:52:09Z
+- step: 4
+  action: tap
+  target: '{content_fuzzy: "Go Detail"}'
+  result: PASS
+  element_found: 'uiautomator: Go Detail'
+  timestamp: 2026-01-01T15:52:15Z
+- step: 5
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:52:20Z
+- step: 6
+  assert: element_exists
+  target: '{content_fuzzy: "Detail Visible"}'
+  result: PASS
+  element_found: found in uiautomator
+  timestamp: 2026-01-01T15:52:27Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2337]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][1080,2337]"><node index="0" text="" resource-id="" class="androidx.compose.ui.platform.ComposeView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][347,532]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][347,532]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][347,532]"><node index="0" text="T4 Detail" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,174][221,237]" /><node index="1" text="Detail Visible" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,269][304,332]" /><node index="2" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,365][305,491]"><node index="0" text="Go Back" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[105,401][242,454]" /><node index="1" text="" resource-id="" class="android.widget.Button" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,375][305,480]" /></node></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,132]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2337][1080,2400]" /></node></hierarchy>
+- step: 7
+  action: tap
+  target: '{content_fuzzy: "Go Back"}'
+  result: PASS
+  element_found: 'uiautomator: Go Back'
+  timestamp: 2026-01-01T15:52:30Z
+- step: 8
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:52:35Z
+- step: 9
+  assert: element_exists
+  target: '{content_fuzzy: "T4 Navigate"}'
+  result: PASS
+  element_found: found in uiautomator
+  timestamp: 2026-01-01T15:52:42Z
+  ui_dump: <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2337]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][1080,2337]"><node index="0" text="" resource-id="" class="androidx.compose.ui.platform.ComposeView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][360,437]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][360,437]"><node index="0" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,132][360,437]"><node index="0" text="T4 Navigate" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,174][283,237]" /><node index="1" text="" resource-id="" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,270][318,396]"><node index="0" text="Go Detail" resource-id="" class="android.widget.TextView" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[105,306][255,359]" /><node index="1" text="" resource-id="" class="android.widget.Button" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[42,280][318,385]" /></node></node></node></node></node></node><node index="1" text="" resource-id="android:id/statusBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,132]" /><node index="2" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="io.substrate.regdemo" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2337][1080,2400]" /></node></hierarchy>

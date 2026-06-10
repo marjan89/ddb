@@ -1,0 +1,17 @@
+id: TC-T8-scroll
+name: "T8: scroll_to bottom of long list"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T8 Scroll"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "scroll.top"}
+  - action: scroll_to
+    target: {content_fuzzy: "scroll.bottom"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "scroll.bottom"}

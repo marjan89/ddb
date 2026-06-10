@@ -1,0 +1,8 @@
+tc_id: TC-T3-tap
+tc_name: 'T3: tap increments counter to 3'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:16:32Z
+finished: 2026-01-01T15:16:41Z
+result: FAIL
+steps: []

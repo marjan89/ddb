@@ -1,0 +1,12 @@
+id: TC-T16-text-equal
+name: "T16: element_exists exact text match"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T16 Text Equal"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T16 expected"}
+    text: "T16 expected value"

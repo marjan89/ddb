@@ -1,0 +1,11 @@
+id: TC-T23-capture
+name: "T23: capture verb writes per-TC semantic YAML"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T23 Capture"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T23 Capture Anchor"}

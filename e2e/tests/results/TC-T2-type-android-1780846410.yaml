@@ -1,0 +1,31 @@
+tc_id: TC-T2-type
+tc_name: 'T2: type into field, mirror reflects value'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:32:53Z
+finished: 2026-01-01T15:33:30Z
+result: FAIL
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:33:05Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T2 Type"}'
+  result: PASS
+  element_found: 'uiautomator: T2 Type'
+  timestamp: 2026-01-01T15:33:11Z
+- step: 3
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:33:16Z
+- step: 4
+  action: tap
+  target: '{content_fuzzy: "T2 input"}'
+  result: FAIL
+  timestamp: 2026-01-01T15:33:30Z
+  error: 'element not found: T2 input'
+  ui_dump: ''

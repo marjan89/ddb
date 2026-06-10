@@ -1,0 +1,17 @@
+id: TC-T25-scroll
+name: "T25: LazyColumn scroll to find off-screen item"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T25 Scroll"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T25 Item 01"}
+  - action: scroll_to
+    target: {content_fuzzy: "T25 Item 30"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T25 Item 30"}

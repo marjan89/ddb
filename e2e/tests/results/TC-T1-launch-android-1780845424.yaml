@@ -1,0 +1,20 @@
+tc_id: TC-T1-launch
+tc_name: 'T1: app launches, HomeScreen visible'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:16:41Z
+finished: 2026-01-01T15:17:04Z
+result: FAIL
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T15:16:49Z
+- step: 2
+  assert: element_exists
+  target: '{content_fuzzy: "T1 Launch"}'
+  result: FAIL
+  timestamp: 2026-01-01T15:17:04Z
+  error: 'element not found (9s): Some("T1 Launch")'
+  ui_dump: ''

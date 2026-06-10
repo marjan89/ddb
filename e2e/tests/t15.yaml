@@ -1,0 +1,19 @@
+id: TC-T15-element-state
+name: "T15: element_state enabled/disabled via content_fuzzy"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T15 State"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_state
+    target: {content_fuzzy: "Action Button"}
+    enabled: true
+  - action: tap
+    target: {content_fuzzy: "Toggle Action"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_state
+    target: {content_fuzzy: "Action Button"}
+    enabled: false

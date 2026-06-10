@@ -1,0 +1,25 @@
+id: TC-T19-sheet-present-dismiss
+name: "T19: ModalBottomSheet present + dismiss"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T19 Sheet"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T19 Show Sheet"}
+  - action: tap
+    target: {content_fuzzy: "T19 Show Sheet"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T19 Sheet Content"}
+  - assert: element_exists
+    target: {content_fuzzy: "T19 Dismiss Sheet"}
+  - action: tap
+    target: {content_fuzzy: "T19 Dismiss Sheet"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_not_exists
+    target: {content_fuzzy: "T19 Sheet Content"}

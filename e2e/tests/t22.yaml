@@ -1,0 +1,17 @@
+id: TC-T22-long-press
+name: "T22: long-press toggles state Idle ↔ Pressed"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T22 Long Press"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T22 Idle"}
+  - action: long_press
+    target: {content_fuzzy: "T22 Press Target"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T22 Pressed"}

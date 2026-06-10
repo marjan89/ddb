@@ -1,0 +1,23 @@
+id: TC-T26-hide-show
+name: "T26: toggle visibility hides/shows target Text"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T26 Hide Show"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T26 Target"}
+  - action: tap
+    target: {content_fuzzy: "T26 Toggle Visibility"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_not_exists
+    target: {content_fuzzy: "T26 Target"}
+  - action: tap
+    target: {content_fuzzy: "T26 Toggle Visibility"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T26 Target"}

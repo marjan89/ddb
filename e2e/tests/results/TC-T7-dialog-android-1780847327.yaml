@@ -1,0 +1,8 @@
+tc_id: TC-T7-dialog
+tc_name: 'T7: alert open/closed state via show + ok'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:48:30Z
+finished: 2026-01-01T15:48:47Z
+result: FAIL
+steps: []

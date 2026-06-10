@@ -1,0 +1,8 @@
+captures/
+demo-app/.gradle/
+demo-app/.kotlin/
+demo-app/build/
+demo-app/app/build/
+demo-app/local.properties
+.DS_Store
+tests/results/

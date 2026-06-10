@@ -1,0 +1,8 @@
+tc_id: TC-T9-wait
+tc_name: 'T9: wait_until async-appearing element'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T15:49:06Z
+finished: 2026-01-01T15:49:33Z
+result: FAIL
+steps: []

@@ -1,0 +1,11 @@
+id: TC-T34-logged-in-precondition
+name: "T34: logged_in:true precondition runs login recipe, leaves demo in T13 Unlocked"
+precondition:
+  logged_in: true
+steps:
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T13 Unlocked"}
+  - assert: element_not_exists
+    target: {content_fuzzy: "T13 Locked"}

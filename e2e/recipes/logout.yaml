@@ -1,0 +1,7 @@
+id: RECIPE-logout
+name: "Logout recipe — press T13 Reset to return demo to Locked"
+steps:
+  - action: tap
+    target: {content_fuzzy: "T13 Reset"}
+  - action: wait_idle
+    seconds: 1

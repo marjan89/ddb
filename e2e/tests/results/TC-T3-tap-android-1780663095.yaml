@@ -1,0 +1,1407 @@
+tc_id: TC-T3-tap
+tc_name: 'T3: tap increments counter to 3'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T12:37:50Z
+finished: 2026-01-01T12:38:15Z
+result: FAIL
+steps:
+- step: 1
+  action: wait_idle
+  result: PASS
+  element_found: idle
+  timestamp: 2026-01-01T12:38:01Z
+- step: 2
+  action: tap
+  target: '{content_fuzzy: "T3 Tap"}'
+  result: FAIL
+  timestamp: 2026-01-01T12:38:15Z
+  error: 'element not found: T3 Tap'
+  agent_yaml: |
+    screen: "MainActivity"
+    device: "sdk_gphone64_arm64"
+    platform: android
+    timestamp: "2026-06-05T12:38:11Z"
+    viewport:
+      width: 411
+      height: 840
+      density: 2.625
+    elements:
+    - id: "decorview_0_0"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 0
+      clickable: false
+      enabled: true
+      accessible: true
+      background: "#FEF7FF"
+    - id: "linearlayout_0_0"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 1
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "framelayout_0_0"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 2
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "action_bar_root"
+      platform_id: "action_bar_root"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 3
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "action_bar_root"
+    - id: "content"
+      platform_id: "content"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 4
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "content"
+    - id: "constraintlayout_0_0_0"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 5
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "app_nav_host_container_0"
+      platform_id: "app_nav_host_container"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 6
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "app_nav_host_container"
+    - id: "app_nav_host_container_1"
+      platform_id: "app_nav_host_container"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 7
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "app_nav_host_container"
+    - id: "coordinatorlayout_0_0"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 8
+      clickable: false
+      enabled: true
+      accessible: true
+    - id: "mainfragmentnavigationhost_0"
+      platform_id: "mainFragmentNavigationHost"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 9
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "mainFragmentNavigationHost"
+    - id: "mainfragmentnavigationhost_1"
+      platform_id: "mainFragmentNavigationHost"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 10
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "mainFragmentNavigationHost"
+    - id: "constraintlayout_0_0_1"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 11
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "discovercontainernavigationhost_0"
+      platform_id: "discoverContainerNavigationHost"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 12
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "discoverContainerNavigationHost"
+    - id: "discovercontainernavigationhost_1"
+      platform_id: "discoverContainerNavigationHost"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 13
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "discoverContainerNavigationHost"
+    - id: "constraintlayout_0_0_2"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 14
+      clickable: false
+      enabled: true
+      accessible: false
+      background: "#325E58"
+    - id: "recyclerview_0"
+      platform_id: "recyclerView"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 914
+      z_index: 15
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "recyclerView"
+    - id: "constraintlayout_0_0_3"
+      type: container
+      bounds:
+        x: 0
+        y: 0
+        w: 411
+        h: 212
+      z_index: 16
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "imageview"
+      platform_id: "imageView"
+      type: image
+      bounds:
+        x: 20
+        y: 54
+        w: 136
+        h: 30
+      z_index: 17
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "imageView"
+      margin:
+        top: 54
+        bottom: 0
+        start: 20
+        end: 0
+      image:
+        resource: "imageView"
+        type: loaded
+      image_path: "images/imageView.png"
+    - id: "searchimageview"
+      platform_id: "searchImageView"
+      type: image
+      bounds:
+        x: 30
+        y: 102
+        w: 24
+        h: 24
+      z_index: 19
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "searchImageView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 9
+        end: 0
+      image:
+        resource: "searchImageView"
+        type: loaded
+      image_path: "images/searchImageView.png"
+    - id: "activity_facility_or_location"
+      platform_id: "hintTextView"
+      type: text
+      content: "Activity, facility or location"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 12.952381
+      foreground: "#5C6C76"
+      bounds:
+        x: 64
+        y: 103
+        w: 327
+        h: 21
+      z_index: 20
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "hintTextView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 9
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "sweden_map"
+      platform_id: "downloadOfflineContentButton"
+      type: button
+      content: "Sweden map"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 20
+        y: 144
+        w: 177
+        h: 38
+      z_index: 21
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "downloadOfflineContentButton"
+      padding:
+        top: 6
+        bottom: 6
+        start: 24
+        end: 24
+      margin:
+        top: 9
+        bottom: 30
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "mina_nedladdningar"
+      platform_id: "viewOfflineContentButton"
+      type: button
+      content: "Mina nedladdningar"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 208
+        y: 144
+        w: 183
+        h: 38
+      z_index: 22
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "viewOfflineContentButton"
+      padding:
+        top: 6
+        bottom: 6
+        start: 24
+        end: 24
+      margin:
+        top: 0
+        bottom: 0
+        start: 9
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "constraintlayout_0_212"
+      type: container
+      bounds:
+        x: 0
+        y: 212
+        w: 411
+        h: 219
+      z_index: 23
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "map"
+      platform_id: "map"
+      type: button
+      bounds:
+        x: 0
+        y: 212
+        w: 411
+        h: 203
+      z_index: 24
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "map"
+      margin:
+        top: 0
+        bottom: 16
+        start: 0
+        end: 0
+      render: external
+    - id: "expandmapbutton"
+      platform_id: "expandMapButton"
+      type: button
+      content: ""
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 365
+        y: 220
+        w: 38
+        h: 38
+      z_index: 25
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "expandMapButton"
+      margin:
+        top: 8
+        bottom: 0
+        start: 0
+        end: 8
+      line_count: 1
+      truncated: false
+    - id: "constraintlayout_0_431"
+      type: container
+      bounds:
+        x: 0
+        y: 431
+        w: 411
+        h: 78
+      z_index: 26
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "recyclerview_1"
+      platform_id: "recyclerView"
+      type: container
+      bounds:
+        x: 0
+        y: 431
+        w: 411
+        h: 38
+      z_index: 27
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "recyclerView"
+      padding:
+        top: 0
+        bottom: 0
+        start: 14
+        end: 14
+      margin:
+        top: 0
+        bottom: 40
+        start: 0
+        end: 0
+    - id: "hiking_0"
+      platform_id: "button"
+      type: button
+      content: "Hiking"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 14
+        y: 431
+        w: 119
+        h: 38
+      z_index: 28
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "button"
+      padding:
+        top: 6
+        bottom: 6
+        start: 24
+        end: 24
+      line_count: 1
+      truncated: false
+    - id: "nature_reserve"
+      platform_id: "button"
+      type: button
+      content: "Nature reserve"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 139
+        y: 431
+        w: 177
+        h: 38
+      z_index: 29
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "button"
+      padding:
+        top: 6
+        bottom: 6
+        start: 24
+        end: 24
+      line_count: 1
+      truncated: false
+    - id: "biking"
+      platform_id: "button"
+      type: button
+      content: "Biking"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 321
+        y: 431
+        w: 89
+        h: 38
+      z_index: 30
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "button"
+      padding:
+        top: 6
+        bottom: 6
+        start: 24
+        end: 24
+      line_count: 1
+      truncated: false
+    - id: "linearlayout_0_509"
+      type: container
+      bounds:
+        x: 0
+        y: 509
+        w: 411
+        h: 56
+      z_index: 31
+      clickable: false
+      enabled: true
+      accessible: false
+      background: "#FFFCF2"
+      padding:
+        top: 0
+        bottom: 24
+        start: 0
+        end: 0
+    - id: "your_location_is_set_to"
+      platform_id: "textView"
+      type: text
+      content: "Your location is set to"
+      font:
+        family: sans-serif
+        weight: regular
+        size: 14.095238
+      foreground: "#0C3E47"
+      bounds:
+        x: 14
+        y: 513
+        w: 150
+        h: 23
+      z_index: 32
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "textView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 14
+        end: 9
+      line_count: 1
+      truncated: false
+    - id: "all_of_sweden"
+      platform_id: "setLocationButton"
+      type: button
+      content: "All of Sweden"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.952381
+      foreground: "#08292F"
+      bounds:
+        x: 174
+        y: 509
+        w: 162
+        h: 32
+      z_index: 33
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "setLocationButton"
+      padding:
+        top: 6
+        bottom: 6
+        start: 24
+        end: 24
+      line_count: 1
+      truncated: false
+    - id: "constraintlayout_0"
+      platform_id: "constraintLayout"
+      type: container
+      bounds:
+        x: 0
+        y: 565
+        w: 411
+        h: 238
+      z_index: 34
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "constraintLayout"
+      background: "#FFFCF2"
+    - id: "iconimageview_0"
+      platform_id: "iconImageView"
+      type: image
+      bounds:
+        x: 14
+        y: 591
+        w: 22
+        h: 22
+      z_index: 35
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "iconImageView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 14
+        end: 0
+      image:
+        resource: "iconImageView"
+        type: loaded
+      image_path: "images/iconImageView.png"
+    - id: "featured_hiking"
+      platform_id: "titleTextView"
+      type: text
+      content: "Featured Hiking"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 17.904762
+      foreground: "#0C3E47"
+      bounds:
+        x: 46
+        y: 587
+        w: 143
+        h: 30
+      z_index: 36
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "titleTextView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 9
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "show_more_0"
+      platform_id: "showMoreButton"
+      type: button
+      content: "Show more"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 12.190476
+      foreground: "#0C3E47"
+      bounds:
+        x: 317
+        y: 580
+        w: 93
+        h: 48
+      z_index: 37
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "showMoreButton"
+      padding:
+        top: 9
+        bottom: 9
+        start: 12
+        end: 12
+      margin:
+        top: 14
+        bottom: 0
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "recyclerview_2"
+      platform_id: "recyclerView"
+      type: container
+      bounds:
+        x: 0
+        y: 628
+        w: 411
+        h: 131
+      z_index: 38
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "recyclerView"
+      padding:
+        top: 0
+        bottom: 0
+        start: 14
+        end: 14
+      margin:
+        top: 0
+        bottom: 44
+        start: 0
+        end: 0
+    - id: "constraintlayout_14_628"
+      type: container
+      bounds:
+        x: 14
+        y: 628
+        w: 370
+        h: 131
+      z_index: 40
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "siteimageview_0"
+      platform_id: "siteImageView"
+      type: image
+      bounds:
+        x: 14
+        y: 628
+        w: 100
+        h: 131
+      z_index: 41
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "siteImageView"
+      image:
+        resource: "siteImageView"
+        type: loaded
+      image_path: "images/siteImageView.png"
+    - id: "iconimageview_1"
+      platform_id: "iconImageView"
+      type: image
+      bounds:
+        x: 129
+        y: 683
+        w: 16
+        h: 16
+      z_index: 42
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "iconImageView"
+      margin:
+        top: 1
+        bottom: 0
+        start: 14
+        end: 0
+      image:
+        resource: "iconImageView"
+        type: loaded
+      image_path: "images/iconImageView.png"
+    - id: "three_country_cairn_nilsivaara"
+      platform_id: "titleTextView"
+      type: text
+      content: "Three-Country Cairn-Nilsivaara"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.190476
+      foreground: "#FFFFFF"
+      bounds:
+        x: 129
+        y: 643
+        w: 240
+        h: 38
+      z_index: 43
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "titleTextView"
+      margin:
+        top: 14
+        bottom: 0
+        start: 14
+        end: 14
+      line_count: 1
+      truncated: false
+    - id: "hiking_1"
+      platform_id: "iconTextView"
+      type: text
+      content: "Hiking"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#FFFFFF"
+      bounds:
+        x: 150
+        y: 683
+        w: 30
+        h: 17
+      z_index: 44
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "iconTextView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 4
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "länsstyrelsen_norrbo_distance_to_7784_km"
+      platform_id: "subTitleTextView"
+      type: text
+      content: "Länsstyrelsen Norrbo... • Distance to: 7784 km"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#FFFFFF"
+      bounds:
+        x: 129
+        y: 705
+        w: 240
+        h: 17
+      z_index: 45
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "subTitleTextView"
+      margin:
+        top: 4
+        bottom: 0
+        start: 0
+        end: 14
+      line_count: 1
+      truncated: false
+    - id: "distanceimageview"
+      platform_id: "distanceImageView"
+      type: image
+      bounds:
+        x: 129
+        y: 729
+        w: 16
+        h: 16
+      z_index: 46
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "distanceImageView"
+      margin:
+        top: 6
+        bottom: 0
+        start: 0
+        end: 0
+      image:
+        resource: "distanceImageView"
+        type: loaded
+      image_path: "images/distanceImageView.png"
+    - id: "19_0_km"
+      platform_id: "distanceTextView"
+      type: text
+      content: "19.0 km"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#FFFFFF"
+      bounds:
+        x: 150
+        y: 731
+        w: 36
+        h: 17
+      z_index: 47
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "distanceTextView"
+      margin:
+        top: 6
+        bottom: 0
+        start: 4
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "difficultytextview"
+      platform_id: "difficultyTextView"
+      type: text
+      content: ""
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#FFFFFF"
+      bounds:
+        x: 253
+        y: 731
+        w: 131
+        h: 17
+      z_index: 48
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "difficultyTextView"
+      margin:
+        top: 6
+        bottom: 0
+        start: 4
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "cardview_0"
+      platform_id: "cardView"
+      type: button
+      bounds:
+        x: 395
+        y: 628
+        w: 16
+        h: 131
+      z_index: 49
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "cardView"
+      elevation: 2.0
+    - id: "constraintlayout_395_628"
+      type: container
+      bounds:
+        x: 395
+        y: 628
+        w: 16
+        h: 131
+      z_index: 50
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "siteimageview_1"
+      platform_id: "siteImageView"
+      type: image
+      bounds:
+        x: 395
+        y: 628
+        w: 16
+        h: 131
+      z_index: 51
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "siteImageView"
+      image:
+        resource: "siteImageView"
+        type: loaded
+      image_path: "images/siteImageView.png"
+    - id: "constraintlayout_1"
+      platform_id: "constraintLayout"
+      type: container
+      bounds:
+        x: 0
+        y: 804
+        w: 411
+        h: 110
+      z_index: 52
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "constraintLayout"
+      background: "#FFFCF2"
+    - id: "iconimageview_2"
+      platform_id: "iconImageView"
+      type: image
+      bounds:
+        x: 14
+        y: 830
+        w: 22
+        h: 22
+      z_index: 53
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "iconImageView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 14
+        end: 0
+      image:
+        resource: "iconImageView"
+        type: loaded
+      image_path: "images/iconImageView.png"
+    - id: "featured_nature_reserve"
+      platform_id: "titleTextView"
+      type: text
+      content: "Featured Nature reserve"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 17.904762
+      foreground: "#0C3E47"
+      bounds:
+        x: 46
+        y: 826
+        w: 220
+        h: 30
+      z_index: 54
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "titleTextView"
+      margin:
+        top: 0
+        bottom: 0
+        start: 9
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "show_more_1"
+      platform_id: "showMoreButton"
+      type: button
+      content: "Show more"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 12.190476
+      foreground: "#0C3E47"
+      bounds:
+        x: 317
+        y: 819
+        w: 93
+        h: 48
+      z_index: 55
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "showMoreButton"
+      padding:
+        top: 9
+        bottom: 9
+        start: 12
+        end: 12
+      margin:
+        top: 14
+        bottom: 0
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "recyclerview_3"
+      platform_id: "recyclerView"
+      type: container
+      bounds:
+        x: 0
+        y: 867
+        w: 411
+        h: 47
+      z_index: 56
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "recyclerView"
+      padding:
+        top: 0
+        bottom: 0
+        start: 14
+        end: 14
+      margin:
+        top: 0
+        bottom: 44
+        start: 0
+        end: 0
+    - id: "constraintlayout_14_867"
+      type: container
+      bounds:
+        x: 14
+        y: 867
+        w: 370
+        h: 47
+      z_index: 58
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "siteimageview_2"
+      platform_id: "siteImageView"
+      type: image
+      bounds:
+        x: 14
+        y: 867
+        w: 100
+        h: 47
+      z_index: 59
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "siteImageView"
+      image:
+        resource: "siteImageView"
+        type: loaded
+      image_path: "images/siteImageView.png"
+    - id: "abisko_naturvetenskapliga_station"
+      platform_id: "titleTextView"
+      type: text
+      content: "Abisko naturvetenskapliga station"
+      font:
+        family: sans-serif
+        weight: semibold
+        size: 12.190476
+      foreground: "#FFFFFF"
+      bounds:
+        x: 129
+        y: 881
+        w: 240
+        h: 32
+      z_index: 60
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "titleTextView"
+      margin:
+        top: 14
+        bottom: 0
+        start: 14
+        end: 14
+      line_count: 1
+      truncated: false
+    - id: "cardview_1"
+      platform_id: "cardView"
+      type: button
+      bounds:
+        x: 395
+        y: 867
+        w: 16
+        h: 47
+      z_index: 61
+      clickable: true
+      enabled: true
+      accessible: true
+      a11y_id: "cardView"
+      elevation: 2.0
+    - id: "constraintlayout_395_867"
+      type: container
+      bounds:
+        x: 395
+        y: 867
+        w: 16
+        h: 47
+      z_index: 62
+      clickable: false
+      enabled: true
+      accessible: false
+    - id: "siteimageview_3"
+      platform_id: "siteImageView"
+      type: image
+      bounds:
+        x: 395
+        y: 867
+        w: 16
+        h: 47
+      z_index: 63
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "siteImageView"
+      image:
+        resource: "siteImageView"
+        type: loaded
+      image_path: "images/siteImageView.png"
+    - id: "bottomnavigationbar"
+      platform_id: "bottomNavigationBar"
+      type: container
+      bounds:
+        x: 0
+        y: 823
+        w: 411
+        h: 90
+      z_index: 64
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "bottomNavigationBar"
+      background: "#FFFFFF"
+      padding:
+        top: 0
+        bottom: 24
+        start: 0
+        end: 0
+      elevation: 8.0
+    - id: "discoverbutton"
+      platform_id: "discoverButton"
+      type: image
+      bounds:
+        x: 59
+        y: 832
+        w: 28
+        h: 28
+      z_index: 65
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "discoverButton"
+      margin:
+        top: 9
+        bottom: 0
+        start: 0
+        end: 0
+      image:
+        resource: "discoverButton"
+        type: loaded
+      image_path: "images/discoverButton.png"
+    - id: "discover"
+      platform_id: "discoverTextView"
+      type: text
+      content: "Discover"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#08292F"
+      bounds:
+        x: 52
+        y: 868
+        w: 43
+        h: 17
+      z_index: 66
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "discoverTextView"
+      margin:
+        top: 8
+        bottom: 0
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "discoverdot"
+      platform_id: "discoverDot"
+      type: image
+      bounds:
+        x: 71
+        y: 886
+        w: 4
+        h: 4
+      z_index: 67
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "discoverDot"
+      image:
+        resource: "discoverDot"
+        type: loaded
+      image_path: "images/discoverDot.png"
+    - id: "searchbutton"
+      platform_id: "searchButton"
+      type: image
+      bounds:
+        x: 147
+        y: 832
+        w: 28
+        h: 28
+      z_index: 69
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "searchButton"
+      margin:
+        top: 9
+        bottom: 0
+        start: 0
+        end: 0
+      image:
+        resource: "searchButton"
+        type: loaded
+      image_path: "images/searchButton.png"
+    - id: "search"
+      platform_id: "searchTextView"
+      type: text
+      content: "Search"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#325E58"
+      bounds:
+        x: 144
+        y: 868
+        w: 35
+        h: 17
+      z_index: 70
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "searchTextView"
+      margin:
+        top: 8
+        bottom: 0
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "inspirationbutton"
+      platform_id: "inspirationButton"
+      type: image
+      bounds:
+        x: 235
+        y: 832
+        w: 28
+        h: 28
+      z_index: 72
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "inspirationButton"
+      margin:
+        top: 9
+        bottom: 0
+        start: 0
+        end: 0
+      image:
+        resource: "inspirationButton"
+        type: loaded
+      image_path: "images/inspirationButton.png"
+    - id: "inspiration"
+      platform_id: "inspirationTextView"
+      type: text
+      content: "Inspiration"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#325E58"
+      bounds:
+        x: 222
+        y: 868
+        w: 54
+        h: 17
+      z_index: 73
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "inspirationTextView"
+      margin:
+        top: 8
+        bottom: 0
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+    - id: "profilebutton"
+      platform_id: "profileButton"
+      type: image
+      bounds:
+        x: 323
+        y: 832
+        w: 28
+        h: 28
+      z_index: 75
+      clickable: false
+      enabled: true
+      accessible: false
+      a11y_id: "profileButton"
+      margin:
+        top: 9
+        bottom: 0
+        start: 0
+        end: 0
+      image:
+        resource: "profileButton"
+        type: loaded
+      image_path: "images/profileButton.png"
+    - id: "my_page"
+      platform_id: "profileTextView"
+      type: text
+      content: "My page"
+      font:
+        family: sans-serif
+        weight: medium
+        size: 9.904762
+      foreground: "#325E58"
+      bounds:
+        x: 315
+        y: 868
+        w: 43
+        h: 17
+      z_index: 76
+      clickable: false
+      enabled: true
+      accessible: true
+      a11y_id: "profileTextView"
+      margin:
+        top: 8
+        bottom: 0
+        start: 0
+        end: 0
+      line_count: 1
+      truncated: false
+  ui_dump: '<?xml version=''1.0'' encoding=''UTF-8'' standalone=''yes'' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/action_bar_root" class="android.widget.LinearLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/app_nav_host_container" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/app_nav_host_container" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/mainFragmentNavigationHost" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/mainFragmentNavigationHost" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/discoverContainerNavigationHost" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/discoverContainerNavigationHost" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/recyclerView" class="androidx.recyclerview.widget.RecyclerView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="true" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,557]"><node index="0" text="" resource-id="se.naturkartan.android:id/imageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[53,142][411,221]" /><node NAF="true" index="1" text="" resource-id="se.naturkartan.android:id/view2" class="android.view.View" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[53,247][1027,352]" /><node index="2" text="" resource-id="se.naturkartan.android:id/searchImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[79,268][142,331]" /><node index="3" text="Activity, facility or location" resource-id="se.naturkartan.android:id/hintTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[168,271][1027,328]" /><node index="4" text="Sweden map" resource-id="se.naturkartan.android:id/downloadOfflineContentButton" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[53,378][520,478]" /><node index="5" text="Mina nedladdningar" resource-id="se.naturkartan.android:id/viewOfflineContentButton" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[546,378][1027,478]" /></node><node index="1" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,557][1080,1132]"><node index="0" text="" resource-id="se.naturkartan.android:id/map" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,557][1080,1090]"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,557][1080,1090]"><node index="0" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Google Map" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,557][1080,1090]"><node index="0" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[139,1061][214,1090]" /><node index="1" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[126,1024][201,1090]" /><node index="2" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[150,1010][225,1090]" /><node index="3" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[882,957][1001,1076]" /><node index="4" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1079,760][1080,841]" /><node index="5" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[506,741][581,822]" /><node index="6" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[836,667][955,786]" /><node index="7" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[968,586][1080,705]" /><node index="8" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[693,557][812,650]" /><node index="9" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[522,557][597,621]" /><node index="10" text="" resource-id="" class="android.view.View" package="se.naturkartan.android" content-desc="Map Marker" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1056,557][1080,559]" /></node><node index="1" text="" resource-id="" class="android.widget.RelativeLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,557][1080,1090]" /><node index="2" text="" resource-id="" class="android.widget.RelativeLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,557][1080,1090]"><node index="0" text="" resource-id="" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[13,1019][171,1077]" /></node></node></node><node NAF="true" index="1" text="" resource-id="se.naturkartan.android:id/expandMapButton" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[959,578][1059,678]" /></node><node index="2" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,1132][1080,1337]"><node index="0" text="" resource-id="se.naturkartan.android:id/recyclerView" class="androidx.recyclerview.widget.RecyclerView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="true" long-clickable="false" password="false" selected="false" bounds="[0,1132][1080,1232]"><node index="0" text="Hiking" resource-id="se.naturkartan.android:id/button" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,1132][353,1232]" /><node index="1" text="Nature reserve" resource-id="se.naturkartan.android:id/button" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[366,1132][831,1232]" /><node index="2" text="Biking" resource-id="se.naturkartan.android:id/button" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[844,1132][1080,1232]" /></node></node><node index="3" text="" resource-id="" class="android.widget.LinearLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,1337][1080,1484]"><node index="0" text="Your location is set to" resource-id="se.naturkartan.android:id/textView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,1348][433,1410]" /><node index="1" text="All of Sweden" resource-id="se.naturkartan.android:id/setLocationButton" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[459,1337][886,1421]" /></node><node index="5" text="" resource-id="se.naturkartan.android:id/constraintLayout" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,1484][1080,2111]"><node index="0" text="" resource-id="se.naturkartan.android:id/iconImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,1553][97,1611]" /><node index="1" text="Featured Hiking" resource-id="se.naturkartan.android:id/titleTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[121,1542][497,1622]" /><node index="2" text="Show more" resource-id="se.naturkartan.android:id/showMoreButton" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[834,1523][1080,1649]" /><node index="3" text="" resource-id="se.naturkartan.android:id/recyclerView" class="androidx.recyclerview.widget.RecyclerView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="true" long-clickable="false" password="false" selected="false" bounds="[0,1649][1080,1993]"><node index="0" text="" resource-id="se.naturkartan.android:id/cardView" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,1649][1011,1993]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,1649][1011,1993]"><node index="0" text="" resource-id="se.naturkartan.android:id/siteImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,1649][302,1993]" /><node index="1" text="Three-Country Cairn-Nilsivaara" resource-id="se.naturkartan.android:id/titleTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[341,1688][972,1790]" /><node index="2" text="" resource-id="se.naturkartan.android:id/iconImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[341,1795][383,1837]" /><node index="3" text="Hiking" resource-id="se.naturkartan.android:id/iconTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[396,1795][477,1840]" /><node index="5" text="Länsstyrelsen Norrbo... • Distance to: 7784 km" resource-id="se.naturkartan.android:id/subTitleTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[341,1853][972,1898]" /><node index="6" text="" resource-id="se.naturkartan.android:id/distanceImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[341,1914][383,1956]" /><node index="7" text="19.0 km" resource-id="se.naturkartan.android:id/distanceTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[396,1921][493,1966]" /><node index="9" text="" resource-id="se.naturkartan.android:id/difficultyTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[665,1921][1011,1966]" /></node></node><node index="1" text="" resource-id="se.naturkartan.android:id/cardView" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1037,1649][1080,1993]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1037,1649][1080,1993]"><node index="0" text="" resource-id="se.naturkartan.android:id/siteImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1037,1649][1080,1993]" /></node></node></node></node><node index="6" text="" resource-id="se.naturkartan.android:id/constraintLayout" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2111][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/iconImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,2180][97,2238]" /><node index="1" text="Featured Nature reserve" resource-id="se.naturkartan.android:id/titleTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[121,2169][701,2249]" /><node index="2" text="Show more" resource-id="se.naturkartan.android:id/showMoreButton" class="android.widget.Button" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[834,2150][1080,2276]" /><node index="3" text="" resource-id="se.naturkartan.android:id/recyclerView" class="androidx.recyclerview.widget.RecyclerView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="true" long-clickable="false" password="false" selected="false" bounds="[0,2276][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/cardView" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,2276][1011,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,2276][1011,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/siteImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[39,2276][302,2400]" /><node index="1" text="Abisko naturvetenskapliga station" resource-id="se.naturkartan.android:id/titleTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[341,2315][972,2400]" /></node></node><node index="1" text="" resource-id="se.naturkartan.android:id/cardView" class="android.widget.FrameLayout" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1037,2276][1080,2400]"><node index="0" text="" resource-id="" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1037,2276][1080,2400]"><node index="0" text="" resource-id="se.naturkartan.android:id/siteImageView" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[1037,2276][1080,2400]" /></node></node></node></node></node></node></node></node></node></node></node><node index="1" text="" resource-id="se.naturkartan.android:id/bottomNavigationBar" class="android.view.ViewGroup" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2162][1080,2400]"><node NAF="true" index="0" text="" resource-id="se.naturkartan.android:id/discoverTouch" class="android.view.View" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[137,2186][250,2326]" /><node index="1" text="" resource-id="se.naturkartan.android:id/discoverButton" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[157,2186][231,2260]" /><node index="2" text="" resource-id="se.naturkartan.android:id/searchButton" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[388,2186][462,2260]" /><node index="3" text="Discover" resource-id="se.naturkartan.android:id/discoverTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[137,2281][250,2326]" /><node NAF="true" index="4" text="" resource-id="se.naturkartan.android:id/searchTouch" class="android.view.View" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[378,2186][471,2326]" /><node NAF="true" index="5" text="" resource-id="se.naturkartan.android:id/inspirationTouch" class="android.view.View" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[584,2186][726,2326]" /><node index="6" text="" resource-id="se.naturkartan.android:id/inspirationButton" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[618,2186][692,2260]" /><node NAF="true" index="7" text="" resource-id="se.naturkartan.android:id/profileTouch" class="android.view.View" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[829,2186][944,2326]" /><node index="8" text="" resource-id="se.naturkartan.android:id/profileButton" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[849,2186][923,2260]" /><node index="9" text="Search" resource-id="se.naturkartan.android:id/searchTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[378,2281][471,2326]" /><node index="10" text="Inspiration" resource-id="se.naturkartan.android:id/inspirationTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[584,2281][726,2326]" /><node index="11" text="My page" resource-id="se.naturkartan.android:id/profileTextView" class="android.widget.TextView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[829,2281][944,2326]" /><node index="12" text="" resource-id="se.naturkartan.android:id/discoverDot" class="android.widget.ImageView" package="se.naturkartan.android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[188,2326][199,2337]" /></node></node></node></node></node></node></node></node></node></node></hierarchy>'

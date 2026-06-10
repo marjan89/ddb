@@ -1,0 +1,17 @@
+id: RECIPE-login
+name: "Login recipe — navigate to T13 + invoke agent /login with valid creds"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T13 Login"}
+  - action: wait_idle
+    seconds: 2
+  - action: api_call
+    url: "http://localhost:19878/login"
+    method: "POST"
+    body:
+      email: "t13@example.com"
+      password: "t13pass"
+  - action: wait_idle
+    seconds: 2
