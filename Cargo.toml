@@ -2,7 +2,7 @@
 name = "ddb"
 version = "0.1.0"
 edition = "2024"
-description = "Device Debug Bridge — unified Android device CLI"
+description = "Device Debug Bridge — Android device CLI (root of ddb monorepo: Rust CLI + agent/ Kotlin AAR + e2e/ Gradle demo + semantic-schema submodule; Epic G ddb-v0.4.0)"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
