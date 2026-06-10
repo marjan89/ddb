@@ -2,6 +2,18 @@
 
 All notable changes to ddb are documented here.
 
+## [v0.4.0] — 2026-06-10 — Epic G ddb-absorption monorepo
+
+### Added
+- **Epic G ddb-absorption** (Pass-0 `ea3af3a` semantic-schema submodule + `d593913` `git subtree add agent/` + `7558676` `git subtree add e2e/`): ddb is now a STANDALONE MONOREPO containing — Rust CLI (`src/`), `agent/` (Kotlin SemanticAgent, absorbed from `semantic-agent-android@a5d9bafd`), `e2e/` (Gradle demo + YAML TCs, absorbed from `regression-android@cb5c6f6`), `semantic-schema/` (git submodule). Per ADR-011 absorption mechanics.
+- **Pass-3 path rewires** (`1790738` + `bca5ed7`): `e2e/demo-app` `includeBuild` repointed to the absorbed `agent/`, agent `gradle.properties` restored with `android.useAndroidX=true`.
+- **Defensive .gitignore** (`2a6aab6` + `b419fdd`): post-absorption stale Gradle artifacts untracked; `*.hprof` / `*.dump` / `*.heapdump` ignored across the monorepo.
+- **CI workflow** (`618e4d3`): GitHub Actions for the monorepo — `rust` job (build + clippy), `android` job (Gradle build for `agent` + `e2e`), `release` job (tag-triggered binary publish for `ddb-v*`). Mirrors idb's CI workflow shape.
+
+### Notes
+- Pre-absorption wrapper retired; tag style is monolithic (`ddb-vX.Y.Z`). Head pushed to `github.com/marjan89/ddb` as tag `ddb-v0.4.0`.
+- See `substrate-distro/tctl/docs/epics.md` §Epic G + `tctl/docs/adr/ADR-011-cross-repo-absorption-mechanics.md` for the full absorption pattern.
+
 ## [v0.3.1] — 2026-06-09
 
 ### Fixed

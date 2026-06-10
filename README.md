@@ -2,11 +2,25 @@
 
 Unified Android device CLI. One tool replacing `adb` shell scripts, `ui.py`, `scrcpy` wrappers, and launchd heartbeat daemons.
 
+## Monorepo layout (post-Epic-G absorption, 2026-06-10)
+
+As of `ddb-v0.4.0` this repo is a standalone monorepo:
+
+| Path | Component | Tracked via |
+|---|---|---|
+| `src/` | Rust CLI (this binary) | This repo |
+| `agent/` | Kotlin `SemanticAgent` (AAR) | `git subtree add` from `semantic-agent-android@a5d9baf` |
+| `e2e/` | Gradle demo-app + YAML TCs + scripts | `git subtree add` from `regression-android@cb5c6f6` |
+| `semantic-schema/` | Shared schema crate | `git submodule` → `marjan89/semantic-schema` |
+
+Tag style is monolithic: `ddb-vX.Y.Z`. See `substrate-distro/tctl/docs/adr/ADR-011-cross-repo-absorption-mechanics.md` for the absorption pattern.
+
 ## Install
 
 ```bash
 cargo build --release
-cp target/release/ddb /usr/local/bin/
+cp target/release/ddb /opt/cargo/bin/ddb
+cp target/release/ddb /opt/homebrew/bin/ddb   # PATH-shadow rule: install to BOTH
 ```
 
 ## Setup
