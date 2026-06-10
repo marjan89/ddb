@@ -16,6 +16,6 @@ dirs = "6"
 clap_complete = "4"
 serde_yaml = "0.9"
 walkdir = "2"
-semantic-schema = { path = "../../semantic-schema" }
+semantic-schema = { path = "semantic-schema" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"

@@ -1,0 +1,3 @@
+[submodule "semantic-schema"]
+	path = semantic-schema
+	url = git@github.com:marjan89/semantic-schema.git
