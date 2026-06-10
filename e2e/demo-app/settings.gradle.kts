@@ -17,7 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "regression-demo"
 include(":app")
 
-includeBuild("../../semantic-agent-android") {
+includeBuild("../../agent") {
     dependencySubstitution {
         substitute(module("dev.substrate:semantic-agent"))
             .using(project(":agent"))
