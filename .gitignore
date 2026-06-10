@@ -13,3 +13,8 @@ e2e/demo-app/.gradle/
 e2e/local.properties
 **/.idea/
 *.iml
+
+# JVM heap dumps + other large debug artifacts (never commit)
+*.hprof
+*.dump
+*.heapdump
