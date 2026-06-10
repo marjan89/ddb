@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['ddb-v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: rust (cargo check + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets
+      - run: cargo test --all
+
+  android:
+    name: android (gradle assembleDebug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: assemble agent AAR
+        working-directory: agent
+        run: ./gradlew :agent:assembleRelease --no-daemon
+
+      - name: assemble e2e demo APK
+        working-directory: e2e/demo-app
+        run: ./gradlew assembleDebug --init-script $PWD/init.gradle.kts --no-daemon
+
+      - name: upload AAR (PR + push)
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-agent-aar
+          path: agent/agent/build/outputs/aar/agent-release.aar
+          if-no-files-found: error
+
+      - name: upload APK (PR + push)
+        uses: actions/upload-artifact@v4
+        with:
+          name: regdemo-debug-apk
+          path: e2e/demo-app/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  release:
+    name: release (tag-triggered)
+    needs: [rust, android]
+    if: startsWith(github.ref, 'refs/tags/ddb-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build ddb release binary
+        run: cargo build --release --bin ddb
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: build agent AAR (release)
+        working-directory: agent
+        run: ./gradlew :agent:assembleRelease --no-daemon
+
+      - name: package release artifacts
+        run: |
+          mkdir -p release
+          cp target/release/ddb release/ddb-${{ github.ref_name }}-linux-x86_64
+          cp agent/agent/build/outputs/aar/agent-release.aar release/semantic-agent-${{ github.ref_name }}.aar
+
+      - name: create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
