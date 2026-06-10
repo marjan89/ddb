@@ -1,0 +1,106 @@
+[versions]
+agp = "8.13.2"
+appcompat = "1.7.1"
+coreKtx = "1.17.0"
+coreSplashscreen = "1.2.0"
+coroutinesPlayServices = "1.10.2"
+exoPlayer = "1.9.2"
+firebase = "34.9.0"
+firebaseCrashlyticsPlugin = "3.0.6"
+glide = "5.0.5"
+googleServicesPlugin = "4.4.4"
+hilt = "2.57.1"
+hiltWork = "1.3.0"
+kotlin = "2.2.0"
+ktlint = "1.8.0"
+ktlintPlugin = "14.2.0"
+ksp = "2.2.0-2.0.2"
+loggingInterceptor = "5.3.2"
+mapsKtx = "6.0.0"
+mapsUtils = "4.0.0"
+mapsUtilsKtx = "6.0.0"
+material = "1.13.0"
+moshi = "1.15.2"
+navigation = "2.9.7"
+paging = "3.4.1"
+photoview = "1.0.3"
+playServicesMaps = "20.0.0"
+playServicesLocation = "21.3.0"
+retrofit = "3.0.0"
+room = "2.8.4"
+secretsGradlePlugin = "2.0.1"
+webkit = "1.8.0"
+work = "2.11.1"
+
+junit = "4.13.2"
+junitVersion = "1.3.0"
+espressoCore = "3.7.0"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+androidx-navigation-fragment-ktx = { group = "androidx.navigation", name = "navigation-fragment-ktx", version.ref = "navigation" }
+androidx-navigation-ui-ktx = { group = "androidx.navigation", name = "navigation-ui-ktx", version.ref = "navigation" }
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
+photoview = { module = "io.getstream:photoview", version.ref = "photoview" }
+retrofit-retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
+retrofit-converter-scalars = { group = "com.squareup.retrofit2", name = "converter-scalars", version.ref = "retrofit" }
+retrofit-converter-moshi = { group = "com.squareup.retrofit2", name = "converter-moshi", version.ref = "retrofit" }
+retrofit-logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "loggingInterceptor" }
+moshi = { group = "com.squareup.moshi", name = "moshi", version.ref = "moshi" }
+moshi-codegen = { group = "com.squareup.moshi", name = "moshi-kotlin-codegen", version.ref = "moshi" }
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+glide = { group = "com.github.bumptech.glide", name = "glide", version.ref = "glide" }
+glide-compiler = { group = "com.github.bumptech.glide", name = "ksp", version.ref = "glide" }
+play-services-maps = { group = "com.google.android.gms", name = "play-services-maps", version.ref = "playServicesMaps" }
+play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
+maps-ktx = { group = "com.google.maps.android", name = "maps-ktx", version.ref = "mapsKtx"}
+maps-utils = { group = "com.google.maps.android", name = "android-maps-utils", version.ref = "mapsUtils"}
+maps-utils-ktx = { group = "com.google.maps.android", name = "maps-utils-ktx", version.ref = "mapsUtilsKtx"}
+core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
+firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebase" }
+work = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
+androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
+paging-runtime = { group = "androidx.paging", name = "paging-runtime-ktx", version.ref = "paging" }
+paging-common = { group = "androidx.paging", name = "paging-common", version.ref = "paging" }
+webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "exoPlayer"}
+
+
+
+firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
+firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
+
+
+
+
+
+
+[bundles]
+navigation = ["androidx-navigation-fragment-ktx", "androidx-navigation-ui-ktx"]
+retrofit = ["retrofit-retrofit", "retrofit-converter-scalars", "retrofit-converter-moshi", "retrofit-logging-interceptor"]
+room = ["room-runtime", "room-ktx", "room-paging"]
+maps = ["play-services-maps", "play-services-location", "coroutines-play-services", "maps-ktx", "maps-utils", "maps-utils-ktx"]
+paging = ["paging-runtime", "paging-common"]
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+hilt-android = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+ksp-android = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+secrets-gradle = { id = "com.google.android.libraries.mapsplatform.secrets-gradle-plugin", version.ref = "secretsGradlePlugin"}
+google-services = { id = "com.google.gms.google-services", version.ref = "googleServicesPlugin" }
+firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebaseCrashlyticsPlugin" }
+navigation-safe-args = { id = "androidx.navigation.safeargs.kotlin", version.ref = "navigation" }
+ktlint-gradle = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
+
