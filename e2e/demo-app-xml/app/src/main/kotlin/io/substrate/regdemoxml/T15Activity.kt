@@ -17,6 +17,12 @@ class T15Activity : AppCompatActivity() {
         val toggle = findViewById<Button>(R.id.t15_toggle)
         fun applyState() {
             action.isEnabled = !disabled
+            // Android View.isEnabled does NOT auto-toggle isClickable; the
+            // runner's element_state assertion (test.rs:2221) checks the
+            // walker's `clickable` field (= view.isClickable) as the proxy
+            // for "enabled". Keep them in sync so the assertion contract
+            // holds (Compose Button collapses both into one knob).
+            action.isClickable = !disabled
             val label = if (disabled) "T15 disabled state" else "T15 enabled state"
             stateView.text = label
             stateView.contentDescription = label
