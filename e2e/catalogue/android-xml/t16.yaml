@@ -1,7 +1,7 @@
 screen: "T16Activity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T18:34:25Z"
+timestamp: "2026-06-11T19:52:35Z"
 viewport:
   width: 1080
   height: 2205
@@ -168,7 +168,7 @@ elements:
   bounds:
     x: 8
     y: 58
-    w: 395
+    w: 197
     h: 48
   z_index: 1000
   clickable: true
@@ -178,9 +178,9 @@ elements:
   type: button
   content: "T2 Type"
   bounds:
-    x: 8
-    y: 106
-    w: 395
+    x: 205
+    y: 58
+    w: 197
     h: 48
   z_index: 1001
   clickable: true
@@ -191,8 +191,8 @@ elements:
   content: "T3 Tap"
   bounds:
     x: 8
-    y: 154
-    w: 395
+    y: 106
+    w: 197
     h: 48
   z_index: 1002
   clickable: true
@@ -202,9 +202,9 @@ elements:
   type: button
   content: "T4 Navigate"
   bounds:
-    x: 8
-    y: 202
-    w: 395
+    x: 205
+    y: 106
+    w: 197
     h: 48
   z_index: 1003
   clickable: true
@@ -215,8 +215,8 @@ elements:
   content: "T5 Kbd Dismiss"
   bounds:
     x: 8
-    y: 250
-    w: 395
+    y: 154
+    w: 197
     h: 48
   z_index: 1004
   clickable: true
@@ -226,9 +226,9 @@ elements:
   type: button
   content: "T6 Secure Field"
   bounds:
-    x: 8
-    y: 298
-    w: 395
+    x: 205
+    y: 154
+    w: 197
     h: 48
   z_index: 1005
   clickable: true
@@ -239,8 +239,8 @@ elements:
   content: "T7 Dialog"
   bounds:
     x: 8
-    y: 346
-    w: 395
+    y: 202
+    w: 197
     h: 48
   z_index: 1006
   clickable: true
@@ -250,9 +250,9 @@ elements:
   type: button
   content: "T8 Scroll"
   bounds:
-    x: 8
-    y: 394
-    w: 395
+    x: 205
+    y: 202
+    w: 197
     h: 48
   z_index: 1007
   clickable: true
@@ -263,8 +263,8 @@ elements:
   content: "T9 Wait"
   bounds:
     x: 8
-    y: 442
-    w: 395
+    y: 250
+    w: 197
     h: 48
   z_index: 1008
   clickable: true
@@ -274,9 +274,9 @@ elements:
   type: button
   content: "T10 Mock URL"
   bounds:
-    x: 8
-    y: 490
-    w: 395
+    x: 205
+    y: 250
+    w: 197
     h: 48
   z_index: 1009
   clickable: true
@@ -287,8 +287,8 @@ elements:
   content: "T11 Deep Nav"
   bounds:
     x: 8
-    y: 538
-    w: 395
+    y: 298
+    w: 197
     h: 48
   z_index: 1010
   clickable: true
@@ -298,9 +298,9 @@ elements:
   type: button
   content: "T12 Paste"
   bounds:
-    x: 8
-    y: 586
-    w: 395
+    x: 205
+    y: 298
+    w: 197
     h: 48
   z_index: 1011
   clickable: true
@@ -311,8 +311,8 @@ elements:
   content: "T13 Login"
   bounds:
     x: 8
-    y: 634
-    w: 395
+    y: 346
+    w: 197
     h: 48
   z_index: 1012
   clickable: true
@@ -322,9 +322,9 @@ elements:
   type: button
   content: "T14 Screen"
   bounds:
-    x: 8
-    y: 682
-    w: 395
+    x: 205
+    y: 346
+    w: 197
     h: 48
   z_index: 1013
   clickable: true
@@ -335,8 +335,8 @@ elements:
   content: "T15 State"
   bounds:
     x: 8
-    y: 730
-    w: 395
+    y: 394
+    w: 197
     h: 48
   z_index: 1014
   clickable: true
@@ -346,9 +346,9 @@ elements:
   type: button
   content: "T16 Text Equal"
   bounds:
-    x: 8
-    y: 778
-    w: 395
+    x: 205
+    y: 394
+    w: 197
     h: 48
   z_index: 1015
   clickable: true
@@ -359,8 +359,8 @@ elements:
   content: "T17 Animations"
   bounds:
     x: 8
-    y: 826
-    w: 395
+    y: 442
+    w: 197
     h: 48
   z_index: 1016
   clickable: true
@@ -370,10 +370,10 @@ elements:
   type: button
   content: "T18 Tabs"
   bounds:
-    x: 8
-    y: 874
-    w: 395
-    h: 16
+    x: 205
+    y: 442
+    w: 197
+    h: 48
   z_index: 1017
   clickable: true
   enabled: true
@@ -383,8 +383,8 @@ elements:
   content: "T19 Sheet"
   bounds:
     x: 8
-    y: 872
-    w: 395
+    y: 490
+    w: 197
     h: 48
   z_index: 1018
   clickable: true
@@ -394,9 +394,9 @@ elements:
   type: button
   content: "T20 Refresh"
   bounds:
-    x: 8
-    y: 920
-    w: 395
+    x: 205
+    y: 490
+    w: 197
     h: 48
   z_index: 1019
   clickable: true
@@ -407,8 +407,8 @@ elements:
   content: "T21 Press Back"
   bounds:
     x: 8
-    y: 968
-    w: 395
+    y: 538
+    w: 197
     h: 48
   z_index: 1020
   clickable: true
@@ -418,9 +418,9 @@ elements:
   type: button
   content: "T22 Long Press"
   bounds:
-    x: 8
-    y: 1016
-    w: 395
+    x: 205
+    y: 538
+    w: 197
     h: 48
   z_index: 1021
   clickable: true
@@ -431,8 +431,8 @@ elements:
   content: "T23 Capture"
   bounds:
     x: 8
-    y: 1064
-    w: 395
+    y: 586
+    w: 197
     h: 48
   z_index: 1022
   clickable: true
@@ -442,9 +442,9 @@ elements:
   type: button
   content: "T24 Screenshot"
   bounds:
-    x: 8
-    y: 1112
-    w: 395
+    x: 205
+    y: 586
+    w: 197
     h: 48
   z_index: 1023
   clickable: true
@@ -455,8 +455,8 @@ elements:
   content: "T25 Scroll"
   bounds:
     x: 8
-    y: 1160
-    w: 395
+    y: 634
+    w: 197
     h: 48
   z_index: 1024
   clickable: true
@@ -466,9 +466,9 @@ elements:
   type: button
   content: "T26 Hide Show"
   bounds:
-    x: 8
-    y: 1208
-    w: 395
+    x: 205
+    y: 634
+    w: 197
     h: 48
   z_index: 1025
   clickable: true

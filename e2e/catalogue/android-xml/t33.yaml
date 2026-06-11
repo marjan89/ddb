@@ -1,7 +1,7 @@
-screen: "T3Activity"
+screen: "T23Activity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T19:56:07Z"
+timestamp: "2026-06-11T19:56:37Z"
 viewport:
   width: 1080
   height: 2205
@@ -93,9 +93,9 @@ elements:
     bottom: 16
     start: 16
     end: 16
-- id: "t3_tap"
+- id: "t23_capture"
   type: text
-  content: "T3 Tap"
+  content: "T23 Capture"
   font:
     family: sans-serif
     weight: regular
@@ -104,7 +104,7 @@ elements:
   bounds:
     x: 42
     y: 174
-    w: 113
+    w: 203
     h: 51
   z_index: 6
   clickable: false
@@ -112,37 +112,10 @@ elements:
   accessible: true
   line_count: 1
   truncated: false
-- id: "increment"
-  platform_id: "t3_increment"
-  type: button
-  content: "Increment"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 42
-    y: 225
-    w: 320
-    h: 126
-  z_index: 7
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t3_increment"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "3"
-  platform_id: "t3_count"
+- id: "t23_capture_anchor"
+  platform_id: "t23_anchor"
   type: text
-  content: "3"
+  content: "T23 Capture Anchor"
   font:
     family: sans-serif
     weight: regular
@@ -150,14 +123,14 @@ elements:
   foreground: "#8A000000"
   bounds:
     x: 42
-    y: 351
-    w: 21
+    y: 225
+    w: 329
     h: 51
-  z_index: 8
+  z_index: 7
   clickable: false
   enabled: true
   accessible: true
-  a11y_id: "t3_count"
+  a11y_id: "t23_anchor"
   line_count: 1
   truncated: false
 - id: "navigationbarbackground"
@@ -168,7 +141,7 @@ elements:
     y: 2337
     w: 1080
     h: 63
-  z_index: 9
+  z_index: 8
   clickable: false
   enabled: true
   accessible: false
@@ -182,7 +155,7 @@ elements:
     y: 0
     w: 1080
     h: 132
-  z_index: 10
+  z_index: 9
   clickable: false
   enabled: true
   accessible: false

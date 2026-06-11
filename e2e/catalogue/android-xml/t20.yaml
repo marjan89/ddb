@@ -1,7 +1,7 @@
-screen: "MainActivity"
+screen: "T20Activity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T18:05:21Z"
+timestamp: "2026-06-11T19:54:05Z"
 viewport:
   width: 1080
   height: 2205
@@ -77,7 +77,8 @@ elements:
   enabled: true
   accessible: false
   a11y_id: "content"
-- id: "scrollview_0_132"
+- id: "t20_refresh_0"
+  platform_id: "t20_refresh"
   type: container
   bounds:
     x: 0
@@ -87,8 +88,9 @@ elements:
   z_index: 5
   clickable: false
   enabled: true
-  accessible: true
-- id: "linearlayout_0_132"
+  accessible: false
+  a11y_id: "t20_refresh"
+- id: "scrollview_0_132"
   type: container
   bounds:
     x: 0
@@ -98,498 +100,64 @@ elements:
   z_index: 6
   clickable: false
   enabled: true
+  accessible: true
+- id: "linearlayout_0_132"
+  type: container
+  bounds:
+    x: 0
+    y: 132
+    w: 1080
+    h: 186
+  z_index: 7
+  clickable: false
+  enabled: true
   accessible: false
   padding:
-    top: 8
-    bottom: 8
-    start: 8
-    end: 8
-- id: "t1_launch"
-  platform_id: "t1_launch"
-  type: button
-  content: "T1 Launch"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 153
-    w: 1038
-    h: 126
-  z_index: 7
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t1_launch"
-  padding:
-    top: 9
-    bottom: 9
+    top: 16
+    bottom: 16
     start: 16
     end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t2_type"
-  platform_id: "t2_launch"
-  type: button
-  content: "T2 Type"
+- id: "t20_refresh_1"
+  type: text
+  content: "T20 Refresh"
   font:
     family: sans-serif
-    weight: medium
+    weight: regular
     size: 14.095238
-  foreground: "#FFFFFF"
+  foreground: "#8A000000"
   bounds:
-    x: 21
-    y: 279
-    w: 1038
-    h: 126
+    x: 42
+    y: 174
+    w: 201
+    h: 51
   z_index: 8
-  clickable: true
+  clickable: false
   enabled: true
   accessible: true
-  a11y_id: "t2_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
   line_count: 1
   truncated: false
-  elevation: 2.0
-- id: "t3_tap"
-  platform_id: "t3_launch"
-  type: button
-  content: "T3 Tap"
+- id: "t20_counter_0"
+  platform_id: "t20_counter"
+  type: text
+  content: "T20 Counter 0"
   font:
     family: sans-serif
-    weight: medium
+    weight: regular
     size: 14.095238
-  foreground: "#FFFFFF"
+  foreground: "#8A000000"
   bounds:
-    x: 21
-    y: 405
-    w: 1038
-    h: 126
+    x: 42
+    y: 225
+    w: 233
+    h: 51
   z_index: 9
-  clickable: true
+  clickable: false
   enabled: true
   accessible: true
-  a11y_id: "t3_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
+  a11y_label: "T20 Counter 0"
+  a11y_id: "t20_counter"
   line_count: 1
   truncated: false
-  elevation: 2.0
-- id: "t4_navigate"
-  platform_id: "t4_launch"
-  type: button
-  content: "T4 Navigate"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 531
-    w: 1038
-    h: 126
-  z_index: 10
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t4_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t5_kbd_dismiss"
-  platform_id: "t5_launch"
-  type: button
-  content: "T5 Kbd Dismiss"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 657
-    w: 1038
-    h: 126
-  z_index: 11
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t5_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t6_secure_field"
-  platform_id: "t6_launch"
-  type: button
-  content: "T6 Secure Field"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 783
-    w: 1038
-    h: 126
-  z_index: 12
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t6_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t7_dialog"
-  platform_id: "t7_launch"
-  type: button
-  content: "T7 Dialog"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 909
-    w: 1038
-    h: 126
-  z_index: 13
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t7_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t8_scroll"
-  platform_id: "t8_launch"
-  type: button
-  content: "T8 Scroll"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1035
-    w: 1038
-    h: 126
-  z_index: 14
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t8_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t9_wait"
-  platform_id: "t9_launch"
-  type: button
-  content: "T9 Wait"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1161
-    w: 1038
-    h: 126
-  z_index: 15
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t9_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t10_mock_url"
-  platform_id: "t10_launch"
-  type: button
-  content: "T10 Mock URL"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1287
-    w: 1038
-    h: 126
-  z_index: 16
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t10_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t11_deep_nav"
-  platform_id: "t11_launch"
-  type: button
-  content: "T11 Deep Nav"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1413
-    w: 1038
-    h: 126
-  z_index: 17
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t11_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t12_paste"
-  platform_id: "t12_launch"
-  type: button
-  content: "T12 Paste"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1539
-    w: 1038
-    h: 126
-  z_index: 18
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t12_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t13_login"
-  platform_id: "t13_launch"
-  type: button
-  content: "T13 Login"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1665
-    w: 1038
-    h: 126
-  z_index: 19
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t13_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t14_screen"
-  platform_id: "t14_launch"
-  type: button
-  content: "T14 Screen"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1791
-    w: 1038
-    h: 126
-  z_index: 20
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t14_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t15_state"
-  platform_id: "t15_launch"
-  type: button
-  content: "T15 State"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1917
-    w: 1038
-    h: 126
-  z_index: 21
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t15_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t16_text_equal"
-  platform_id: "t16_launch"
-  type: button
-  content: "T16 Text Equal"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 2043
-    w: 1038
-    h: 126
-  z_index: 22
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t16_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t17_animations"
-  platform_id: "t17_launch"
-  type: button
-  content: "T17 Animations"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 2169
-    w: 1038
-    h: 126
-  z_index: 23
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t17_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t18_tabs"
-  platform_id: "t18_launch"
-  type: button
-  content: "T18 Tabs"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 2295
-    w: 1038
-    h: 42
-  z_index: 24
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t18_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
 - id: "navigationbarbackground"
   platform_id: "navigationBarBackground"
   type: view
@@ -598,7 +166,7 @@ elements:
     y: 2337
     w: 1080
     h: 63
-  z_index: 25
+  z_index: 10
   clickable: false
   enabled: true
   accessible: false
@@ -612,9 +180,321 @@ elements:
     y: 0
     w: 1080
     h: 132
-  z_index: 26
+  z_index: 11
   clickable: false
   enabled: true
   accessible: false
   a11y_id: "statusBarBackground"
   background: "#3700B3"
+- id: "dialog_t1_launch"
+  type: button
+  content: "T1 Launch"
+  bounds:
+    x: 8
+    y: 58
+    w: 197
+    h: 48
+  z_index: 1000
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t2_type"
+  type: button
+  content: "T2 Type"
+  bounds:
+    x: 205
+    y: 58
+    w: 197
+    h: 48
+  z_index: 1001
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t3_tap"
+  type: button
+  content: "T3 Tap"
+  bounds:
+    x: 8
+    y: 106
+    w: 197
+    h: 48
+  z_index: 1002
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t4_navigate"
+  type: button
+  content: "T4 Navigate"
+  bounds:
+    x: 205
+    y: 106
+    w: 197
+    h: 48
+  z_index: 1003
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t5_kbd_dismiss"
+  type: button
+  content: "T5 Kbd Dismiss"
+  bounds:
+    x: 8
+    y: 154
+    w: 197
+    h: 48
+  z_index: 1004
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t6_secure_field"
+  type: button
+  content: "T6 Secure Field"
+  bounds:
+    x: 205
+    y: 154
+    w: 197
+    h: 48
+  z_index: 1005
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t7_dialog"
+  type: button
+  content: "T7 Dialog"
+  bounds:
+    x: 8
+    y: 202
+    w: 197
+    h: 48
+  z_index: 1006
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t8_scroll"
+  type: button
+  content: "T8 Scroll"
+  bounds:
+    x: 205
+    y: 202
+    w: 197
+    h: 48
+  z_index: 1007
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t9_wait"
+  type: button
+  content: "T9 Wait"
+  bounds:
+    x: 8
+    y: 250
+    w: 197
+    h: 48
+  z_index: 1008
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t10_mock_url"
+  type: button
+  content: "T10 Mock URL"
+  bounds:
+    x: 205
+    y: 250
+    w: 197
+    h: 48
+  z_index: 1009
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t11_deep_nav"
+  type: button
+  content: "T11 Deep Nav"
+  bounds:
+    x: 8
+    y: 298
+    w: 197
+    h: 48
+  z_index: 1010
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t12_paste"
+  type: button
+  content: "T12 Paste"
+  bounds:
+    x: 205
+    y: 298
+    w: 197
+    h: 48
+  z_index: 1011
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t13_login"
+  type: button
+  content: "T13 Login"
+  bounds:
+    x: 8
+    y: 346
+    w: 197
+    h: 48
+  z_index: 1012
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t14_screen"
+  type: button
+  content: "T14 Screen"
+  bounds:
+    x: 205
+    y: 346
+    w: 197
+    h: 48
+  z_index: 1013
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t15_state"
+  type: button
+  content: "T15 State"
+  bounds:
+    x: 8
+    y: 394
+    w: 197
+    h: 48
+  z_index: 1014
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t16_text_equal"
+  type: button
+  content: "T16 Text Equal"
+  bounds:
+    x: 205
+    y: 394
+    w: 197
+    h: 48
+  z_index: 1015
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t17_animations"
+  type: button
+  content: "T17 Animations"
+  bounds:
+    x: 8
+    y: 442
+    w: 197
+    h: 48
+  z_index: 1016
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t18_tabs"
+  type: button
+  content: "T18 Tabs"
+  bounds:
+    x: 205
+    y: 442
+    w: 197
+    h: 48
+  z_index: 1017
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t19_sheet"
+  type: button
+  content: "T19 Sheet"
+  bounds:
+    x: 8
+    y: 490
+    w: 197
+    h: 48
+  z_index: 1018
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t20_refresh"
+  type: button
+  content: "T20 Refresh"
+  bounds:
+    x: 205
+    y: 490
+    w: 197
+    h: 48
+  z_index: 1019
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t21_press_back"
+  type: button
+  content: "T21 Press Back"
+  bounds:
+    x: 8
+    y: 538
+    w: 197
+    h: 48
+  z_index: 1020
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t22_long_press"
+  type: button
+  content: "T22 Long Press"
+  bounds:
+    x: 205
+    y: 538
+    w: 197
+    h: 48
+  z_index: 1021
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t23_capture"
+  type: button
+  content: "T23 Capture"
+  bounds:
+    x: 8
+    y: 586
+    w: 197
+    h: 48
+  z_index: 1022
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t24_screenshot"
+  type: button
+  content: "T24 Screenshot"
+  bounds:
+    x: 205
+    y: 586
+    w: 197
+    h: 48
+  z_index: 1023
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t25_scroll"
+  type: button
+  content: "T25 Scroll"
+  bounds:
+    x: 8
+    y: 634
+    w: 197
+    h: 48
+  z_index: 1024
+  clickable: true
+  enabled: true
+  accessible: true
+- id: "dialog_t26_hide_show"
+  type: button
+  content: "T26 Hide Show"
+  bounds:
+    x: 205
+    y: 634
+    w: 197
+    h: 48
+  z_index: 1025
+  clickable: true
+  enabled: true
+  accessible: true
