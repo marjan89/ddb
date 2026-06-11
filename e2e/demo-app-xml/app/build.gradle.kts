@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.substrate.regdemoxml"
+    namespace = "io.substrate.regdemo.xml"
     compileSdk = 35
 
     defaultConfig {

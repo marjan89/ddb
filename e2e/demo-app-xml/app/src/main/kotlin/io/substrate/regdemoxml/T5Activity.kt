@@ -1,4 +1,4 @@
-package io.substrate.regdemoxml
+package io.substrate.regdemo.xml
 
 import android.content.Context
 import android.os.Bundle

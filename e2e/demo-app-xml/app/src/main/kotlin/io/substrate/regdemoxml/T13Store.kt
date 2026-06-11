@@ -1,4 +1,4 @@
-package io.substrate.regdemoxml
+package io.substrate.regdemo.xml
 
 enum class T13State { Locked, Unlocked, Error }
 
