@@ -1,0 +1,18 @@
+# Epic M / M-4 — XML demo variant of the Compose TC (mirror of ../tests/t32.yaml).
+# Element IDs follow the M-1 scaffold convention: T<N>_<element-name> as android resource id.
+# Runner: install ddb/e2e/demo-app-xml/ and target package io.substrate.regdemo.xml.
+app: io.substrate.regdemo.xml
+id: TC-T32-wait-for-resource-list
+name: "T32: wait_for resource-list (StepRaw.wait_for) — post-action /idle-resources poll"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T17 Animations"}
+    wait_for: ["network", "db"]
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T17 Spinner"}
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t32-semantic.yaml"

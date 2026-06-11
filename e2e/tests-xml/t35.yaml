@@ -1,0 +1,20 @@
+# Epic M / M-4 — XML demo variant of the Compose TC (mirror of ../tests/t35.yaml).
+# Element IDs follow the M-1 scaffold convention: T<N>_<element-name> as android resource id.
+# Runner: install ddb/e2e/demo-app-xml/ and target package io.substrate.regdemo.xml.
+app: io.substrate.regdemo.xml
+id: TC-T35-platform-fork
+name: "T35: platform fork (PlatformFork.ios) — runner picks ios branch on iOS device"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - platform:
+      ios:
+        - assert: element_exists
+          target: {content_fuzzy: "T1 Launch"}
+        - assert: element_exists
+          target: {content_fuzzy: "T17 Animations"}
+      android:
+        - assert: element_exists
+          target: {content_fuzzy: "android-only-target-should-not-run-on-ios"}
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t35-semantic.yaml"
