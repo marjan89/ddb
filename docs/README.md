@@ -7,7 +7,10 @@ Unified Android device CLI that replaces raw adb shell scripts, uiautomator wrap
 ```bash
 cd device-control-android/ddb
 cargo build --release
-cp target/release/ddb /opt/homebrew/bin/ddb
+# Use `install` (atomic tmp+rename) instead of `cp` — overwriting a
+# running binary with `cp` can break macOS codesign cache and trigger
+# SIGKILL on next invocation (TD-125).
+install -m 755 target/release/ddb /opt/homebrew/bin/ddb
 ```
 
 Requires `adb` on PATH. Optional: `scrcpy` for screen mirroring, `aapt2` for APK package detection.

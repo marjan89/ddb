@@ -19,8 +19,12 @@ Tag style is monolithic: `ddb-vX.Y.Z`. See `substrate-distro/tctl/docs/adr/ADR-0
 
 ```bash
 cargo build --release
-cp target/release/ddb /opt/cargo/bin/ddb
-cp target/release/ddb /opt/homebrew/bin/ddb   # PATH-shadow rule: install to BOTH
+# Use BSD `install` (atomic tmp+rename) — NOT `cp` over an existing
+# file. Overwriting with `cp` invalidates the macOS codesign cache for
+# the running process and macOS may SIGKILL the next invocation
+# (TD-125). `install -m 755` is the safe pattern.
+install -m 755 target/release/ddb /opt/cargo/bin/ddb
+install -m 755 target/release/ddb /opt/homebrew/bin/ddb   # PATH-shadow rule: install to BOTH
 ```
 
 ## Setup
