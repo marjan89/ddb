@@ -286,6 +286,13 @@ reset_demo() {
   ddb -d "$dev_name" adb shell am start -n "$MAIN_ACTIVITY" >/dev/null 2>&1 \
     || { echo "[TD-50][$context] am start failed for $MAIN_ACTIVITY" >&2; return 1; }
   echo "[TD-50][$context] force-stop + am start $PACKAGE" >&2
+  # TD-128: am force-stop kills the JVM that owned the device-side socket
+  # of the adb forward; the new agent process needs the forward
+  # re-established before subsequent probes. Wave-19 discriminating
+  # test (Wave 19 brxalobqq) confirmed 34/34 post-reset /health 200
+  # with this in place.
+  ensure_agent_forward "$dev_name"
+  sleep 1
   return 0
 }
 
