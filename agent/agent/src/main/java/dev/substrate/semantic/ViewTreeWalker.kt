@@ -93,7 +93,7 @@ object ViewTreeWalker {
         return glyphHashCache.getOrPut(id) { computeGlyphHash(typeface) }
     }
 
-    fun walk(activity: Activity): SemanticSchema {
+    fun walk(activity: Activity, includeOffscreen: Boolean = false): SemanticSchema {
         val density = activity.resources.displayMetrics.density
         val decorView = activity.window.decorView
         val elements = mutableListOf<SemanticElement>()
@@ -129,21 +129,32 @@ object ViewTreeWalker {
             }
 
             val rect = Rect()
-            if (!view.getGlobalVisibleRect(rect)) {
-                log.appendLine("SKIP $tag reason=no_visible_rect")
-                return
-            }
-
+            val onScreen = view.getGlobalVisibleRect(rect)
+            // TD-130: when includeOffscreen=true, recover bounds via
+            // getLocationOnScreen + measured dimensions so the walker emits
+            // views that exist in the tree but lie outside the current
+            // viewport (or are clipped to zero visible area).
             val bounds =
-                Bounds(
-                    x = rect.left,
-                    y = rect.top,
-                    w = rect.right - rect.left,
-                    h = rect.bottom - rect.top,
-                )
+                if (onScreen) {
+                    Bounds(
+                        x = rect.left,
+                        y = rect.top,
+                        w = rect.right - rect.left,
+                        h = rect.bottom - rect.top,
+                    )
+                } else if (includeOffscreen) {
+                    val loc = IntArray(2)
+                    view.getLocationOnScreen(loc)
+                    Bounds(x = loc[0], y = loc[1], w = view.width, h = view.height)
+                } else {
+                    log.appendLine("SKIP $tag reason=no_visible_rect")
+                    return
+                }
             if (bounds.w <= 0 || bounds.h <= 0) {
-                log.appendLine("SKIP $tag reason=zero_size bounds=$bounds")
-                return
+                if (!includeOffscreen || (view.width <= 0 || view.height <= 0)) {
+                    log.appendLine("SKIP $tag reason=zero_size bounds=$bounds")
+                    return
+                }
             }
 
             val isExternal = isExternalSurface(view)

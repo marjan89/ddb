@@ -70,7 +70,9 @@ class SemanticServer private constructor(
                 val scrollSteps =
                     scrollParam?.toIntOrNull()
                         ?: if (scrollParam?.toBooleanStrictOrNull() == true) 5 else 0
-                if (scrollSteps > 0) handleSemanticScroll(scrollSteps) else handleSemantic()
+                val includeOffscreen =
+                    session.parms?.get("include_offscreen")?.toBooleanStrictOrNull() == true
+                if (scrollSteps > 0) handleSemanticScroll(scrollSteps) else handleSemantic(includeOffscreen)
             }
 
             uri == "/overlay" -> {
@@ -796,7 +798,7 @@ class SemanticServer private constructor(
         status: Response.Status = Response.Status.OK,
     ): Response = newFixedLengthResponse(status, "application/json", json)
 
-    private fun handleSemantic(): Response {
+    private fun handleSemantic(includeOffscreen: Boolean = false): Response {
         val activity =
             currentActivity?.get()
                 ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
@@ -822,12 +824,15 @@ class SemanticServer private constructor(
                     if (isScrollIdle(rootView)) break
                     awaitFrame()
                 }
-                schema = ViewTreeWalker.walk(activity)
+                schema = ViewTreeWalker.walk(activity, includeOffscreen)
                 val dialogElements = walkDialogWindows(activity)
                 if (dialogElements.isNotEmpty()) {
                     schema = schema!!.copy(elements = schema!!.elements + dialogElements)
                 }
-                cachedSchema = schema
+                // TD-130: only cache the default (visible-only) schema —
+                // the offscreen variant is a different shape and must not
+                // pollute the cache used by other handlers.
+                if (!includeOffscreen) cachedSchema = schema
             } catch (e: Exception) {
                 error = e.message ?: "unknown error"
             }
