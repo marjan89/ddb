@@ -260,13 +260,19 @@ boot_and_install() {
   echo "phase1: launching $MAIN_ACTIVITY on $dev_name..." >&2
   ddb -d "$dev_name" adb shell am start -n "$MAIN_ACTIVITY" \
     || { echo "phase1: launch failed" >&2; exit 1; }
+  # adb forward setup is centralized in ensure_agent_forward — see below
+}
 
-  # TD-124 PART-2: layer2_smoke polls http://localhost:$AGENT_PORT/health
-  # but no port forward exists yet — the only forward setup lived in
-  # prewarm_demo (called per-TC for am-restart, not from the main flow).
-  # Fresh sweeps would time out at layer2; sweeps that "worked" only did
-  # so because a manual `adb forward` from a prior session persisted in
-  # the adb server. Set up the forward here so layer2_smoke can resolve.
+# TD-124 PART-2: layer2_smoke polls http://localhost:$AGENT_PORT/health
+# but no adb port forward existed on the main flow — the only setup was
+# inside prewarm_demo (called per-TC for am-restart reset, not from the
+# main sweep entry). Fresh sweeps would always time out at layer2;
+# sweeps that "worked" only did so because a manual `adb forward` from
+# a prior session persisted in the adb-server. Hoist the forward setup
+# to its own function called unconditionally before any layer runs so
+# every code path (--layer all, --layer 2, --layer 3) gets it.
+ensure_agent_forward() {
+  local dev_name="$1"
   ddb -d "$dev_name" adb forward "tcp:$AGENT_PORT" "tcp:$AGENT_PORT" >/dev/null 2>&1 || true
   echo "[TD-124] adb forward tcp:$AGENT_PORT (host) → tcp:$AGENT_PORT (device)" >&2
 }
@@ -527,6 +533,11 @@ fi
 if [[ "$LAYER" != "2" ]]; then
   boot_and_install "$UDID"
 fi
+
+# TD-124 PART-2: ensure adb forward is up before layer2_smoke polls the
+# host-side localhost port. Runs unconditionally so layer-2-only sweeps
+# don't depend on a sticky forward from a prior session.
+ensure_agent_forward "$UDID"
 
 L2_STATUS="skipped"
 L3_AGG=""
