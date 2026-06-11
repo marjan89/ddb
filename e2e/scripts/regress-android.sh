@@ -433,7 +433,14 @@ emit_summary() {
 # Opt-in via --visual-qa. --update-baselines copies captures over
 # baselines (operator manual trigger).
 visual_qa() {
-  local catalogue_dir="$REGRESSION_ROOT/catalogue/android"
+  # Epic M (Wave 15): per-target baseline catalogue so xml + compose
+  # don't collide. android/ for compose (default), android-xml/ for xml.
+  local catalogue_dir
+  if [[ "$TARGET" == "xml" ]]; then
+    catalogue_dir="$REGRESSION_ROOT/catalogue/android-xml"
+  else
+    catalogue_dir="$REGRESSION_ROOT/catalogue/android"
+  fi
   local captures_dir="$REGRESSION_ROOT/captures"
   local per_tc_json=""
   local mismatch_count=0
