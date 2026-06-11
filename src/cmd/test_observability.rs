@@ -194,35 +194,59 @@ impl Observer {
     // --- Surface 6: agent health ping --------------------------------------
     /// Returns Ok(()) on 2xx; Err with diagnostic on non-2xx / failure.
     /// Emits ERROR (infra=true) on failure — caller checks `is_aborted`.
+    ///
+    /// TD-124 (2026-06-11): retry up to 5x with exponential backoff
+    /// (200ms → 440ms over ~1.6s total) before emitting `agent_unhealthy`.
+    /// Reason: ddb's preflight sets up `adb forward host:N → device:9876`
+    /// then immediately probes /health; under emulator load the forward
+    /// is set but the listening socket isn't ready, returning HTTP 000.
+    /// Existing per-TC ping had no retry — a single race aborted the
+    /// whole sweep. The retry keeps the happy path fast (first attempt
+    /// succeeds in <100ms on warm runs) while paving over the race.
     pub fn agent_health_ping(&self, runner: &StepRunner) -> Result<(), String> {
         if !self.enabled || self.agent_base.is_empty() { return Ok(()); }
         let url = format!("{}/health", self.agent_base);
-        let mut cmd = std::process::Command::new("curl");
-        cmd.args(["-s", "-o", "/dev/null", "-w", "%{http_code}",
-                  "--connect-timeout", "2", "--max-time", "5", &url]);
-        let started = Instant::now();
-        let out = runner.run_with_deadline(&mut cmd);
-        let elapsed = started.elapsed();
-        match out {
-            Ok(o) => {
-                let code = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if code.starts_with('2') {
-                    if elapsed > Duration::from_secs(3) {
-                        self.warn("agent_slow", None,
-                            &format!("/health took {}ms", elapsed.as_millis()));
+        // Backoff schedule: 200, 280, 360, 440 ms between attempts 2-5.
+        // Total worst-case waited time = 1280 ms. Each attempt has its
+        // own --connect-timeout 2 / --max-time 5 budget below.
+        const ATTEMPTS: usize = 5;
+        let mut last_code = String::new();
+        let mut last_err: Option<String> = None;
+        let started_total = Instant::now();
+        for attempt in 1..=ATTEMPTS {
+            let mut cmd = std::process::Command::new("curl");
+            cmd.args(["-s", "-o", "/dev/null", "-w", "%{http_code}",
+                      "--connect-timeout", "2", "--max-time", "5", &url]);
+            let out = runner.run_with_deadline(&mut cmd);
+            match out {
+                Ok(o) => {
+                    let code = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if code.starts_with('2') {
+                        let elapsed_total = started_total.elapsed();
+                        if elapsed_total > Duration::from_secs(3) {
+                            self.warn("agent_slow", None,
+                                &format!("/health took {}ms across {attempt} attempt(s)", elapsed_total.as_millis()));
+                        }
+                        return Ok(());
                     }
-                    Ok(())
-                } else {
-                    self.error("agent_unhealthy", None, None,
-                        &format!("/health returned {code}"), true);
-                    Err(format!("agent unhealthy: HTTP {code}"))
+                    last_code = code;
                 }
+                Err(e) => { last_err = Some(e); }
             }
-            Err(e) => {
-                self.error("agent_unreachable", None, None,
-                    &format!("/health failed: {e}"), true);
-                Err(format!("agent unreachable: {e}"))
+            if attempt < ATTEMPTS {
+                let backoff_ms: u64 = 200 + (attempt as u64 - 1) * 80;
+                std::thread::sleep(Duration::from_millis(backoff_ms));
             }
+        }
+        // All attempts exhausted — fail loud now.
+        if let Some(e) = last_err {
+            self.error("agent_unreachable", None, None,
+                &format!("/health failed after {ATTEMPTS} attempts: {e}"), true);
+            Err(format!("agent unreachable: {e}"))
+        } else {
+            self.error("agent_unhealthy", None, None,
+                &format!("/health returned {last_code} after {ATTEMPTS} attempts"), true);
+            Err(format!("agent unhealthy: HTTP {last_code}"))
         }
     }
 
