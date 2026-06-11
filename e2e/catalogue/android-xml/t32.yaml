@@ -1,7 +1,7 @@
 screen: "T17Activity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T19:56:30Z"
+timestamp: "2026-06-11T20:16:33Z"
 viewport:
   width: 1080
   height: 2205
@@ -118,9 +118,9 @@ elements:
   content: "T17 Spinner"
   bounds:
     x: 42
-    y: 186
-    w: 249
-    h: 288
+    y: 197
+    w: 238
+    h: 266
   z_index: 7
   clickable: false
   enabled: true
