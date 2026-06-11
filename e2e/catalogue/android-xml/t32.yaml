@@ -1,7 +1,7 @@
-screen: "T16Activity"
+screen: "T17Activity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T18:34:25Z"
+timestamp: "2026-06-11T18:38:08Z"
 viewport:
   width: 1080
   height: 2205
@@ -93,9 +93,9 @@ elements:
     bottom: 16
     start: 16
     end: 16
-- id: "t16_text_equal"
+- id: "t17_animations"
   type: text
-  content: "T16 Text Equal"
+  content: "T17 Animations"
   font:
     family: sans-serif
     weight: regular
@@ -104,7 +104,7 @@ elements:
   bounds:
     x: 42
     y: 174
-    w: 243
+    w: 259
     h: 51
   z_index: 6
   clickable: false
@@ -112,28 +112,25 @@ elements:
   accessible: true
   line_count: 1
   truncated: false
-- id: "t16_expected_value"
-  platform_id: "t16_expected"
-  type: text
-  content: "T16 expected value"
-  font:
-    family: sans-serif
-    weight: regular
-    size: 14.095238
-  foreground: "#8A000000"
+- id: "t17_spinner"
+  platform_id: "t17_spinner"
+  type: image
+  content: "T17 Spinner"
   bounds:
     x: 42
-    y: 225
-    w: 320
-    h: 51
+    y: 183
+    w: 252
+    h: 294
   z_index: 7
   clickable: false
   enabled: true
   accessible: true
-  a11y_label: "T16 expected"
-  a11y_id: "t16_expected"
-  line_count: 1
-  truncated: false
+  a11y_label: "T17 Spinner"
+  a11y_id: "t17_spinner"
+  image:
+    resource: "t17_spinner"
+    type: raster
+  image_path: "images/t17_spinner.png"
 - id: "navigationbarbackground"
   platform_id: "navigationBarBackground"
   type: view

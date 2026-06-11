@@ -1,7 +1,7 @@
 screen: "T9Activity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T18:02:39Z"
+timestamp: "2026-06-11T18:31:50Z"
 viewport:
   width: 1080
   height: 2205
@@ -139,6 +139,28 @@ elements:
   line_count: 1
   truncated: false
   elevation: 2.0
+- id: "t9_delayed_element"
+  platform_id: "t9_delayed"
+  type: text
+  content: "T9 Delayed Element"
+  font:
+    family: sans-serif
+    weight: regular
+    size: 14.095238
+  foreground: "#8A000000"
+  bounds:
+    x: 42
+    y: 351
+    w: 327
+    h: 51
+  z_index: 8
+  clickable: false
+  enabled: true
+  accessible: true
+  a11y_label: "T9 Delayed Element"
+  a11y_id: "t9_delayed"
+  line_count: 1
+  truncated: false
 - id: "navigationbarbackground"
   platform_id: "navigationBarBackground"
   type: view
@@ -147,7 +169,7 @@ elements:
     y: 2337
     w: 1080
     h: 63
-  z_index: 8
+  z_index: 9
   clickable: false
   enabled: true
   accessible: false
@@ -161,7 +183,7 @@ elements:
     y: 0
     w: 1080
     h: 132
-  z_index: 9
+  z_index: 10
   clickable: false
   enabled: true
   accessible: false
