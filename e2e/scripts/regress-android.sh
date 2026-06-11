@@ -20,6 +20,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REGRESSION_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Epic M (Wave 15): --target {compose|xml} switches the demo-app +
+# TC corpus + bundle. Defaults to compose for back-compat.
+TARGET="compose"
 TESTS_DIR="$REGRESSION_ROOT/tests"
 
 LAYER="all"
@@ -68,6 +72,10 @@ Usage: $0 [options]
   --skip-install      reuse already-installed app (dev loop ergonomics)
   --tests-dir DIR     override TESTS_DIR (default: <repo>/tests). Use to point
                       at a production catalogue dir without copying files.
+  --target NAME       default: compose. {compose|xml}. Switches demo-app
+                      + tests-dir + bundle id. \`xml\` uses demo-app-xml/
+                      + tests-xml/ + io.substrate.regdemo.xml (Epic M).
+                      Explicit --app-path / --tests-dir overrides win.
   --env-file FILE     source FILE (set -a / source / set +a) so KEY=value
                       lines export as env vars (DDB_TEST_EMAIL, DDB_TEST_PASSWORD,
                       DDB_FIXTURES_PATH, DDB_HOME_TAB, DDB_RECIPE_DIR, etc.)
@@ -113,6 +121,7 @@ while [[ $# -gt 0 ]]; do
     --app-path)     APP_PATH="$2"; shift 2;;
     --skip-install) SKIP_INSTALL=1; shift;;
     --tests-dir)    TESTS_DIR="$2"; shift 2;;
+    --target)       TARGET="$2"; shift 2;;
     --env-file)     ENV_FILE="$2"; shift 2;;
     --skip-layer2)  SKIP_LAYER2=1; shift;;
     --visual-qa)    VISUAL_QA=1; shift;;
@@ -143,6 +152,30 @@ while [[ $# -gt 0 ]]; do
     *)              echo "preflight: unknown flag: $1" >&2; exit 2;;
   esac
 done
+
+# ─── Epic M: resolve --target {compose|xml} ───────────────────────────
+# Switches the demo-app + tests-dir + bundle as a unit. Honors any
+# explicit --app-path / --tests-dir / DEMO_APP_PATH override from above.
+case "$TARGET" in
+  compose)
+    : # defaults already point at demo-app + tests + io.substrate.regdemo
+    ;;
+  xml)
+    if [[ "$TESTS_DIR" == "$REGRESSION_ROOT/tests" ]]; then
+      TESTS_DIR="$REGRESSION_ROOT/tests-xml"
+    fi
+    if [[ "$APP_PATH" == "$REGRESSION_ROOT/demo-app/app/build/outputs/apk/debug/app-debug.apk" ]]; then
+      APP_PATH="$REGRESSION_ROOT/demo-app-xml/app/build/outputs/apk/debug/app-debug.apk"
+    fi
+    PACKAGE="io.substrate.regdemo.xml"
+    MAIN_ACTIVITY="io.substrate.regdemo.xml/.MainActivity"
+    echo "[epic-m][target=xml] tests=$TESTS_DIR apk=$APP_PATH pkg=$PACKAGE" >&2
+    ;;
+  *)
+    echo "regress-android: unknown --target '$TARGET' (expected: compose|xml)" >&2
+    exit 2
+    ;;
+esac
 
 # ─── PHASE 0: preflight ───────────────────────────────────────────────
 preflight() {
