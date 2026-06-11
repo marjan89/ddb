@@ -7,14 +7,14 @@ XML-view variants of the Compose TC corpus at `../tests/`. One-for-one port of a
 Same TC content as the Compose corpus, marked with:
 
 - A header comment block citing Epic M / M-2 + the mirror file path.
-- A top-level `app: io.substrate.regdemo-xml` field naming the target package (M-6 runner extension will honour it; current `ddb test` runner ignores unknown top-level keys harmlessly).
+- A top-level `app: io.substrate.regdemo.xml` field naming the target package (M-6 runner extension will honour it; current `ddb test` runner ignores unknown top-level keys harmlessly).
 
 No step / target / assertion was modified. Each TC targets visible text via `content_fuzzy`; the XML demo (M-1, `../demo-app-xml/`) is expected to render the same labels for the test menu + per-screen widgets.
 
 ## What the runner must do (M-6)
 
 1. Install the XML demo APK (`ddb/e2e/demo-app-xml/app/build/outputs/apk/debug/app-debug.apk`) instead of the Compose demo.
-2. Target package `io.substrate.regdemo-xml`.
+2. Target package `io.substrate.regdemo.xml`.
 3. Otherwise: same regress-android.sh sweep flow.
 
 Until M-6 ships, the operator can sweep manually:
