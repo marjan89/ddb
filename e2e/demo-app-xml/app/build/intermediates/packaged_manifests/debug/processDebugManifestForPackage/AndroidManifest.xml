@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.substrate.regdemo.xml"
+    android:versionCode="1"
+    android:versionName="0.1.0" >
+
+    <uses-sdk
+        android:minSdkVersion="26"
+        android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <permission
+        android:name="io.substrate.regdemo.xml.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="io.substrate.regdemo.xml.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+
+    <application
+        android:name="io.substrate.regdemoxml.RegdemoXmlApplication"
+        android:allowBackup="false"
+        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+        android:debuggable="true"
+        android:extractNativeLibs="false"
+        android:label="RegressionDemoXml"
+        android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" >
+        <activity
+            android:name="io.substrate.regdemoxml.MainActivity"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name="io.substrate.regdemoxml.T1Activity" />
+        <activity android:name="io.substrate.regdemoxml.T2Activity" />
+        <activity android:name="io.substrate.regdemoxml.T3Activity" />
+        <activity android:name="io.substrate.regdemoxml.T4Activity" />
+        <activity android:name="io.substrate.regdemoxml.T4DetailActivity" />
+        <activity android:name="io.substrate.regdemoxml.T5Activity" />
+        <activity android:name="io.substrate.regdemoxml.T6Activity" />
+        <activity android:name="io.substrate.regdemoxml.T7Activity" />
+        <activity android:name="io.substrate.regdemoxml.T8Activity" />
+        <activity android:name="io.substrate.regdemoxml.T9Activity" />
+        <activity android:name="io.substrate.regdemoxml.T10Activity" />
+        <activity android:name="io.substrate.regdemoxml.T11Activity" />
+        <activity android:name="io.substrate.regdemoxml.T11Level1Activity" />
+        <activity android:name="io.substrate.regdemoxml.T11Level2Activity" />
+        <activity android:name="io.substrate.regdemoxml.T12Activity" />
+        <activity android:name="io.substrate.regdemoxml.T13Activity" />
+        <activity android:name="io.substrate.regdemoxml.T14Activity" />
+        <activity android:name="io.substrate.regdemoxml.T14AnchorActivity" />
+        <activity android:name="io.substrate.regdemoxml.T15Activity" />
+        <activity android:name="io.substrate.regdemoxml.T16Activity" />
+        <activity android:name="io.substrate.regdemoxml.T17Activity" />
+        <activity android:name="io.substrate.regdemoxml.T18Activity" />
+        <activity android:name="io.substrate.regdemoxml.T19Activity" />
+        <activity android:name="io.substrate.regdemoxml.T20Activity" />
+        <activity android:name="io.substrate.regdemoxml.T21Activity" />
+        <activity android:name="io.substrate.regdemoxml.T22Activity" />
+        <activity android:name="io.substrate.regdemoxml.T23Activity" />
+        <activity android:name="io.substrate.regdemoxml.T24Activity" />
+        <activity android:name="io.substrate.regdemoxml.T25Activity" />
+        <activity android:name="io.substrate.regdemoxml.T26Activity" />
+
+        <provider
+            android:name="dev.substrate.semantic.SemanticInitProvider"
+            android:authorities="io.substrate.regdemo.xml.semantic.init"
+            android:exported="false" />
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="io.substrate.regdemo.xml.androidx-startup"
+            android:exported="false" >
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                android:value="androidx.startup" />
+            <meta-data
+                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+                android:value="androidx.startup" />
+            <meta-data
+                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+                android:value="androidx.startup" />
+        </provider>
+
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            android:directBootAware="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP" >
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

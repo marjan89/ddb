@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".RegdemoXmlApplication"
+        android:label="RegressionDemoXml"
+        android:allowBackup="false"
+        android:theme="@style/Theme.MaterialComponents.Light.NoActionBar">
+
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".T1Activity" />
+        <activity android:name=".T2Activity" />
+        <activity android:name=".T3Activity" />
+        <activity android:name=".T4Activity" />
+        <activity android:name=".T4DetailActivity" />
+        <activity android:name=".T5Activity" />
+        <activity android:name=".T6Activity" />
+        <activity android:name=".T7Activity" />
+        <activity android:name=".T8Activity" />
+        <activity android:name=".T9Activity" />
+        <activity android:name=".T10Activity" />
+        <activity android:name=".T11Activity" />
+        <activity android:name=".T11Level1Activity" />
+        <activity android:name=".T11Level2Activity" />
+        <activity android:name=".T12Activity" />
+        <activity android:name=".T13Activity" />
+        <activity android:name=".T14Activity" />
+        <activity android:name=".T14AnchorActivity" />
+        <activity android:name=".T15Activity" />
+        <activity android:name=".T16Activity" />
+        <activity android:name=".T17Activity" />
+        <activity android:name=".T18Activity" />
+        <activity android:name=".T19Activity" />
+        <activity android:name=".T20Activity" />
+        <activity android:name=".T21Activity" />
+        <activity android:name=".T22Activity" />
+        <activity android:name=".T23Activity" />
+        <activity android:name=".T24Activity" />
+        <activity android:name=".T25Activity" />
+        <activity android:name=".T26Activity" />
+
+        <provider
+            android:name="dev.substrate.semantic.SemanticInitProvider"
+            android:authorities="${applicationId}.semantic.init"
+            android:exported="false"
+            tools:ignore="MissingClass" />
+
+    </application>
+</manifest>
