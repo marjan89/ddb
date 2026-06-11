@@ -1,0 +1,11 @@
+id: TC-T27-target-type-filter
+name: "T27: target type-filter (Target.type field) — wdaFindElements with type predicate"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T1 Launch", type: "Button"}
+  - assert: element_exists
+    target: {content_fuzzy: "T22 Long Press", type: "Button"}
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t27-semantic.yaml"

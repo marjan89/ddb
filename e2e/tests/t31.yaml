@@ -1,0 +1,10 @@
+id: TC-T31-assert-hint
+name: "T31: assert hint key (StepRaw.hint → AssertStep) — parser flows hint metadata"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T1 Launch"}
+    hint: "HomeScreen first NavigationLink — sanity baseline"
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t31-semantic.yaml"

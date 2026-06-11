@@ -1,0 +1,13 @@
+id: TC-T33-output-capture
+name: "T33: output capture (StepRaw.output via capture verb) — pure-YAML T23 sibling"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T23 Capture"}
+  - action: wait_idle
+    seconds: 2
+  - action: capture
+    output: "/tmp/qa-compare-ddb/t33.yaml"
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t33-semantic.yaml"

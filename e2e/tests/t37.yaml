@@ -1,0 +1,15 @@
+id: TC-T37-fixture-interpolation
+name: "T37: {{fixtures.X.Y}} substitution (FixtureResolver.swift:85) — loaded from regression-ios/fixtures.yaml"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "{{fixtures.homescreen.first_link}}"}
+  - action: tap
+    target: {content_fuzzy: "{{fixtures.homescreen.spinner_link}}"}
+  - action: wait_idle
+    seconds: 3
+  - assert: element_exists
+    target: {content_fuzzy: "{{fixtures.homescreen.spinner_target}}"}
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t37-semantic.yaml"

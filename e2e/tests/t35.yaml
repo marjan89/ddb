@@ -1,0 +1,16 @@
+id: TC-T35-platform-fork
+name: "T35: platform fork (PlatformFork.ios) — runner picks ios branch on iOS device"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - platform:
+      ios:
+        - assert: element_exists
+          target: {content_fuzzy: "T1 Launch"}
+        - assert: element_exists
+          target: {content_fuzzy: "T17 Animations"}
+      android:
+        - assert: element_exists
+          target: {content_fuzzy: "android-only-target-should-not-run-on-ios"}
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t35-semantic.yaml"
