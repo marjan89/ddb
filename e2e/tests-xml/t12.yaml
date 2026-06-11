@@ -30,3 +30,6 @@ steps:
     seconds: 1
   - assert: element_exists
     target: {content_fuzzy: "T12 pasted content"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t12-semantic.yaml"

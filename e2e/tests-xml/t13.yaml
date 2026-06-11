@@ -37,3 +37,6 @@ steps:
     target: {content_fuzzy: "T13 Unlocked"}
   - assert: element_not_exists
     target: {content_fuzzy: "T13 Locked"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t13-semantic.yaml"

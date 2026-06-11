@@ -14,3 +14,6 @@ steps:
   - assert: element_exists
     target: {content_fuzzy: "T16 expected"}
     text: "T16 expected value"
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t16-semantic.yaml"

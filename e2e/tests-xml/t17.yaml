@@ -13,3 +13,6 @@ steps:
     seconds: 3
   - assert: element_exists
     target: {content_fuzzy: "T17 Spinner"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t17-semantic.yaml"

@@ -33,3 +33,6 @@ steps:
     method: "POST"
     body:
       url_pattern: "/t10"
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t10-semantic.yaml"

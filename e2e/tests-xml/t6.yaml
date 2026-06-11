@@ -19,3 +19,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "secret"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t6-semantic.yaml"

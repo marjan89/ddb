@@ -31,3 +31,6 @@ steps:
     target: {content_fuzzy: "T18 Tab Gamma Content"}
   - assert: element_not_exists
     target: {content_fuzzy: "T18 Tab Beta Content"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t18-semantic.yaml"

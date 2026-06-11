@@ -21,3 +21,6 @@ steps:
   - assert: element_exists
     target: {content_fuzzy: "T20 Counter"}
     text: "T20 Counter 1"
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t20-semantic.yaml"

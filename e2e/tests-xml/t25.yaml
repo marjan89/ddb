@@ -19,3 +19,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "T25 Item 30"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t25-semantic.yaml"

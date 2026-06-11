@@ -25,3 +25,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "T26 Target"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t26-semantic.yaml"

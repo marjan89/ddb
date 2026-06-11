@@ -21,3 +21,6 @@ steps:
   - assert: element_state
     target: {content_fuzzy: "Action Button"}
     enabled: false
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t15-semantic.yaml"

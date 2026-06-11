@@ -23,3 +23,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "T4 Navigate"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t4-semantic.yaml"

@@ -1,0 +1,8 @@
+tc_id: TC-T1-launch
+tc_name: 'T1: app launches, HomeScreen visible'
+platform: android
+device: Pixel 8 Emulator (API 34)
+started: 2026-01-01T14:52:33Z
+finished: 2026-01-01T14:52:51Z
+result: FAIL
+steps: []

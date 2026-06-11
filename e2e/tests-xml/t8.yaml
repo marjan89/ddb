@@ -19,3 +19,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "scroll.bottom"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t8-semantic.yaml"

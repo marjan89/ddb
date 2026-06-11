@@ -11,3 +11,6 @@ steps:
     target: {content_fuzzy: "T1 Launch"}
   - assert: element_exists
     target: {content_fuzzy: "T3 Tap"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t1-semantic.yaml"

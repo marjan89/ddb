@@ -23,3 +23,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "hidden"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t5-semantic.yaml"

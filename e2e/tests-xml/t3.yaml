@@ -21,3 +21,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "3"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t3-semantic.yaml"

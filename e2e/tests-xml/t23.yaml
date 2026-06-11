@@ -13,3 +13,6 @@ steps:
     seconds: 2
   - assert: element_exists
     target: {content_fuzzy: "T23 Capture Anchor"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t23-semantic.yaml"

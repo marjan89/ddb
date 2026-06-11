@@ -15,3 +15,6 @@ steps:
     target: {content_fuzzy: "T24 Screenshot Marker"}
   - assert: element_exists
     target: {content_fuzzy: "T24 Marker Circle"}
+
+  - action: capture
+    output: "/Users/Shared/projects/substrate-distro/ddb/e2e/captures/t24-semantic.yaml"
