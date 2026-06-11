@@ -1,7 +1,7 @@
 screen: "MainActivity"
 device: "sdk_gphone64_arm64"
 platform: android
-timestamp: "2026-06-11T16:37:03Z"
+timestamp: "2026-06-11T18:06:23Z"
 viewport:
   width: 1080
   height: 2205
@@ -104,222 +104,6 @@ elements:
     bottom: 8
     start: 8
     end: 8
-- id: "t1_launch"
-  platform_id: "t1_launch"
-  type: button
-  content: "T1 Launch"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 153
-    w: 1038
-    h: 126
-  z_index: 7
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t1_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t2_type"
-  platform_id: "t2_launch"
-  type: button
-  content: "T2 Type"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 279
-    w: 1038
-    h: 126
-  z_index: 8
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t2_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t3_tap"
-  platform_id: "t3_launch"
-  type: button
-  content: "T3 Tap"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 405
-    w: 1038
-    h: 126
-  z_index: 9
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t3_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t4_navigate"
-  platform_id: "t4_launch"
-  type: button
-  content: "T4 Navigate"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 531
-    w: 1038
-    h: 126
-  z_index: 10
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t4_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t5_kbd_dismiss"
-  platform_id: "t5_launch"
-  type: button
-  content: "T5 Kbd Dismiss"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 657
-    w: 1038
-    h: 126
-  z_index: 11
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t5_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t6_secure_field"
-  platform_id: "t6_launch"
-  type: button
-  content: "T6 Secure Field"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 783
-    w: 1038
-    h: 126
-  z_index: 12
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t6_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t7_dialog"
-  platform_id: "t7_launch"
-  type: button
-  content: "T7 Dialog"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 909
-    w: 1038
-    h: 126
-  z_index: 13
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t7_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
-- id: "t8_scroll"
-  platform_id: "t8_launch"
-  type: button
-  content: "T8 Scroll"
-  font:
-    family: sans-serif
-    weight: medium
-    size: 14.095238
-  foreground: "#FFFFFF"
-  bounds:
-    x: 21
-    y: 1035
-    w: 1038
-    h: 126
-  z_index: 14
-  clickable: true
-  enabled: true
-  accessible: true
-  a11y_id: "t8_launch"
-  padding:
-    top: 9
-    bottom: 9
-    start: 16
-    end: 16
-  line_count: 1
-  truncated: false
-  elevation: 2.0
 - id: "t9_wait"
   platform_id: "t9_launch"
   type: button
@@ -331,10 +115,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1161
+    y: 132
     w: 1038
-    h: 126
-  z_index: 15
+    h: 42
+  z_index: 7
   clickable: true
   enabled: true
   accessible: true
@@ -358,10 +142,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1287
+    y: 174
     w: 1038
     h: 126
-  z_index: 16
+  z_index: 8
   clickable: true
   enabled: true
   accessible: true
@@ -385,10 +169,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1413
+    y: 300
     w: 1038
     h: 126
-  z_index: 17
+  z_index: 9
   clickable: true
   enabled: true
   accessible: true
@@ -412,10 +196,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1539
+    y: 426
     w: 1038
     h: 126
-  z_index: 18
+  z_index: 10
   clickable: true
   enabled: true
   accessible: true
@@ -439,10 +223,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1665
+    y: 552
     w: 1038
     h: 126
-  z_index: 19
+  z_index: 11
   clickable: true
   enabled: true
   accessible: true
@@ -466,10 +250,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1791
+    y: 678
     w: 1038
     h: 126
-  z_index: 20
+  z_index: 12
   clickable: true
   enabled: true
   accessible: true
@@ -493,10 +277,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 1917
+    y: 804
     w: 1038
     h: 126
-  z_index: 21
+  z_index: 13
   clickable: true
   enabled: true
   accessible: true
@@ -520,10 +304,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 2043
+    y: 930
     w: 1038
     h: 126
-  z_index: 22
+  z_index: 14
   clickable: true
   enabled: true
   accessible: true
@@ -547,10 +331,10 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 2169
+    y: 1056
     w: 1038
     h: 126
-  z_index: 23
+  z_index: 15
   clickable: true
   enabled: true
   accessible: true
@@ -574,14 +358,230 @@ elements:
   foreground: "#FFFFFF"
   bounds:
     x: 21
-    y: 2295
+    y: 1182
     w: 1038
-    h: 42
-  z_index: 24
+    h: 126
+  z_index: 16
   clickable: true
   enabled: true
   accessible: true
   a11y_id: "t18_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t19_sheet"
+  platform_id: "t19_launch"
+  type: button
+  content: "T19 Sheet"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 1308
+    w: 1038
+    h: 126
+  z_index: 17
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t19_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t20_refresh"
+  platform_id: "t20_launch"
+  type: button
+  content: "T20 Refresh"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 1434
+    w: 1038
+    h: 126
+  z_index: 18
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t20_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t21_press_back"
+  platform_id: "t21_launch"
+  type: button
+  content: "T21 Press Back"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 1560
+    w: 1038
+    h: 126
+  z_index: 19
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t21_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t22_long_press"
+  platform_id: "t22_launch"
+  type: button
+  content: "T22 Long Press"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 1686
+    w: 1038
+    h: 126
+  z_index: 20
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t22_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t23_capture"
+  platform_id: "t23_launch"
+  type: button
+  content: "T23 Capture"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 1812
+    w: 1038
+    h: 126
+  z_index: 21
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t23_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t24_screenshot"
+  platform_id: "t24_launch"
+  type: button
+  content: "T24 Screenshot"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 1938
+    w: 1038
+    h: 126
+  z_index: 22
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t24_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t25_scroll"
+  platform_id: "t25_launch"
+  type: button
+  content: "T25 Scroll"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 2064
+    w: 1038
+    h: 126
+  z_index: 23
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t25_launch"
+  padding:
+    top: 9
+    bottom: 9
+    start: 16
+    end: 16
+  line_count: 1
+  truncated: false
+  elevation: 2.0
+- id: "t26_hide_show"
+  platform_id: "t26_launch"
+  type: button
+  content: "T26 Hide Show"
+  font:
+    family: sans-serif
+    weight: medium
+    size: 14.095238
+  foreground: "#FFFFFF"
+  bounds:
+    x: 21
+    y: 2190
+    w: 1038
+    h: 126
+  z_index: 24
+  clickable: true
+  enabled: true
+  accessible: true
+  a11y_id: "t26_launch"
   padding:
     top: 9
     bottom: 9
