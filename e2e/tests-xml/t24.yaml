@@ -1,0 +1,17 @@
+# Epic M / M-2 — XML demo variant of the Compose TC (mirror of ../tests/t24.yaml).
+# Element IDs follow the M-1 scaffold convention: T<N>_<element-name> as android resource id.
+# Runner: install ddb/e2e/demo-app-xml/ and target package io.substrate.regdemo-xml.
+app: io.substrate.regdemo-xml
+id: TC-T24-screenshot
+name: "T24: screenshot marker visible (visual-QA anchor)"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T24 Screenshot"}
+  - action: wait_idle
+    seconds: 2
+  - assert: element_exists
+    target: {content_fuzzy: "T24 Screenshot Marker"}
+  - assert: element_exists
+    target: {content_fuzzy: "T24 Marker Circle"}

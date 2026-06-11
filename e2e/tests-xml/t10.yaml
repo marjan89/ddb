@@ -1,0 +1,35 @@
+# Epic M / M-2 — XML demo variant of the Compose TC (mirror of ../tests/t10.yaml).
+# Element IDs follow the M-1 scaffold convention: T<N>_<element-name> as android resource id.
+# Runner: install ddb/e2e/demo-app-xml/ and target package io.substrate.regdemo-xml.
+app: io.substrate.regdemo-xml
+id: TC-T10-mock-url-intercept
+name: "T10: agent /mock intercepts HttpURLConnection response"
+steps:
+  - action: wait_idle
+    seconds: 2
+  - action: tap
+    target: {content_fuzzy: "T10 Mock URL"}
+  - action: wait_idle
+    seconds: 2
+  - action: api_call
+    url: "http://localhost:19878/mock"
+    method: "POST"
+    body:
+      mocks:
+        - url_pattern: "/t10"
+          method: "GET"
+          response:
+            status: 200
+            body:
+              text: "T10 Mocked Response Body"
+  - action: tap
+    target: {content_fuzzy: "T10 Fetch"}
+  - action: wait_idle
+    seconds: 3
+  - assert: element_exists
+    target: {content_fuzzy: "T10 Mocked Response Body"}
+  - action: api_call
+    url: "http://localhost:19878/unmock"
+    method: "POST"
+    body:
+      url_pattern: "/t10"
