@@ -1,6 +1,13 @@
 # Epic M / M-4 — XML demo variant of the Compose TC (mirror of ../tests/t35.yaml).
 # Element IDs follow the M-1 scaffold convention: T<N>_<element-name> as android resource id.
 # Runner: install ddb/e2e/demo-app-xml/ and target package io.substrate.regdemo.xml.
+#
+# DESIGNED-FAIL self-test for the runner's `platform:` fork verb.
+# - On iOS: the `ios:` branch runs → asserts T1 Launch + T17 Animations → PASS.
+# - On Android (compose or xml target): the `android:` branch runs → asserts an
+#   intentionally-fake element → FAIL by design (proves the runner routed to
+#   the android branch). regress-android.sh's EXPECT_FAIL_LIST default
+#   (Wave 22) auto-handles this.
 app: io.substrate.regdemo.xml
 id: TC-T35-platform-fork
 name: "T35: platform fork (PlatformFork.ios) — runner picks ios branch on iOS device"

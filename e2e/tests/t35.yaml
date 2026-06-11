@@ -1,3 +1,8 @@
+# DESIGNED-FAIL self-test for the runner's `platform:` fork verb.
+# - On iOS: the `ios:` branch runs → asserts T1 Launch + T17 Animations → PASS.
+# - On Android: the `android:` branch runs → asserts an intentionally-fake
+#   element → FAIL by design (proves the runner routed to the android branch).
+# regress-android.sh's EXPECT_FAIL_LIST default (Wave 22) auto-handles this.
 id: TC-T35-platform-fork
 name: "T35: platform fork (PlatformFork.ios) — runner picks ios branch on iOS device"
 steps:

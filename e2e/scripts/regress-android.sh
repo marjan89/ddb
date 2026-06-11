@@ -57,7 +57,12 @@ PREWARM=0
 PEER_AGENT_PACKAGES=(
   "se.naturkartan.android"
 )
-EXPECT_FAIL_LIST=()
+# Wave 22 default: TCs that are designed-fail self-tests of the runner
+# itself (`t16-negative` proves the patched runner enforces text-equality;
+# `t35` proves the `platform:` fork verb routes to the right branch by
+# failing on android while passing on ios). Both are KEEP-AS-EXPECTED-FAIL
+# rather than real failures. Operator can still extend via --expect-fail.
+EXPECT_FAIL_LIST=("t16-negative" "t35")
 # Two parallel arrays keyed by index: TC name → required substring in failure log.
 EXPECT_FAIL_MSG_TC=()
 EXPECT_FAIL_MSG_SUB=()
