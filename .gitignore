@@ -18,3 +18,10 @@ e2e/local.properties
 *.hprof
 *.dump
 *.heapdump
+
+# Epic M XML demo (mirror of demo-app gitignores)
+e2e/demo-app-xml/build/
+e2e/demo-app-xml/.gradle/
+e2e/demo-app-xml/.kotlin/
+e2e/demo-app-xml/app/build/
+e2e/demo-app-xml/local.properties
