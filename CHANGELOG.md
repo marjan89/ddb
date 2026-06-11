@@ -2,7 +2,19 @@
 
 All notable changes to ddb are documented here.
 
-## [Unreleased] — 2026-06-11 — Epic M (cross-framework parity) + Wave 15 ledger
+## [Unreleased] — 2026-06-11 — Epic M ✓ CLOSED + Wave 15-19 ledger
+
+### Wave 19 — TD-128 reset_demo forward race fix + M-10 canonical
+- **TD-128 / reset_demo forward race** (`c1c16cd`): root-cause fix for the cross-app port-collision class that aborted XML sweeps pre-TC1. After `am force-stop $PACKAGE` + `am start $PACKAGE/$MAIN_ACTIVITY` inside `reset_demo()`, the per-device adb forward state can be invalidated; the next `/health` probe lands on a wedged forward. Fix: hoist `ensure_agent_forward` + 1s settle into `reset_demo` so each per-TC restart re-establishes the forward atomically. 2-line core change; discriminator instrumentation stripped before commit.
+  - Discriminating test confirmation: post-`reset_demo` `/health` returns 200 on every TC across a full sweep when forward is re-established; baseline (no re-forward) returned 000 from TC 2 onward. Wave-19 research validated builder's hypothesis (forward-state corruption) over the empty-`git_hash`-kills-agent dispatch premise (which was wrong — Compose has same empty `git_hash` and stays alive).
+- **M-10 canonical XML baselines** (`24f747d`): post-TD-128 sweep — `regress-android.sh --target xml --update-baselines --variance 1` now runs through. 21 of 31 `catalogue/android-xml/*.yaml` baselines refreshed with runner-produced captures (in-TC `action: capture` step). Sweep tally: **14 PASS / 10 FAIL** of the XML corpus; the 10 FAILs are TC-tuning gaps now visible because the runner actually reaches each TC's steps (Epic J parity-rule scoped).
+
+### Wave 18 — install pattern (TD-125 close)
+- **TD-125 install-pattern across ddb monorepo** (`2886566`): `README.md` + `docs/README.md` flipped `cp target/release/ddb ...` → `install -m 755 target/release/ddb ...` for atomic replace. Same pattern adopted across idb / fdb / vdb docs in their respective repos. Fixes the macOS-codesign-cache SIGKILL class that produced the post-rebuild "binary returns empty stdout" symptom.
+
+### Wave 15 — Epic M (cross-framework parity) — ✓ CLOSED 2026-06-11
+
+
 
 ### Added
 - **Epic M / M-1 — XML view demo app** (`9fa3fba` + `370454f` + `8e8f4e0` + `f460980`): new `e2e/demo-app-xml/` (sibling to `e2e/demo-app/`). Gradle scaffold mirrors the Compose demo; single `MainActivity` hosts 27 layouts (`res/layout/activity_t<N>.xml`) corresponding to T1..T26 + T34. `android.widget.*` only, no Compose. Bundle id `io.substrate.regdemo.xml`, Kotlin package + Gradle namespace aligned with applicationId (`.MainActivity` resolves canonically). Sibling APK output via `e2e/demo-app-xml/.gradle/init.d/copy-apk.gradle.kts`.
