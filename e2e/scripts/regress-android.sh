@@ -260,6 +260,15 @@ boot_and_install() {
   echo "phase1: launching $MAIN_ACTIVITY on $dev_name..." >&2
   ddb -d "$dev_name" adb shell am start -n "$MAIN_ACTIVITY" \
     || { echo "phase1: launch failed" >&2; exit 1; }
+
+  # TD-124 PART-2: layer2_smoke polls http://localhost:$AGENT_PORT/health
+  # but no port forward exists yet — the only forward setup lived in
+  # prewarm_demo (called per-TC for am-restart, not from the main flow).
+  # Fresh sweeps would time out at layer2; sweeps that "worked" only did
+  # so because a manual `adb forward` from a prior session persisted in
+  # the adb server. Set up the forward here so layer2_smoke can resolve.
+  ddb -d "$dev_name" adb forward "tcp:$AGENT_PORT" "tcp:$AGENT_PORT" >/dev/null 2>&1 || true
+  echo "[TD-124] adb forward tcp:$AGENT_PORT (host) → tcp:$AGENT_PORT (device)" >&2
 }
 
 # TD-50: force-stop + relaunch the demo. Used for --prewarm and per-TC
