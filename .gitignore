@@ -25,3 +25,7 @@ e2e/demo-app-xml/.gradle/
 e2e/demo-app-xml/.kotlin/
 e2e/demo-app-xml/app/build/
 e2e/demo-app-xml/local.properties
+
+# Sweep test artifacts (regenerated each run)
+e2e/tests-xml/results/
+e2e/tests-compose/results/
