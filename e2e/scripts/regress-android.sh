@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# DEPRECATED (Wave 28): replaced by `tctl run-regress --target {compose|xml}`.
+#   Phase 1 ship: tctl 784164f — Layer 2 + Layer 3 + variance + EXPECT_FAIL.
+#   Phase 2 ship: visual-qa, --expect-fail-message, peer-stop, full iOS.
+# This script is preserved for back-compat (live tooling that calls it
+# directly) but new invocations should migrate to the Rust subcommand.
+#
 # regress-android.sh — local Android Layer 2/3 regression runner.
 # T6 mirror of regress-ios.sh (doctrine #11 cross-platform parity).
 #
