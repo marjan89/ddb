@@ -679,6 +679,46 @@ class SemanticServer private constructor(
         return jsonResponse("""{"rules":$rules,"hits":$hits}""")
     }
 
+    /**
+     * TD-134: when an Activity transition is in flight, the lifecycle
+     * callback writes `currentActivity` only on the next-Activity's
+     * onResume. Between the previous Activity's onPause and the next
+     * Activity's onResume, `currentActivity` still references the
+     * prior Activity even though its window has already lost focus.
+     *
+     * Walk WindowManagerGlobal for any Activity decorView whose window
+     * has focus; prefer that over the callback-tracked reference. Fall
+     * back to `currentActivity` if no focused window is found (e.g.,
+     * during a brief mid-transition gap).
+     */
+    private fun resolveForegroundActivity(): Activity? {
+        val tracked = currentActivity?.get()
+        try {
+            val wmgClass = Class.forName("android.view.WindowManagerGlobal")
+            val getInstance = wmgClass.getMethod("getInstance")
+            val wmg = getInstance.invoke(null)
+            val viewsField = wmgClass.getDeclaredField("mViews")
+            viewsField.isAccessible = true
+            val views = viewsField.get(wmg) as? java.util.ArrayList<*> ?: return tracked
+            for (view in views) {
+                if (view !is android.view.View) continue
+                if (!view.hasWindowFocus()) continue
+                val ctx = view.context
+                var c: android.content.Context? = ctx
+                while (c is android.content.ContextWrapper) {
+                    if (c is Activity) {
+                        if (!c.isFinishing && !c.isDestroyed) return c
+                        break
+                    }
+                    c = c.baseContext
+                }
+            }
+        } catch (_: Exception) {
+            // fall through to tracked reference
+        }
+        return tracked
+    }
+
     private fun walkDialogWindows(activity: android.app.Activity): List<SemanticElement> {
         try {
             val wmgClass = Class.forName("android.view.WindowManagerGlobal")
@@ -814,9 +854,14 @@ class SemanticServer private constructor(
     ): Response = newFixedLengthResponse(status, "application/json", json)
 
     private fun handleSemantic(includeOffscreen: Boolean = false): Response {
-        val activity =
-            currentActivity?.get()
-                ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
+        // TD-134: resolve the truly-focused activity, not just the last
+        // one onActivityResumed wrote to currentActivity. When a launching
+        // Activity is mid-transition (T_a onPause done, T_b onResume not
+        // yet fired), currentActivity still references T_a — but T_a's
+        // window has already lost focus. Scan WindowManagerGlobal for the
+        // decorView that hasWindowFocus()==true and prefer it.
+        val activity = resolveForegroundActivity()
+            ?: return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "no active activity")
 
         var schema: SemanticSchema? = null
         var error: String? = null
@@ -832,11 +877,18 @@ class SemanticServer private constructor(
         // itself altered the frame schedule causing fling-decay to look
         // idle when it wasn't), awaitFrame's suspend semantics piggyback
         // the existing dispatcher without scheduling extra callbacks.
+        // TD-134: extend the loop to also require layout-idle + non-zero
+        // root-view size — cold-start sweeps (variance r=1, slow
+        // emulator) sample the walker before measure/layout completes,
+        // returning a partial tree that misses home buttons.
         GlobalScope.launch(Dispatchers.Main) {
             try {
                 val rootView = activity.window.decorView
-                for (i in 0..10) {
-                    if (isScrollIdle(rootView)) break
+                for (i in 0..30) {
+                    val scrollIdle = isScrollIdle(rootView)
+                    val layoutIdle = !rootView.isLayoutRequested && !rootView.isDirty
+                    val sized = rootView.width > 0 && rootView.height > 0
+                    if (scrollIdle && layoutIdle && sized) break
                     awaitFrame()
                 }
                 schema = ViewTreeWalker.walk(activity, includeOffscreen)
