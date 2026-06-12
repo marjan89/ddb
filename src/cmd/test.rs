@@ -1748,7 +1748,14 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             let (x, y, desc) = find_element_unified(dev, target, &idle_barrier_sources(5), Some(runner))?;
             // Re-query for fresh coordinates right before tap (idle barrier may have introduced delay)
             let (fx, fy, _) = find_element_unified(dev, target, &[], Some(runner)).unwrap_or((x, y, desc.clone()));
-            runner.adb_shell(dev, &["input", "swipe", &fx.to_string(), &fy.to_string(), &fx.to_string(), &fy.to_string(), "50"])?;
+            // TD-134/135: `input swipe x y x y 50` synthesizes DOWN +
+            // MOVE + UP, and Buttons sometimes reject the click when a
+            // MOVE arrives (slop-threshold). `input tap` synthesizes
+            // DOWN + UP only — closer to a real fingertip tap, no MOVE
+            // for the View to reject. Matches what physical tests do
+            // and removes the synthetic-swipe-shaped Button no-fire seen
+            // in variance×3 r=2/r=3 sweeps (t4/t7/t9/t10/t14).
+            runner.adb_shell(dev, &["input", "tap", &fx.to_string(), &fy.to_string()])?;
             Ok(desc)
         }
         "type" => {
