@@ -686,14 +686,29 @@ class SemanticServer private constructor(
             val wmg = getInstance.invoke(null)
             val viewsField = wmgClass.getDeclaredField("mViews")
             viewsField.isAccessible = true
+            val paramsField = wmgClass.getDeclaredField("mParams")
+            paramsField.isAccessible = true
             val views = viewsField.get(wmg) as? java.util.ArrayList<*> ?: return emptyList()
+            val params = paramsField.get(wmg) as? java.util.ArrayList<*> ?: return emptyList()
             val decorView = activity.window.decorView
             val density = activity.resources.displayMetrics.density
             val extraElements = mutableListOf<SemanticElement>()
-            for (view in views) {
-                if (view is android.view.View && view !== decorView) {
-                    extractDialogElements(view, density, extraElements)
-                }
+            // TD-133: WindowManagerGlobal.mViews contains every attached window —
+            // background-activity decorViews still resident (multi-instance
+            // Activity stacks), system overlays, toasts, and true dialogs alike.
+            // The earlier walk emitted ALL of them under `dialog_` prefix,
+            // polluting /semantic with stale-activity content that confused
+            // find_element_unified (t4/t11/t2/t20-22/t24/t26 sweep contamination).
+            // Filter to true SUB_WINDOW range (1000-1999) — application panels,
+            // attached dialogs, popups — and skip APPLICATION_WINDOW (1-99,
+            // other activity instances) and SYSTEM_WINDOW (2000+) types.
+            val count = minOf(views.size, params.size)
+            for (i in 0 until count) {
+                val view = views[i] as? android.view.View ?: continue
+                if (view === decorView) continue
+                val lp = params[i] as? android.view.WindowManager.LayoutParams ?: continue
+                if (lp.type !in 1000..1999) continue
+                extractDialogElements(view, density, extraElements)
             }
             return extraElements
         } catch (e: Exception) {

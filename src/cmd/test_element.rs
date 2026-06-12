@@ -122,8 +122,20 @@ pub fn find_element(dev: Option<&Device>, target: &Target) -> Result<(i32, i32, 
                     .unwrap_or_default();
                 let is_nav_link = deprioritize.split(',')
                     .any(|p| chunk_lower.contains(p.trim()));
+                // TD-133: dialog_* entries come from the agent's
+                // walkDialogWindows path — true dialogs/popups, but also
+                // (pre-fix) background-activity decorViews. Always prefer
+                // a non-dialog candidate when one exists; the dialog
+                // candidate stays as a fallback for genuine popups.
+                let is_dialog = chunk.contains("id: \"dialog_");
+                let candidate_is_dialog = fuzzy_candidate
+                    .as_ref()
+                    .map(|(_, _, d)| d.contains("dialog_"))
+                    .unwrap_or(false);
                 let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
                     (None, _, _) => true,
+                    _ if candidate_is_dialog && !is_dialog => true,
+                    _ if !candidate_is_dialog && is_dialog => false,
                     (_, true, false) => true,
                     _ if !is_nav_link => true,
                     _ => false,
@@ -594,8 +606,20 @@ fn search_semantic_yaml(
                     .unwrap_or_default();
                 let is_nav_link = deprioritize.split(',')
                     .any(|p| chunk_lower.contains(p.trim()));
+                // TD-133: dialog_* entries come from the agent's
+                // walkDialogWindows path — true dialogs/popups, but also
+                // (pre-fix) background-activity decorViews. Always prefer
+                // a non-dialog candidate when one exists; the dialog
+                // candidate stays as a fallback for genuine popups.
+                let is_dialog = chunk.contains("id: \"dialog_");
+                let candidate_is_dialog = fuzzy_candidate
+                    .as_ref()
+                    .map(|(_, _, d)| d.contains("dialog_"))
+                    .unwrap_or(false);
                 let is_better = match (&fuzzy_candidate, is_clickable, fuzzy_clickable) {
                     (None, _, _) => true,
+                    _ if candidate_is_dialog && !is_dialog => true,
+                    _ if !candidate_is_dialog && is_dialog => false,
                     (_, true, false) => true,
                     _ if !is_nav_link => true,
                     _ => false,
