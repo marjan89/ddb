@@ -1756,6 +1756,16 @@ fn execute_action(dev: Option<&Device>, action: &ActionStep, ctx: &mut RunContex
             // and removes the synthetic-swipe-shaped Button no-fire seen
             // in variance×3 r=2/r=3 sweeps (t4/t7/t9/t10/t14).
             runner.adb_shell(dev, &["input", "tap", &fx.to_string(), &fy.to_string()])?;
+            // TD-136: late-sweep load (variance r=3) shows the same
+            // tap-PASS/idle-too-quick/assert-FAIL fingerprint. The
+            // synthetic-touch dispatch through InputDispatcher → View
+            // tree can lag the runner's next wait_idle poll, so /idle
+            // is sampled BEFORE the activity_transition flag flips
+            // busy — making the transition invisible to the hysteresis.
+            // 200ms is enough for the dispatched event to enter the
+            // View's onTouchEvent on every device we test on; well
+            // under any reasonable end-to-end TC budget.
+            std::thread::sleep(std::time::Duration::from_millis(200));
             Ok(desc)
         }
         "type" => {
