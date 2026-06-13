@@ -1497,6 +1497,19 @@ class SemanticServer private constructor(
         sb.appendLine("screen: \"${escape(schema.screen)}\"")
         sb.appendLine("device: \"${escape(schema.device)}\"")
         sb.appendLine("platform: ${schema.platform}")
+        // TD-139: platform-version ownership marker. Lets tctl run-regress
+        // compare baseline-rig against runtime-rig and apply tolerances or
+        // emit a banner when they diverge.
+        val deviceKind = if (android.os.Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
+                             android.os.Build.FINGERPRINT.contains("emulator", ignoreCase = true)
+        ) "emulator" else "real"
+        sb.appendLine("calibrated_for:")
+        sb.appendLine("  platform: android")
+        sb.appendLine("  os_version: \"${escape(android.os.Build.VERSION.RELEASE)}\"")
+        sb.appendLine("  sdk: ${android.os.Build.VERSION.SDK_INT}")
+        sb.appendLine("  device_kind: $deviceKind")
+        sb.appendLine("  device_model: \"${escape(android.os.Build.MODEL)}\"")
+        sb.appendLine("  agent_sha: \"$gitHash\"")
         sb.appendLine("timestamp: \"${schema.timestamp}\"")
         sb.appendLine("viewport:")
         sb.appendLine("  width: ${schema.viewport.width}")
