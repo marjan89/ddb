@@ -653,6 +653,22 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                     let _ = std::fs::write(&png, &out.stdout);
                 }
             }
+            // Epic O / O-4: clear the agent's request log at TC start so the
+            // post-run /debug-log fetch returns ONLY this TC's HTTP traffic.
+            let _ = std::process::Command::new("curl")
+                .args(["-s", "-X", "DELETE", "--max-time", "2", &format!("{}/debug-log", agent_base_url())])
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+                .status();
+            // Epic O / O-5: capture the logcat cursor (epoch ms) so the
+            // post-fail logcat dump can be scoped to "since TC start".
+            if let Some(d) = dev.as_ref() {
+                let cursor = std::process::Command::new("adb")
+                    .args(["-s", &d.transport_id(), "shell", "date", "+%s.%N"])
+                    .output().ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                let _ = std::fs::write(bdir.join(".logcat-cursor"), &cursor);
+            }
         }
 
         let spec_clone = spec.clone();
@@ -846,6 +862,41 @@ fn emit_o1_bundle(
         .args(["-s", "--max-time", "3", &format!("{agent_url2}/semantic"), "-o",
                tc_dir.join("semantic-end.yaml").to_string_lossy().as_ref()])
         .status();
+    // Epic O / O-4: per-TC api-log.jsonl. Fetch the agent's /debug-log
+    // (cleared at TC start by the outer loop), parse the `requests`
+    // array, write each entry as a JSON line.
+    if let Ok(dl) = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "3", &format!("{agent_url2}/debug-log")])
+        .output()
+    {
+        let dl_str = String::from_utf8_lossy(&dl.stdout);
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&dl_str) {
+            if let Some(reqs) = parsed.get("requests").and_then(|v| v.as_array()) {
+                let lines: Vec<String> = reqs.iter().filter_map(|r| serde_json::to_string(r).ok()).collect();
+                let _ = std::fs::write(tc_dir.join("api-log.jsonl"), lines.join("\n") + "\n");
+            }
+        }
+    }
+    // Epic O / O-5: on FAIL, dump logcat since TC start (cursor laid down
+    // pre-run). Best-effort; non-FAIL TCs skip this to keep the bundle tight.
+    if result.status == "FAIL" {
+        if let Some(d) = dev {
+            // Read the cursor we wrote pre-run; if missing, use the TC start time.
+            let cursor = std::fs::read_to_string(tc_dir.join(".logcat-cursor"))
+                .unwrap_or_default();
+            let trim = cursor.trim();
+            if !trim.is_empty() {
+                if let Ok(out) = std::process::Command::new("adb")
+                    .args(["-s", &d.transport_id(), "logcat", "-d", "-T", trim])
+                    .output()
+                {
+                    let _ = std::fs::write(tc_dir.join("logcat.txt"), &out.stdout);
+                }
+            }
+        }
+    }
+    // Remove the transient cursor file so it doesn't bloat the bundle dir.
+    let _ = std::fs::remove_file(tc_dir.join(".logcat-cursor"));
     if let Some(d) = dev {
         let mut cmd = std::process::Command::new("adb");
         cmd.args(["-s", &d.transport_id(), "exec-out", "screencap", "-p"]);
