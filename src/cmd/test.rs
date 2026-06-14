@@ -1072,6 +1072,47 @@ fn emit_o1_bundle(
     let _ = std::fs::write(tc_dir.join("manifest.json"),
                            serde_json::to_string_pretty(&manifest).unwrap_or_default());
     eprintln!("bundle → {}", tc_dir.display());
+
+    // Epic O / O-6: retention. Keep the last N run-id dirs under results_dir
+    // (default 10), plus any dir containing a `.pinned` marker file. GC the
+    // rest. Cheap O(N log N) per TC; converges to N regardless of churn.
+    let keep: usize = std::env::var("DDB_RETENTION_KEEP").ok()
+        .and_then(|v| v.parse().ok()).unwrap_or(10);
+    if keep > 0 {
+        enforce_retention(results_dir, keep);
+    }
+}
+
+/// Epic O / O-6: keep last `keep` run-id subdirs of `results_dir` plus any
+/// dir containing a `.pinned` marker. Best-effort; ignores io errors.
+fn enforce_retention(results_dir: &str, keep: usize) {
+    let entries = match std::fs::read_dir(results_dir) {
+        Ok(it) => it,
+        Err(_) => return,
+    };
+    let mut run_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for e in entries.flatten() {
+        let p = e.path();
+        if !p.is_dir() { continue; }
+        let name = match e.file_name().to_str() { Some(s) => s.to_string(), None => continue };
+        let has_manifest = std::fs::read_dir(&p).map(|sub| {
+            sub.flatten().any(|s| s.path().join("manifest.json").is_file())
+        }).unwrap_or(false);
+        if !has_manifest { continue; }
+        run_dirs.push((name, p));
+    }
+    if run_dirs.len() <= keep { return; }
+    run_dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    let excess = run_dirs.len() - keep;
+    let mut deleted = 0usize;
+    for (_, dir) in run_dirs.iter() {
+        if deleted >= excess { break; }
+        if dir.join(".pinned").is_file() { continue; }
+        if std::fs::remove_dir_all(dir).is_ok() {
+            deleted += 1;
+            eprintln!("retention: gc'd {}", dir.display());
+        }
+    }
 }
 
 fn detect_results_dir(spec_path: &str) -> Option<String> {
