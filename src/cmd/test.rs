@@ -679,6 +679,18 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 let _ = std::fs::write(&log_path, &yaml_out);
                 eprintln!("run log → {log_path}");
             }
+
+            // Epic O / O-1: per-TC artifact bundle on disk.
+            //
+            // Layout: <tests-parent>/results/<run-id>/<tc-id>/
+            //   tc.jsonl      — per-step JSON Lines (already collected in run_log.steps)
+            //   tc.log        — human-readable runner-side log (run_log YAML for now)
+            //   manifest.json — TC metadata (start/end, agent_sha, device, platform, ...)
+            //
+            // run-id: respects DDB_RUN_ID env (set once per sweep by tctl
+            // run-regress so all TCs land under the same dir); falls back
+            // to a per-invocation iso8601+hex slug.
+            emit_o1_bundle(dir, &result, &run_log.steps, spec_path, dev.as_ref(), &ts_slug);
         }
 
         if result.status == "PASS" {
@@ -736,6 +748,84 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Epic O / O-1: write per-TC artifact bundle to e2e/results/<run-id>/<tc-id>/
+/// Reuses step_logs (already collected by run_spec) for tc.jsonl, the run_log
+/// (already serialized for the back-compat .yaml) for tc.log, and queries the
+/// agent for /version + /semantic device fields to populate manifest.json.
+fn emit_o1_bundle(
+    results_dir: &str,
+    result: &TestResult,
+    step_logs: &[StepLogEntry],
+    spec_path: &str,
+    dev: Option<&Device>,
+    ts_slug: &str,
+) {
+    let run_id = std::env::var("DDB_RUN_ID")
+        .unwrap_or_else(|_| format!("{ts_slug}-{:x}", std::process::id()));
+    let tc_dir = std::path::PathBuf::from(results_dir).join(&run_id).join(&result.id);
+    if std::fs::create_dir_all(&tc_dir).is_err() { return; }
+
+    // tc.jsonl — one JSON object per step
+    let jsonl_path = tc_dir.join("tc.jsonl");
+    if let Ok(mut f) = std::fs::File::create(&jsonl_path) {
+        use std::io::Write;
+        for entry in step_logs {
+            if let Ok(line) = serde_json::to_string(entry) {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+    }
+
+    // tc.log — human-readable raw log (mirror of run_log YAML for now)
+    let log_path = tc_dir.join("tc.log");
+    let mut human = String::new();
+    human.push_str(&format!("TC: {} — {}\n", result.id, result.name));
+    human.push_str(&format!("status: {}\n", result.status));
+    human.push_str(&format!("steps_run: {}/{}\n", result.steps_run, result.steps_total));
+    if let Some(ref f) = result.failure {
+        human.push_str(&format!("failure: step {} — {}\n", f.step, f.description));
+    }
+    human.push_str("\n--- step log ---\n");
+    for entry in step_logs {
+        if let Ok(yaml) = serde_yaml::to_string(entry) {
+            human.push_str(&yaml);
+            human.push('\n');
+        }
+    }
+    let _ = std::fs::write(&log_path, &human);
+
+    // manifest.json — TC metadata
+    let agent_url = agent_base_url();
+    let version = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "2", &format!("{agent_url}/version")])
+        .output().ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let agent_sha = version
+        .find("\"git_hash\":\"").and_then(|i| {
+            let rest = &version[i + 12..];
+            rest.find('"').map(|e| rest[..e].to_string())
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let device_name = dev.map(|d| d.serial.clone()).unwrap_or_else(|| "unknown".into());
+    let manifest = serde_json::json!({
+        "tc_id": result.id,
+        "tc_name": result.name,
+        "platform": "android",
+        "status": result.status,
+        "steps_run": result.steps_run,
+        "steps_total": result.steps_total,
+        "spec_path": spec_path,
+        "run_id": run_id,
+        "agent_sha": agent_sha,
+        "device": device_name,
+        "ts_slug": ts_slug,
+    });
+    let _ = std::fs::write(tc_dir.join("manifest.json"),
+                           serde_json::to_string_pretty(&manifest).unwrap_or_default());
+    eprintln!("bundle → {}", tc_dir.display());
 }
 
 fn detect_results_dir(spec_path: &str) -> Option<String> {
