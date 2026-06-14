@@ -627,6 +627,34 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
                 std::time::Duration::from_secs(steps_budget + setup_budget)
             }
         };
+        // Epic O / O-2 + O-3: pre-run bundle prep — capture start.png +
+        // semantic-start.yaml BEFORE run_spec. Bundle dir is computed
+        // here so the START artifacts land in the same dir emit_o1_bundle
+        // populates with END artifacts post-run.
+        let results_dir_early = detect_results_dir(spec_path);
+        let early_bundle_dir: Option<std::path::PathBuf> = results_dir_early.as_ref().map(|d| {
+            let run_id = std::env::var("DDB_RUN_ID")
+                .unwrap_or_else(|_| format!("{}-{:x}", now_timestamp_slug(), std::process::id()));
+            std::path::PathBuf::from(d).join(run_id).join(&spec.id)
+        });
+        if let Some(bdir) = early_bundle_dir.as_ref() {
+            let _ = std::fs::create_dir_all(bdir);
+            // semantic-start.yaml
+            let _ = std::process::Command::new("curl")
+                .args(["-s", "--max-time", "3", &format!("{}/semantic", agent_base_url()), "-o",
+                       bdir.join("semantic-start.yaml").to_string_lossy().as_ref()])
+                .status();
+            // start.png — adb exec-out screencap (best-effort)
+            if let Some(d) = dev.as_ref() {
+                let png = bdir.join("start.png");
+                let mut cmd = std::process::Command::new("adb");
+                cmd.args(["-s", &d.transport_id(), "exec-out", "screencap", "-p"]);
+                if let Ok(out) = cmd.output() {
+                    let _ = std::fs::write(&png, &out.stdout);
+                }
+            }
+        }
+
         let spec_clone = spec.clone();
         let spec_path_clone = spec_path.to_string();
         let dev_clone = dev.clone();
@@ -810,6 +838,38 @@ fn emit_o1_bundle(
         })
         .unwrap_or_else(|| "unknown".into());
     let device_name = dev.map(|d| d.serial.clone()).unwrap_or_else(|| "unknown".into());
+    // Epic O / O-2 + O-3: end-state captures. start.png/semantic-start.yaml
+    // were emitted pre-run in the outer loop; emit semantic-end + end.png
+    // here (and fail-step-N.png if the TC failed).
+    let agent_url2 = agent_base_url();
+    let _ = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "3", &format!("{agent_url2}/semantic"), "-o",
+               tc_dir.join("semantic-end.yaml").to_string_lossy().as_ref()])
+        .status();
+    if let Some(d) = dev {
+        let mut cmd = std::process::Command::new("adb");
+        cmd.args(["-s", &d.transport_id(), "exec-out", "screencap", "-p"]);
+        if let Ok(out) = cmd.output() {
+            let _ = std::fs::write(tc_dir.join("end.png"), &out.stdout);
+            if let Some(ref failure) = result.failure {
+                let _ = std::fs::write(tc_dir.join(format!("fail-step-{}.png", failure.step)), &out.stdout);
+            }
+        }
+    }
+
+    // Manifest references all written artifacts.
+    let mut screenshots: Vec<String> = Vec::new();
+    for f in ["start.png", "end.png"] {
+        if tc_dir.join(f).is_file() { screenshots.push(f.into()); }
+    }
+    if let Some(ref failure) = result.failure {
+        let fname = format!("fail-step-{}.png", failure.step);
+        if tc_dir.join(&fname).is_file() { screenshots.push(fname); }
+    }
+    let mut walker_dumps: Vec<String> = Vec::new();
+    for f in ["semantic-start.yaml", "semantic-end.yaml"] {
+        if tc_dir.join(f).is_file() { walker_dumps.push(f.into()); }
+    }
     let manifest = serde_json::json!({
         "tc_id": result.id,
         "tc_name": result.name,
@@ -822,6 +882,8 @@ fn emit_o1_bundle(
         "agent_sha": agent_sha,
         "device": device_name,
         "ts_slug": ts_slug,
+        "screenshots": screenshots,
+        "walker_dumps": walker_dumps,
     });
     let _ = std::fs::write(tc_dir.join("manifest.json"),
                            serde_json::to_string_pretty(&manifest).unwrap_or_default());
