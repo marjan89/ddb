@@ -734,7 +734,8 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             // run-id: respects DDB_RUN_ID env (set once per sweep by tctl
             // run-regress so all TCs land under the same dir); falls back
             // to a per-invocation iso8601+hex slug.
-            emit_o1_bundle(dir, &result, &run_log.steps, spec_path, dev.as_ref(), &ts_slug);
+            emit_o1_bundle(dir, &result, &run_log.steps, spec_path, dev.as_ref(), &ts_slug,
+                           spec.precondition.as_ref().and_then(|p| p.package.as_deref()));
         }
 
         if result.status == "PASS" {
@@ -805,6 +806,7 @@ fn emit_o1_bundle(
     spec_path: &str,
     dev: Option<&Device>,
     ts_slug: &str,
+    package: Option<&str>,
 ) {
     let run_id = std::env::var("DDB_RUN_ID")
         .unwrap_or_else(|_| format!("{ts_slug}-{:x}", std::process::id()));
@@ -921,6 +923,134 @@ fn emit_o1_bundle(
     for f in ["semantic-start.yaml", "semantic-end.yaml"] {
         if tc_dir.join(f).is_file() { walker_dumps.push(f.into()); }
     }
+    // Epic O / O-10: build/run fingerprint. Captures the artifacts under test
+    // (APK on the device + runner build host + runner/agent shas) so a bundle
+    // is self-describing in post-hoc triage without needing the CI ledger.
+    let build_host = std::process::Command::new("hostname")
+        .output().ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let runner_sha = std::env::var("DDB_RUNNER_SHA").unwrap_or_else(|_| "unknown".into());
+    let demo_app_sha = std::env::var("DDB_DEMO_APP_SHA").unwrap_or_default();
+    let mut apk_code_path = String::new();
+    let mut apk_last_update_time = String::new();
+    let mut apk_version_name = String::new();
+    let mut apk_sha256 = String::new();
+    if let (Some(d), Some(pkg)) = (dev, package) {
+        if let Ok(out) = std::process::Command::new("adb")
+            .args(["-s", &d.transport_id(), "shell", "dumpsys", "package", pkg])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout);
+            for line in s.lines() {
+                let t = line.trim();
+                if let Some(v) = t.strip_prefix("codePath=") { apk_code_path = v.trim().to_string(); }
+                else if let Some(v) = t.strip_prefix("lastUpdateTime=") { apk_last_update_time = v.trim().to_string(); }
+                else if let Some(v) = t.strip_prefix("versionName=") { apk_version_name = v.trim().to_string(); }
+            }
+        }
+        if !apk_code_path.is_empty() {
+            let base_apk = format!("{}/base.apk", apk_code_path);
+            if let Ok(out) = std::process::Command::new("adb")
+                .args(["-s", &d.transport_id(), "shell", "sha256sum", &base_apk])
+                .output()
+            {
+                let s = String::from_utf8_lossy(&out.stdout);
+                if let Some(hash) = s.split_whitespace().next() {
+                    if hash.len() == 64 { apk_sha256 = hash.to_string(); }
+                }
+            }
+        }
+    }
+    let build_fingerprint = serde_json::json!({
+        "build_host": build_host,
+        "runner_sha": runner_sha,
+        "demo_app_sha": demo_app_sha,
+        "agent_sha": agent_sha,
+        "package": package.unwrap_or(""),
+        "apk_code_path": apk_code_path,
+        "apk_version_name": apk_version_name,
+        "apk_last_update_time": apk_last_update_time,
+        "apk_sha256": apk_sha256,
+    });
+
+    // Epic O / O-11: recalibration ledger. Surfaces the rig the TC ran on so a
+    // catalogue/rig mismatch is visible in the bundle (catalogue's calibrated_for
+    // ↔ this current_rig is what tctl's TD-139 banner compares). Pulled from the
+    // semantic-end.yaml stanza the agent emits (TD-139).
+    let mut current_rig = serde_json::Map::new();
+    let sem_end_path = tc_dir.join("semantic-end.yaml");
+    if let Ok(sem) = std::fs::read_to_string(&sem_end_path) {
+        let mut in_cal = false;
+        for line in sem.lines() {
+            if line.starts_with("calibrated_for:") { in_cal = true; continue; }
+            if in_cal {
+                if !line.starts_with(' ') && !line.starts_with('\t') { break; }
+                let t = line.trim();
+                if let Some((k, v)) = t.split_once(':') {
+                    let v = v.trim().trim_matches('"').to_string();
+                    if !v.is_empty() {
+                        current_rig.insert(k.trim().to_string(), serde_json::Value::String(v));
+                    }
+                }
+            }
+        }
+    }
+    let calibration = serde_json::json!({
+        "current_rig": current_rig,
+        "catalogue_calibrated_for": std::env::var("DDB_CATALOGUE_CALIBRATED_FOR").unwrap_or_default(),
+    });
+
+    // Epic O / O-12: failed-step diagnostic. On FAIL, structure the failure into
+    // a self-contained record (step #, action, target, error, last-step log,
+    // foreground-activity-at-fail) and ALSO write it as error.json — the HTML
+    // viewer (O-7) and pre-commit hook (O-8) can read it without parsing tc.jsonl.
+    let failure_diagnostic = if result.status == "FAIL" {
+        let failure = result.failure.as_ref();
+        let step = failure.map(|f| f.step).unwrap_or(0);
+        let description = failure.map(|f| f.description.clone()).unwrap_or_default();
+        let mut step_action = String::new();
+        let mut step_target = String::new();
+        if step > 0 {
+            if let Some(entry) = step_logs.get((step - 1) as usize) {
+                if let Ok(v) = serde_json::to_value(entry) {
+                    if let Some(a) = v.get("action").and_then(|x| x.as_str()) { step_action = a.into(); }
+                    else if let Some(a) = v.get("assert").and_then(|x| x.as_str()) { step_action = format!("assert {a}"); }
+                    if let Some(t) = v.get("target") { step_target = t.to_string(); }
+                }
+            }
+        }
+        let mut foreground_at_fail = String::new();
+        if let Some(d) = dev {
+            if let Ok(out) = std::process::Command::new("adb")
+                .args(["-s", &d.transport_id(), "shell", "dumpsys", "window"])
+                .output()
+            {
+                let s = String::from_utf8_lossy(&out.stdout);
+                for line in s.lines() {
+                    let t = line.trim();
+                    if t.starts_with("mCurrentFocus=") || t.starts_with("mFocusedApp=") {
+                        foreground_at_fail = t.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+        let diag = serde_json::json!({
+            "step": step,
+            "description": description,
+            "action": step_action,
+            "target": step_target,
+            "foreground_at_fail": foreground_at_fail,
+            "screenshot": format!("fail-step-{}.png", step),
+        });
+        let _ = std::fs::write(tc_dir.join("error.json"),
+                               serde_json::to_string_pretty(&diag).unwrap_or_default());
+        diag
+    } else {
+        serde_json::Value::Null
+    };
+
     let manifest = serde_json::json!({
         "tc_id": result.id,
         "tc_name": result.name,
@@ -935,6 +1065,9 @@ fn emit_o1_bundle(
         "ts_slug": ts_slug,
         "screenshots": screenshots,
         "walker_dumps": walker_dumps,
+        "build_fingerprint": build_fingerprint,
+        "calibration": calibration,
+        "failure_diagnostic": failure_diagnostic,
     });
     let _ = std::fs::write(tc_dir.join("manifest.json"),
                            serde_json::to_string_pretty(&manifest).unwrap_or_default());
