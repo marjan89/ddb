@@ -735,7 +735,8 @@ pub fn run(dev_name: Option<&str>, args: TestArgs) -> Result<(), String> {
             // run-regress so all TCs land under the same dir); falls back
             // to a per-invocation iso8601+hex slug.
             emit_o1_bundle(dir, &result, &run_log.steps, spec_path, dev.as_ref(), &ts_slug,
-                           spec.precondition.as_ref().and_then(|p| p.package.as_deref()));
+                           spec.precondition.as_ref().and_then(|p| p.package.as_deref()),
+                           &run_log.started, &run_log.finished);
         }
 
         if result.status == "PASS" {
@@ -807,6 +808,8 @@ fn emit_o1_bundle(
     dev: Option<&Device>,
     ts_slug: &str,
     package: Option<&str>,
+    started: &str,
+    finished: &str,
 ) {
     let run_id = std::env::var("DDB_RUN_ID")
         .unwrap_or_else(|_| format!("{ts_slug}-{:x}", std::process::id()));
@@ -1051,18 +1054,22 @@ fn emit_o1_bundle(
         serde_json::Value::Null
     };
 
+    // O-9: unified manifest schema. Adds iOS-side `started` / `finished`
+    // timestamps. See ADR-016 for the canonical field list.
     let manifest = serde_json::json!({
         "tc_id": result.id,
         "tc_name": result.name,
         "platform": "android",
         "status": result.status,
+        "started": started,
+        "finished": finished,
+        "device": device_name,
+        "run_id": run_id,
+        "ts_slug": ts_slug,
+        "spec_path": spec_path,
         "steps_run": result.steps_run,
         "steps_total": result.steps_total,
-        "spec_path": spec_path,
-        "run_id": run_id,
         "agent_sha": agent_sha,
-        "device": device_name,
-        "ts_slug": ts_slug,
         "screenshots": screenshots,
         "walker_dumps": walker_dumps,
         "build_fingerprint": build_fingerprint,
